@@ -1,0 +1,18 @@
+# 로그 (루프가 매 바퀴 생성)
+logs/
+
+# 루프 제어
+loop/STOP
+loop/loop.pid
+
+# 빌드 산출물
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# OS / 편집기
+.DS_Store
+.vscode/
+.idea/
+*.swp
