@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jadrion.arrowgame.loop</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/development/Desktop/화살 게임 개발/loop/loop.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/development/Desktop/화살 게임 개발</string>
+
+    <!-- 로그인하면 시작 -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- 비정상 종료면 재시작. 정상 종료(STOP 등)면 그대로 둔다. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- 재시작 최소 간격(초). 크래시 루프 방지. -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <!-- 자동 실행은 터미널 환경을 물려받지 않는다. PATH 를 반드시 명시한다. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/development/Desktop/화살 게임 개발/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/development/Desktop/화살 게임 개발/logs/launchd.err.log</string>
+</dict>
+</plist>
