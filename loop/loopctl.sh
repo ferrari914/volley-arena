@@ -36,6 +36,13 @@ case "${1:-}" in
     else
       echo "  등록 안 됨"
     fi
+    echo "── 세션 ──"
+    source "$SCRIPT_DIR/env.sh"
+    if pgrep -f "$CLAUDE_BIN -p " >/dev/null 2>&1; then
+      echo "  세션 실행 중 (pid $(pgrep -f "$CLAUDE_BIN -p " | head -1))"
+    else
+      echo "  실행 중인 세션 없음"
+    fi
     echo "── STOP 파일 ──"
     [ -f "$SCRIPT_DIR/STOP" ] && echo "  있음 (루프가 멈춘다)" || echo "  없음"
     echo "── 최근 로그 ──"
