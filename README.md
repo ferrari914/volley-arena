@@ -5,17 +5,36 @@
 
 ---
 
-## ⚠️ 아직 루프를 켤 수 없다 — 먼저 설치할 것
-
-이 컴퓨터에 **클로드 코드 CLI 와 Node.js 가 없다.**
-루프는 매 바퀴 `claude -p` 로 새 헤드리스 세션을 여는 구조라,
-CLI 가 없으면 아무것도 하지 못하고 조용히 죽는다.
+## 게임 개발
 
 ```bash
-brew install node && npm install -g @anthropic-ai/claude-code && claude login
+npm install          # 처음 한 번
+npm run dev          # 개발 서버 (같은 와이파이의 스마트폰에서도 열린다)
 ```
 
-설치가 끝나면 아래 두 가지를 확인한다.
+커밋 전에 아래를 전부 통과시킨다. (DESIGN.md "검사 명령")
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+화면이 바뀌는 작업을 했으면 한 가지를 더 돌린다.
+
+```bash
+npm run qa           # 빌드 → 실제 브라우저로 실행 → shots/ 에 스크린샷
+```
+
+`npm run qa` 는 모바일 가로·모바일 세로·데스크톱 세 화면을 찍고,
+**콘솔에 에러가 하나라도 찍히면 실패로 끝난다**
+(DESIGN 품질 기준: "게임 중 어떤 상황에서도 콘솔에 에러가 찍히지 않을 것").
+스크린샷은 `shots/` 에 남고 git 에는 올리지 않는다.
+
+---
+
+## 실행 환경 확인
 
 ```bash
 which claude && claude --version && node --version
@@ -39,15 +58,14 @@ which claude && claude --version && node --version
 | `docs/STATUS.md` | 인수인계서. 루프가 매 바퀴 갱신 |
 | `docs/feedback/INBOX.md` | 지시함. 한 줄 적으면 다음 바퀴가 최우선 처리 |
 | `logs/` | 날짜별 로그 (git 제외) |
+| `src/` | 게임 소스 (core · entities · systems · render · input · ui · data) |
+| `tests/` | vitest 테스트 |
+| `tools/shot.mjs` | 화면 QA. 실제 브라우저로 띄워 스크린샷 + 콘솔 에러 검사 |
+| `shots/` | QA 스크린샷 (git 제외) |
 
 ---
 
 ## 자동 실행 등록
-
-**아직 등록하지 않았다.** CLI 가 없는 상태에서 등록하면
-로그인할 때마다 실행에 실패하고 `KeepAlive` 때문에 계속 되살아난다.
-
-위 설치를 마친 뒤에 등록한다.
 
 ```bash
 cp "loop/com.jadrion.arrowgame.loop.plist" ~/Library/LaunchAgents/
