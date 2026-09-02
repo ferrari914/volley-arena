@@ -6,6 +6,10 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    files: ['tools/**/*.mjs'],
+    rules: { 'no-undef': 'off' },
+  },
+  {
     files: ['**/*.ts'],
     rules: {
       // 타입 검사는 tsc가 한다. no-undef는 TS에서 오탐만 낸다.

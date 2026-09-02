@@ -53,13 +53,18 @@ function boot(): void {
     },
   );
 
-  ticker.start();
+  // 세로 화면에서는 "돌려 주세요" 안내가 화면을 덮는다(style.css와 같은 조건).
+  // 보이지도 않는 화면을 계속 그리면 배터리만 깎는다.
+  const portrait = window.matchMedia('(orientation: portrait) and (max-width: 820px)');
 
-  // 탭이 가려진 동안에는 프레임을 돌리지 않는다. 배터리를 갉아먹을 이유가 없다.
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) ticker.stop();
+  const syncRunning = (): void => {
+    if (document.hidden || portrait.matches) ticker.stop();
     else ticker.start();
-  });
+  };
+
+  portrait.addEventListener('change', syncRunning);
+  document.addEventListener('visibilitychange', syncRunning);
+  syncRunning();
 }
 
 boot();

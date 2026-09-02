@@ -10,10 +10,11 @@ import {
   createTarget,
 } from './models';
 
-/** 쿼터뷰 카메라가 플레이어로부터 떨어져 있는 거리. 1인칭도 정탑다운도 아니다. */
-const CAMERA_OFFSET = new THREE.Vector3(0, 21, 17);
-/** 세로 화면에서는 좌우가 좁아 적이 화면 밖에서 다가온다. 그만큼 뒤로 뺀다. */
-const PORTRAIT_ZOOM_OUT = 1.35;
+/**
+ * 쿼터뷰 카메라가 플레이어로부터 떨어져 있는 거리. 1인칭도 정탑다운도 아니다.
+ * 더 멀리 빼면 주변이 넓게 보이지만 작은 화면에서 플레이어가 점이 된다.
+ */
+const CAMERA_OFFSET = new THREE.Vector3(0, 15.5, 12.5);
 /** 픽셀 비율 상한. 3배 이상 화면에서 그대로 그리면 중급 기기가 못 버틴다. */
 const MAX_PIXEL_RATIO = 2;
 
@@ -143,14 +144,13 @@ export class Renderer {
   }
 
   private syncCamera(playerPos: Vec2, dt: number): void {
-    const zoom = this.canvas.clientWidth < this.canvas.clientHeight ? PORTRAIT_ZOOM_OUT : 1;
     // 프레임 수와 무관하게 같은 속도로 따라붙는다.
     const follow = 1 - Math.exp(-9 * dt);
     this.cameraFocus.lerp(new THREE.Vector3(playerPos.x, 0, playerPos.y), follow);
     this.camera.position.set(
-      this.cameraFocus.x + CAMERA_OFFSET.x * zoom,
-      CAMERA_OFFSET.y * zoom,
-      this.cameraFocus.z + CAMERA_OFFSET.z * zoom,
+      this.cameraFocus.x + CAMERA_OFFSET.x,
+      CAMERA_OFFSET.y,
+      this.cameraFocus.z + CAMERA_OFFSET.z,
     );
     this.camera.lookAt(this.cameraFocus);
   }

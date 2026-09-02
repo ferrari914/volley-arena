@@ -129,18 +129,18 @@ export function createPlayer(): THREE.Group {
 export function createArrow(): THREE.Group {
   const group = new THREE.Group();
   const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(ARROW.radius * 0.45, ARROW.radius * 0.45, 0.75, 5),
+    new THREE.CylinderGeometry(ARROW.radius * 0.7, ARROW.radius * 0.7, 0.95, 5),
     standard(PALETTE.arrow, { emissive: PALETTE.arrow, emissiveIntensity: 0.35 }),
   );
   shaft.rotation.x = Math.PI / 2;
   group.add(shaft);
 
   const tip = new THREE.Mesh(
-    new THREE.ConeGeometry(ARROW.radius, 0.36, 6),
-    standard(PALETTE.accent, { emissive: PALETTE.accent, emissiveIntensity: 0.5 }),
+    new THREE.ConeGeometry(ARROW.radius * 1.5, 0.5, 6),
+    standard(PALETTE.accent, { emissive: PALETTE.accent, emissiveIntensity: 0.6 }),
   );
   tip.rotation.x = -Math.PI / 2;
-  tip.position.z = -0.5;
+  tip.position.z = -0.66;
   group.add(tip);
 
   return group;

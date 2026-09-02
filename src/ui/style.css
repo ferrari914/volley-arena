@@ -116,7 +116,8 @@ body[data-input='keyboard'] .stick {
 #hint {
   position: absolute;
   left: 50%;
-  top: calc(var(--safe-t) + 14px);
+  /* 좌상단 표시와 같은 줄에 놓이면 글자가 겹친다. 한 줄 아래로 내린다. */
+  top: calc(var(--safe-t) + 40px);
   transform: translateX(-50%);
   padding: 7px 14px;
   border-radius: 999px;
@@ -126,4 +127,69 @@ body[data-input='keyboard'] .stick {
   color: var(--ink-dim);
   white-space: nowrap;
   transition: opacity 500ms ease;
+}
+
+/* --- 세로 화면 안내 --- */
+
+/*
+ * 이 게임의 화면 구성은 가로 기준이다(DESIGN: 게임 화면 구성).
+ * 세로에서는 좌우가 좁아 다가오는 적이 화면 밖에 머문다 — 억지로 맞추는 대신
+ * 돌려 달라고 말한다. 데스크톱의 좁은 창까지 막지 않도록 폭 조건을 함께 건다.
+ */
+#rotate-notice {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+  text-align: center;
+  background: #0b1020;
+  pointer-events: auto;
+  z-index: 10;
+}
+
+#rotate-notice .rotate-icon {
+  width: 62px;
+  height: 96px;
+  border: 3px solid rgba(234, 240, 255, 0.75);
+  border-radius: 12px;
+  animation: rotate-hint 2.4s ease-in-out infinite;
+}
+
+#rotate-notice p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+#rotate-notice small {
+  color: var(--ink-dim);
+}
+
+@keyframes rotate-hint {
+  0%,
+  35% {
+    transform: rotate(0deg);
+  }
+  65%,
+  100% {
+    transform: rotate(90deg);
+  }
+}
+
+@media (orientation: portrait) and (max-width: 820px) {
+  #rotate-notice {
+    display: flex;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #rotate-notice .rotate-icon {
+    animation: none;
+    transform: rotate(90deg);
+  }
 }
