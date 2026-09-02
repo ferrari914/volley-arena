@@ -39,13 +39,22 @@ case "${1:-}" in
     echo "── STOP 파일 ──"
     [ -f "$SCRIPT_DIR/STOP" ] && echo "  있음 (루프가 멈춘다)" || echo "  없음"
     echo "── 최근 로그 ──"
-    ls -t "$PROJECT_DIR/logs"/*.log 2>/dev/null | head -3 || echo "  아직 없음"
+    logs=("$PROJECT_DIR"/logs/*.log(N))
+    if (( ${#logs[@]} )); then
+      ls -t "${logs[@]}" | head -3
+    else
+      echo "  아직 없음"
+    fi
     echo "── 최근 커밋 ──"
     git -C "$PROJECT_DIR" log --oneline -5 2>/dev/null || echo "  없음"
     ;;
   log)
-    LATEST=$(ls -t "$PROJECT_DIR/logs"/*.log 2>/dev/null | head -1)
-    [ -n "$LATEST" ] && tail -f "$LATEST" || echo "로그가 아직 없다."
+    logs=("$PROJECT_DIR"/logs/*.log(N))
+    if (( ${#logs[@]} )); then
+      tail -f "$(ls -t "${logs[@]}" | head -1)"
+    else
+      echo "로그가 아직 없다."
+    fi
     ;;
   *)
     echo "사용법: ./loop/loopctl.sh {start|stop|status|log}"
