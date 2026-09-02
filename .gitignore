@@ -16,3 +16,6 @@ build/
 .vscode/
 .idea/
 *.swp
+
+# 스크린샷 QA 산출물
+shots/
