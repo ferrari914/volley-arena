@@ -17,24 +17,38 @@ case "${1:-}" in
       echo "먼저 loop/com.jadrion.arrowgame.loop.plist 를 LaunchAgents 로 복사할 것."
       exit 1
     fi
+    launchctl enable "gui/$(id -u)/$LABEL"
     launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null \
       || launchctl kickstart -k "gui/$(id -u)/$LABEL"
-    echo "루프를 켰다."
+    echo "루프를 켰다. (로그인 시 자동 시작 · 비정상 종료 시 재시작)"
     ;;
   stop)
+    # 부드럽게 끈다: 진행 중인 바퀴는 끝까지 돌고, 다음 바퀴를 시작하지 않는다.
     touch "$SCRIPT_DIR/STOP"
+    launchctl disable "gui/$(id -u)/$LABEL"
+    echo "루프를 껐다. 진행 중인 바퀴가 있으면 끝까지 돈 뒤 멈춘다. 로그인해도 다시 시작하지 않는다."
+    echo "지금 당장 죽이려면: ./loop/loopctl.sh kill   /   다시 켜려면: ./loop/loopctl.sh start"
+    ;;
+  kill)
+    # 당장 죽인다: 루프와 실행 중인 세션 모두. 커밋 안 된 작업은 사라진다.
+    touch "$SCRIPT_DIR/STOP"
+    launchctl disable "gui/$(id -u)/$LABEL"
     launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
-    echo "루프를 껐다. (STOP 파일 생성 + 자동 실행 해제)"
-    echo "다시 켜려면: ./loop/loopctl.sh start"
+    source "$SCRIPT_DIR/env.sh"
+    pkill -f "$CLAUDE_BIN -p " 2>/dev/null && echo "실행 중이던 세션을 죽였다." || true
+    echo "루프를 당장 껐다."
     ;;
   status)
-    echo "── 자동 실행 등록 ──"
-    if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
-      echo "  등록됨 · 실행 중"
-    elif [ -f "$PLIST" ]; then
-      echo "  plist 는 있으나 실행 중이 아님"
+    echo "── 자동 실행 ──"
+    if [ ! -f "$PLIST" ]; then
+      echo "  등록 안 됨 (plist 없음)"
     else
-      echo "  등록 안 됨"
+      if launchctl print-disabled "gui/$(id -u)" 2>/dev/null | grep -q "\"$LABEL\" => disabled"; then
+        echo "  등록됨 · 꺼짐 (로그인해도 시작하지 않음)"
+      else
+        echo "  등록됨 · 켜짐 (로그인 시 자동 시작)"
+      fi
+      launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && echo "  루프 프로세스: 실행 중" || echo "  루프 프로세스: 없음"
     fi
     echo "── 세션 ──"
     source "$SCRIPT_DIR/env.sh"
@@ -64,7 +78,7 @@ case "${1:-}" in
     fi
     ;;
   *)
-    echo "사용법: ./loop/loopctl.sh {start|stop|status|log}"
+    echo "사용법: ./loop/loopctl.sh {start|stop|kill|status|log}"
     exit 1
     ;;
 esac

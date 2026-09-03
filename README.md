@@ -75,6 +75,13 @@ which claude && claude --version && node --version
 
 ## 자동 실행 등록
 
+**등록돼 있고, 꺼져 있다.** plist 는 `~/Library/LaunchAgents/` 에 들어가 있지만
+`launchctl disable` 로 잠가 두어서 로그인해도 시작하지 않는다.
+`./loop/loopctl.sh start` 가 잠금을 풀고 켠다.
+
+프로젝트 폴더를 옮기거나 이름을 바꾸면 plist 안의 절대 경로가 깨진다.
+그때는 `loop/com.jadrion.arrowgame.loop.plist` 의 경로를 고친 뒤 다시 복사한다.
+
 ```bash
 cp "loop/com.jadrion.arrowgame.loop.plist" ~/Library/LaunchAgents/
 ```
@@ -92,6 +99,10 @@ cp "loop/com.jadrion.arrowgame.loop.plist" ~/Library/LaunchAgents/
 ```
 
 ```bash
+./loop/loopctl.sh kill
+```
+
+```bash
 ./loop/loopctl.sh status
 ```
 
@@ -99,13 +110,17 @@ cp "loop/com.jadrion.arrowgame.loop.plist" ~/Library/LaunchAgents/
 ./loop/loopctl.sh log
 ```
 
-- `start` — `STOP` 파일을 지우고 자동 실행을 켠다
-- `stop` — `STOP` 파일을 만들고 자동 실행을 해제한다. 진행 중인 바퀴는 끝까지 돈다
-- `status` — 등록 여부, STOP 파일 유무, 최근 로그, 최근 커밋을 한 번에 보여준다
+- `start` — 잠금을 풀고 켠다. 이후 로그인하면 자동 시작, 비정상 종료면 재시작
+- `stop` — **부드럽게** 끈다. 진행 중인 바퀴는 끝까지 돌고 다음 바퀴를 시작하지 않는다. 로그인해도 다시 시작하지 않는다
+- `kill` — **당장** 죽인다. 루프와 실행 중인 세션 모두. 커밋 안 된 작업은 사라진다
+- `status` — 등록/켜짐 여부, 실행 중인 세션, STOP 파일, 최근 로그·커밋을 한 번에
 - `log` — 최신 로그를 실시간으로 따라간다
 
 > **`loop.sh` 를 터미널에서 직접 실행하지 말 것.**
 > 무한 루프라 그 터미널이 묶이고, 창을 닫으면 루프도 같이 죽는다.
+
+> **맥이 잠들면 그 바퀴는 버려진다.** 세션이 도는 동안 `caffeinate` 가 유휴 절전을 막지만
+> **뚜껑을 닫는 절전은 막지 못한다.** 루프를 켜 둘 때는 전원을 연결하고 뚜껑을 열어 둘 것.
 
 ---
 
@@ -129,6 +144,7 @@ cp "loop/com.jadrion.arrowgame.loop.plist" ~/Library/LaunchAgents/
 | `SLEEP_BETWEEN` | `60` | 바퀴 사이 대기(초) |
 | `MAX_CYCLES` | `0` | 최대 바퀴 수 (0 = 무제한) |
 | `PERMISSION_FLAG` | `--dangerously-skip-permissions` | 아래 주의 참고 |
+| `KEEP_AWAKE` | `1` | 세션 중 유휴 절전 방지(caffeinate). `0` 이면 끔 |
 
 ### 권한 플래그에 대한 주의
 
