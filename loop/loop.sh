@@ -62,7 +62,8 @@ while true; do
   # 세션은 별도 세션/프로세스 그룹으로 격리한다. 세션이 종료하면서 자기가 띄운
   # 백그라운드 작업을 그룹 단위로 정리하는데, 같은 그룹이면 이 루프까지 같이 죽는다.
   # (macOS 에는 setsid 명령이 없어 perl 의 POSIX::setsid 로 대신한다)
-  /usr/bin/perl -e 'use POSIX; POSIX::setsid() or die "setsid: $!"; exec @ARGV or die "exec: $!"' -- \
+  if [ "$KEEP_AWAKE" = "1" ]; then awake=(/usr/bin/caffeinate -i); else awake=(); fi
+  "${awake[@]}" /usr/bin/perl -e 'use POSIX; POSIX::setsid() or die "setsid: $!"; exec @ARGV or die "exec: $!"' -- \
     "$CLAUDE_BIN" -p "$CYCLE_PROMPT" \
     --model "$MODEL" \
     --max-turns "$MAX_TURNS" \
