@@ -84,7 +84,12 @@ const VIEWS = [
  * 화면에 보이지 않는 것(세로 안내처럼 다른 방향에서만 뜨는 것)은 검사에서 알아서 빠진다.
  */
 const GUARDED = [
-  ['좌상단 표시', '#hud-debug'],
+  ['위쪽 정보 줄', '#hud-top'],
+  ['레벨 표시', '#hud-level'],
+  ['경험치바', '#hud-xp'],
+  ['시간·처치', '#hud-stats'],
+  ['진단 표시', '#hud-debug'],
+  ['레벨업 알림', '#level-up'],
   ['조작 안내', '#hint'],
   ['이동 스틱', '.stick--move'],
   ['조준 스틱', '.stick--aim'],

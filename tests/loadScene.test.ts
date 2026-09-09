@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA, TARGET } from '../src/data/config';
+import { ARENA, CORE, TARGET } from '../src/data/config';
 import { LOAD_ARROWS, LOAD_TARGETS, LoadScene, loadSceneTargets } from './support/loadScene';
 
 const DT = 1 / 60;
@@ -41,6 +41,20 @@ describe('부하 장면', () => {
     }
     // 화살이 실제로 대상을 맞히고 있어야 충돌 판정까지 재는 것이다.
     expect(scene.world.hits).toBeGreaterThan(0);
+  });
+
+  it('경험치 코어도 부하에 포함된다', () => {
+    // 3번에서 코어가 붙었다. 대상이 계속 쓰러지므로 코어는 상한 가까이 차 있어야 한다 —
+    // 코어가 0인 장면을 재고 "빠르다"고 말하지 않기 위한 확인이다.
+    const scene = new LoadScene();
+    let minCores = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 1200; i += 1) {
+      scene.replenish();
+      scene.world.step(scene.nextInput(), DT);
+      if (i > 400) minCores = Math.min(minCores, scene.world.cores.length);
+    }
+    expect(minCores).toBeGreaterThanOrEqual(CORE.maxAlive / 2);
+    expect(scene.world.cores.length).toBeLessThanOrEqual(CORE.maxAlive);
   });
 
   it('대상은 전부 아레나 안에 선다', () => {

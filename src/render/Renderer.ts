@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import type { World } from '../core/World';
-import { ARENA, ARROW } from '../data/config';
+import { ARENA, ARROW, CORE } from '../data/config';
 import type { Vec2 } from '../core/math';
+import type { CoreOrigin } from '../entities/types';
 import {
   createArena,
   createArrow,
+  createCore,
   createLockMarker,
   createPlayer,
   createTarget,
@@ -30,6 +32,9 @@ export class Renderer {
   private readonly lockMarker = createLockMarker();
   private readonly arrowMeshes = new Map<number, THREE.Group>();
   private readonly arrowPool: THREE.Group[] = [];
+  /** 코어 메시. 출처를 함께 들고 있어야 회수할 때 맞는 쪽 풀로 돌려보낼 수 있다. */
+  private readonly coreMeshes = new Map<number, { mesh: THREE.Mesh; origin: CoreOrigin }>();
+  private readonly corePools: Record<CoreOrigin, THREE.Mesh[]> = { ambient: [], drop: [] };
 
   private readonly cameraFocus = new THREE.Vector3();
   private lastRenderTime = performance.now();
@@ -91,6 +96,7 @@ export class Renderer {
 
     this.syncTargets(world);
     this.syncArrows(world);
+    this.syncCores(world);
     this.syncCamera(player.pos, dt);
   }
 
@@ -140,6 +146,45 @@ export class Renderer {
       this.arrowMeshes.delete(id);
       // 새 화살은 초당 여러 발 나간다. 매번 새로 만들면 GC가 프레임을 튀게 한다.
       this.arrowPool.push(mesh);
+    }
+  }
+
+  /**
+   * 경험치 코어. 화살과 같은 풀 방식이다 — 난전에서는 초당 여러 개가 생겼다 사라지므로
+   * 매번 새로 만들면 GC가 프레임을 튀게 한다.
+   */
+  private syncCores(world: World): void {
+    const seen = new Set<number>();
+    for (const core of world.cores) {
+      seen.add(core.id);
+      let entry = this.coreMeshes.get(core.id);
+      if (!entry) {
+        const mesh = this.corePools[core.origin].pop() ?? createCore(core.origin === 'drop');
+        mesh.visible = true;
+        mesh.rotation.set(0.42, core.id * 0.7, 0);
+        this.scene.add(mesh);
+        entry = { mesh, origin: core.origin };
+        this.coreMeshes.set(core.id, entry);
+      }
+      const mesh = entry.mesh;
+      // 바닥에서 살짝 떠서 위아래로 흔들린다. 붙어 있으면 격자에 묻혀 보이지 않는다.
+      const bob = CORE.radius + 0.5 + Math.sin(core.age * 3.4 + core.id) * 0.13;
+      mesh.position.set(core.pos.x, bob, core.pos.y);
+      mesh.rotation.y += 0.035;
+
+      // 생길 때 커지고, 사라지기 3초 전부터 깜빡인다.
+      // 투명도 대신 크기로 알린다 — 반투명은 정렬 비용이 붙고 작은 화면에서 잘 안 보인다.
+      let scale = Math.min(1, core.age * 5);
+      if (core.ttl < 3) scale *= 0.72 + 0.28 * Math.sin(core.ttl * 17);
+      mesh.scale.setScalar(scale);
+    }
+
+    for (const [id, entry] of this.coreMeshes) {
+      if (seen.has(id)) continue;
+      this.scene.remove(entry.mesh);
+      entry.mesh.visible = false;
+      this.coreMeshes.delete(id);
+      this.corePools[entry.origin].push(entry.mesh);
     }
   }
 

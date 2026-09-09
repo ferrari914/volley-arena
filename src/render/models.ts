@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ARENA, ARROW, PLAYER, TARGET } from '../data/config';
+import { ARENA, ARROW, CORE, PLAYER, TARGET } from '../data/config';
 
 /**
  * 모든 도형 생성은 이 파일 안에서만 한다.
@@ -18,6 +18,8 @@ export const PALETTE = {
   target: 0xff6b6b,
   targetHit: 0xfff1b8,
   accent: 0xffd479,
+  core: 0x7bffcf,
+  coreDrop: 0xa6ff5e,
 } as const;
 
 function standard(color: number, extra: THREE.MeshStandardMaterialParameters = {}) {
@@ -182,4 +184,19 @@ export function createLockMarker(): THREE.Mesh {
   marker.position.y = 0.04;
   marker.visible = false;
   return marker;
+}
+
+/**
+ * 경험치 코어. 팔면체 하나로 만든다 — 아레나의 기둥·구·원기둥과 겹치지 않는
+ * 유일한 형태라, 작게 그려도 "저건 주우러 가는 것"으로 읽힌다.
+ * 드롭은 색을 달리해서 맵에 놓인 것보다 값지다는 것을 보여 준다.
+ */
+export function createCore(drop: boolean): THREE.Mesh {
+  const color = drop ? PALETTE.coreDrop : PALETTE.core;
+  const mesh = new THREE.Mesh(
+    new THREE.OctahedronGeometry(CORE.radius * (drop ? 1.15 : 0.95)),
+    standard(color, { emissive: color, emissiveIntensity: 0.75, roughness: 0.3 }),
+  );
+  mesh.castShadow = false;
+  return mesh;
 }

@@ -99,25 +99,120 @@ body[data-input='keyboard'] .stick {
   display: none;
 }
 
-/* --- 좌상단 진단 표시 --- */
+/* --- 위쪽 정보 줄: 레벨 · 경험치바 · 시간/처치 · 진단 --- */
 
-#hud-debug {
+/*
+ * 한 줄로 묶는다. 가로 화면의 세로 길이는 390px뿐이고
+ * 아래쪽은 엄지와 가상 스틱의 자리다(DESIGN: 화면 구성).
+ */
+#hud-top {
   position: absolute;
   top: calc(var(--safe-t) + 10px);
   left: calc(var(--safe-l) + 12px);
-  font-size: 12px;
-  line-height: 1.45;
-  letter-spacing: 0.02em;
+  right: calc(var(--safe-r) + 12px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#hud-level {
+  flex: none;
+  min-width: 52px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(123, 255, 207, 0.45);
+  background: rgba(123, 255, 207, 0.14);
+  color: #a9ffe0;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+#hud-level.is-up {
+  animation: level-pop 600ms ease-out;
+}
+
+#hud-xp {
+  flex: 1 1 auto;
+  max-width: 420px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(234, 240, 255, 0.16);
+  background: rgba(234, 240, 255, 0.1);
+  overflow: hidden;
+}
+
+#hud-xp-fill {
+  width: 100%;
+  height: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: linear-gradient(90deg, #5ec8ff, #7bffcf);
+  /* 폭이 아니라 scaleX를 움직인다 — 레이아웃을 다시 계산하지 않는다. */
+  transition: transform 90ms linear;
+}
+
+#hud-stats {
+  flex: none;
+  /* 경험치바가 최대 폭에서 멈춰도 이쪽은 오른쪽 끝에 붙는다. */
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+#hud-debug {
+  flex: none;
+  font-size: 11px;
   color: var(--ink-dim);
   font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 
+/* 레벨업 알림. 4번(3중 1택)이 들어오면 이 자리를 카드 3장이 대신한다. */
+#level-up {
+  position: absolute;
+  left: 50%;
+  top: 26%;
+  transform: translate(-50%, -50%) scale(0.9);
+  opacity: 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: #d9ffe9;
+  text-shadow: 0 0 18px rgba(123, 255, 207, 0.55);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+#level-up[data-show='1'] {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+@keyframes level-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.22);
+    border-color: rgba(123, 255, 207, 0.95);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
 #hint {
   position: absolute;
   left: 50%;
-  /* 좌상단 표시와 같은 줄에 놓이면 글자가 겹친다. 한 줄 아래로 내린다. */
-  top: calc(var(--safe-t) + 40px);
+  /* 위쪽 정보 줄과 겹치지 않게 그 아래로 내린다. */
+  top: calc(var(--safe-t) + 46px);
   transform: translateX(-50%);
   padding: 7px 14px;
   border-radius: 999px;
@@ -191,5 +286,9 @@ body[data-input='keyboard'] .stick {
   #rotate-notice .rotate-icon {
     animation: none;
     transform: rotate(90deg);
+  }
+
+  #hud-level.is-up {
+    animation: none;
   }
 }

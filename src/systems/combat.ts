@@ -28,6 +28,12 @@ export interface ArrowStepOptions {
 export interface ArrowStepResult {
   /** 이번 스텝에 대상을 맞힌 횟수. */
   hits: number;
+  /**
+   * 쓰러진 자리들. 경험치 코어가 여기에 떨어진다(3번).
+   * 위치를 여기서 돌려주지 않으면 World가 "어느 대상이 방금 죽었는지"를
+   * 다시 훑어야 한다 — 판정은 이미 이 안에서 끝났으므로 그 자리에서 알려 준다.
+   */
+  hitPoints: Vec2[];
 }
 
 /**
@@ -42,6 +48,7 @@ export function stepArrows(
 ): ArrowStepResult {
   const { dt, arenaRadius, arrowRadius, targetRadius, lifetime, respawnDelay } = options;
   const hitRadiusSq = (arrowRadius + targetRadius) ** 2;
+  const hitPoints: Vec2[] = [];
   let hits = 0;
 
   for (const arrow of arrows) {
@@ -59,6 +66,7 @@ export function stepArrows(
         target.hitFlash = 1;
         arrow.alive = false;
         hits += 1;
+        hitPoints.push({ x: target.pos.x, y: target.pos.y });
         break;
       }
     }
@@ -69,7 +77,7 @@ export function stepArrows(
     }
   }
 
-  return { hits };
+  return { hits, hitPoints };
 }
 
 /** 쓰러진 대상을 제자리에 다시 세운다. */
