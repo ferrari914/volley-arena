@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { World, type FrameInput } from '../src/core/World';
 import { ARROW, LEVEL, UPGRADE } from '../src/data/config';
 import { UPGRADE_CARDS } from '../src/data/upgrades';
-import { createXpCore, type UpgradeCard } from '../src/entities/types';
+import { createXpCore, type PlayerStats, type UpgradeCard } from '../src/entities/types';
 import { applyUpgrade, rollUpgradeChoices } from '../src/systems/upgrades';
 import { xpForLevel } from '../src/systems/experience';
 
@@ -17,6 +17,16 @@ function makeRandom(seed: number): () => number {
     return state / 4294967296;
   };
 }
+
+/** 카드를 적용해 볼 능력치 한 벌. 값이 하나 늘 때 고칠 자리를 여기 한 곳으로 둔다. */
+const baseStats = (): PlayerStats => ({
+  fireCooldown: 0.4,
+  moveSpeed: 7,
+  magnetRadius: 4,
+  xpMultiplier: 1,
+  arrowCount: 1,
+  pierce: 0,
+});
 
 const card = (id: string, maxStacks = 3): UpgradeCard => ({
   id,
@@ -84,7 +94,7 @@ describe('업그레이드 카드 뽑기', () => {
 
 describe('업그레이드 적용', () => {
   it('적힌 값에만 곱하고 원래 값은 건드리지 않는다', () => {
-    const stats = { fireCooldown: 0.4, moveSpeed: 7, magnetRadius: 4, xpMultiplier: 1, arrowCount: 1 };
+    const stats = baseStats();
     const next = applyUpgrade(stats, card('swift'));
     expect(next.moveSpeed).toBeCloseTo(7.7, 6);
     expect(next.fireCooldown).toBe(0.4);
@@ -92,7 +102,7 @@ describe('업그레이드 적용', () => {
   });
 
   it('개수 카드는 곱하지 않고 더한다 (화살 1.5발은 없다)', () => {
-    const stats = { fireCooldown: 0.4, moveSpeed: 7, magnetRadius: 4, xpMultiplier: 1, arrowCount: 1 };
+    const stats = baseStats();
     const plus: UpgradeCard = {
       id: 'volley',
       title: 'volley',
@@ -108,7 +118,7 @@ describe('업그레이드 적용', () => {
   });
 
   it('여러 장을 겹치면 곱해서 쌓인다', () => {
-    let stats = { fireCooldown: 0.4, moveSpeed: 7, magnetRadius: 4, xpMultiplier: 1, arrowCount: 1 };
+    let stats = baseStats();
     stats = applyUpgrade(stats, card('swift'));
     stats = applyUpgrade(stats, card('swift'));
     expect(stats.moveSpeed).toBeCloseTo(7 * 1.1 * 1.1, 6);
@@ -311,5 +321,74 @@ describe('다중 발사', () => {
   it('붙으면 한 놈에게 다 꽂히고, 멀면 가운데 한 발만 맞는다', () => {
     expect(volleyHits(5, 1)).toBe(3);
     expect(volleyHits(14, 1)).toBe(1);
+  });
+});
+
+/**
+ * DESIGN 8번 두 번째 카드 — 관통.
+ *
+ * 카드가 실제로 게임에 닿는 자리는 셋이다: 능력치에 더해지는가, 태어나는 화살이 그것을
+ * 들고 나가는가(적의 화살은 들지 않는다), 그리고 **다중 발사와 겹쳤을 때 다섯 발이
+ * 저마다 뚫는가.** 셋째가 이 카드를 넣으며 가장 조심한 곳이다.
+ */
+describe('관통', () => {
+  const pierceCard = UPGRADE_CARDS.find((c) => c.id === 'pierce');
+  const multishotCard = UPGRADE_CARDS.find((c) => c.id === 'multishot');
+  if (!pierceCard || !multishotCard) throw new Error('관통·다중 발사 카드가 없다');
+
+  it('한 장에 1명씩 더 뚫는다 (0 → 1 → 2)', () => {
+    let stats = baseStats();
+    expect(stats.pierce).toBe(0);
+    stats = applyUpgrade(stats, pierceCard);
+    expect(stats.pierce).toBe(1);
+    stats = applyUpgrade(stats, pierceCard);
+    expect(stats.pierce).toBe(2);
+  });
+
+  it('플레이어의 화살만 관통을 들고 나간다', () => {
+    const world = new World({ enemies: [] });
+    world.stats = applyUpgrade(world.stats, pierceCard);
+    world.addArrow({ x: 0, y: 0 }, { x: 1, y: 0 }, 'player');
+    world.addArrow({ x: 0, y: 0 }, { x: 1, y: 0 }, 'enemy');
+    expect(world.arrows.find((a) => a.owner === 'player')?.pierce).toBe(1);
+    expect(world.arrows.find((a) => a.owner === 'enemy')?.pierce).toBe(0);
+  });
+
+  /**
+   * 앞뒤로 선 두 놈에게 한 뭉치가 몇 번 꽂히는가. 다중 발사 쪽과 같은 방식으로
+   * 적을 그 자리에 못 박고 죽지 않게 둔다 — 재는 것은 전투 결과가 아니라 뚫는 횟수다.
+   */
+  function volleyHits(stacks: { multishot: number; pierce: number }): number {
+    const world = new World({ enemies: [{ x: 4, y: 0 }, { x: 8, y: 0 }] });
+    for (let i = 0; i < stacks.multishot; i += 1) {
+      world.stats = applyUpgrade(world.stats, multishotCard!);
+    }
+    for (let i = 0; i < stacks.pierce; i += 1) {
+      world.stats = applyUpgrade(world.stats, pierceCard!);
+    }
+    world.step(IDLE, DT);
+    world.player.fireCooldown = 999; // 두 번째 뭉치가 섞이면 무엇을 세는지 알 수 없다.
+    const pinned = world.enemies.map((e) => ({ enemy: e, at: { ...e.pos } }));
+    for (let i = 0; i < 60; i += 1) {
+      for (const { enemy, at } of pinned) {
+        enemy.pos = { x: at.x, y: at.y };
+        enemy.hp = enemy.maxHp;
+      }
+      world.player.hp = world.player.maxHp;
+      world.step(IDLE, DT);
+    }
+    return world.hits;
+  }
+
+  it('한 발이 앞엣놈을 뚫고 뒤엣놈까지 간다', () => {
+    expect(volleyHits({ multishot: 0, pierce: 0 })).toBe(1);
+    expect(volleyHits({ multishot: 0, pierce: 1 })).toBe(2);
+  });
+
+  it('다중 발사와 겹치면 다섯 발이 저마다 뚫는다', () => {
+    // 4m에서는 부채꼴 중 세 발이 앞엣놈에 닿고(다중 발사 검사와 같은 성질),
+    // 8m까지 벌어지면 가운데 한 발만 남는다. 3 + 1 = 4.
+    expect(volleyHits({ multishot: 2, pierce: 0 })).toBe(3);
+    expect(volleyHits({ multishot: 2, pierce: 1 })).toBe(4);
   });
 });

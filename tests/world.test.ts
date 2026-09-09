@@ -193,6 +193,7 @@ describe('World', () => {
       magnetRadius: CORE.magnetRadius,
       xpMultiplier: 1,
       arrowCount: 1,
+      pierce: 0,
     });
   });
 

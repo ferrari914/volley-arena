@@ -113,6 +113,7 @@ export class World {
     magnetRadius: CORE.magnetRadius,
     xpMultiplier: 1,
     arrowCount: 1,
+    pierce: 0,
   };
 
   /** 카드별로 몇 번 골랐는지. 다음 제시에서 최대치에 닿은 카드를 빼는 데 쓴다. */
@@ -442,6 +443,9 @@ export class World {
       damage: spec.damage,
       lifetime: spec.lifetime,
       age: 0,
+      // 관통은 플레이어의 카드다. 적의 화살이 노리는 것은 한 사람뿐이라
+      // 뚫고 지나갈 다음 상대가 없다.
+      pierce: owner === 'player' ? Math.max(0, Math.round(this.stats.pierce)) : 0,
       alive: true,
     });
   }

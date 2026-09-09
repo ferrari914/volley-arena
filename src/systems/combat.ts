@@ -55,6 +55,9 @@ export interface ArrowStepResult {
  *
  * 죽은 화살은 배열에서 지우지 않고 alive=false 로 두고, 호출한 쪽이 정리한다
  * (렌더러가 같은 프레임에 메시를 회수해야 하기 때문).
+ *
+ * 관통(`arrow.pierce`)이 남아 있는 화살은 맞히고도 사라지지 않고 계속 날아간다.
+ * 대신 맞힌 적을 `arrow.hitIds`에 적어 두고 다시 맞히지 않는다.
  */
 export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowStepResult {
   const { dt, arenaRadius, arrowRadius, enemyRadius, playerRadius, player, enemies } = options;
@@ -72,11 +75,13 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
     if (arrow.owner === 'player') {
       for (const enemy of enemies) {
         if (!enemy.alive) continue;
+        // 이미 뚫고 지나온 적은 건너뛴다. 이 한 줄이 없으면 관통 화살이 한 놈의 몸
+        // 안에 머무는 몇 프레임 동안 계속 꽂혀, 관통이 아니라 연타가 된다.
+        if (arrow.hitIds?.includes(enemy.id)) continue;
         if (segmentPointDistanceSq(from, to, enemy.pos) > enemyHitSq) continue;
 
         enemy.hp -= arrow.damage;
         enemy.hitFlash = 1;
-        arrow.alive = false;
         result.hits += 1;
         if (enemy.hp <= 0) {
           enemy.alive = false;
@@ -86,7 +91,15 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
           result.kills += 1;
           result.killPoints.push({ x: enemy.pos.x, y: enemy.pos.y });
         }
-        break;
+
+        if (arrow.pierce <= 0) {
+          arrow.alive = false;
+          break;
+        }
+        // 뚫고 나간다. 남은 적들도 계속 본다 — 적 둘이 한 프레임 안에 겹쳐 있는
+        // 드문 경우(막 되살아난 자리)에도 화살이 사라지지 않고 제 몫을 해야 한다.
+        arrow.pierce -= 1;
+        (arrow.hitIds ??= []).push(enemy.id);
       }
     } else if (
       // 무적인 동안에는 화살이 그냥 지나간다. 여기서 막지 않으면 동시에 날아온

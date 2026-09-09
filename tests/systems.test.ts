@@ -16,6 +16,7 @@ const arrow = (
   vy: number,
   owner: ArrowOwner = 'player',
   damage = 1,
+  pierce = 0,
 ): Arrow => ({
   id: 1,
   owner,
@@ -24,6 +25,7 @@ const arrow = (
   damage,
   age: 0,
   lifetime: 1.6,
+  pierce,
   alive: true,
 });
 
@@ -153,5 +155,61 @@ describe('stepArrows', () => {
     for (let i = 0; i < 200 && flying.alive; i += 1) stepArrows([flying], options());
     expect(flying.alive).toBe(false);
     expect(flying.age).toBeGreaterThanOrEqual(flying.lifetime);
+  });
+});
+
+/**
+ * DESIGN 8번 두 번째 카드 — 관통.
+ *
+ * 여기서 지키는 것은 둘이다: 뒤에 선 놈까지 뚫고 가는가, 그리고 **한 놈을 한 번만
+ * 맞히는가.** 두 번째가 진짜 함정이다 — 한 프레임에 나아가는 거리(34m/s × 1/60 ≈ 0.57m)가
+ * 적 판정 지름(1.72m)보다 짧아서, 맞힌 적을 기억하지 않으면 몸을 빠져나가는 서너 프레임 동안
+ * 계속 꽂힌다. 그러면 관통이 아니라 "가까이 붙으면 피해 3배"가 된다.
+ */
+describe('stepArrows — 관통', () => {
+  /** 화살 하나를 여러 스텝 날리고 그동안의 명중을 합친다. */
+  function fly(flying: Arrow, enemies: ReturnType<typeof enemyAt>[], steps: number): number {
+    let hits = 0;
+    for (let i = 0; i < steps; i += 1) hits += stepArrows([flying], options({ enemies })).hits;
+    return hits;
+  }
+
+  it('관통이 없으면 처음 맞힌 자리에서 멈춘다', () => {
+    const line = [enemyAt(2, 0), enemyAt(5, 0)];
+    const flying = arrow(0, 0, 34, 0);
+    expect(fly(flying, line, 30)).toBe(1);
+    expect(flying.alive).toBe(false);
+    expect(line[1]?.hp).toBe(ENEMY.maxHp);
+  });
+
+  it('관통이 남은 만큼 뒤엣놈을 뚫고 가다가, 다 쓰면 거기서 멈춘다', () => {
+    const line = [enemyAt(2, 0), enemyAt(5, 0), enemyAt(8, 0)];
+    const flying = arrow(0, 0, 34, 0, 'player', 1, 1);
+    expect(fly(flying, line, 30)).toBe(2);
+    expect(flying.alive).toBe(false);
+    expect(line[0]?.hp).toBe(ENEMY.maxHp - 1);
+    expect(line[1]?.hp).toBe(ENEMY.maxHp - 1);
+    // 관통을 다 쓴 뒤에 만난 셋째는 멀쩡하다.
+    expect(line[2]?.hp).toBe(ENEMY.maxHp);
+  });
+
+  it('한 놈을 여러 프레임에 걸쳐 다시 맞히지 않는다', () => {
+    // 느린 화살이라 적의 몸 안에 열 프레임 넘게 머문다. 기억하지 않으면 그만큼 꽂힌다.
+    const slow = arrow(0, 0, 6, 0, 'player', 1, 2);
+    const single = [enemyAt(1, 0)];
+    expect(fly(slow, single, 40)).toBe(1);
+    // 관통을 한 번만 쓰고 계속 날아간다.
+    expect(slow.pierce).toBe(1);
+    expect(slow.alive).toBe(true);
+  });
+
+  it('쓰러뜨린 뒤에도 남은 관통으로 다음 놈을 맞힌다', () => {
+    const front = enemyAt(2, 0);
+    front.hp = 1;
+    const line = [front, enemyAt(5, 0)];
+    const flying = arrow(0, 0, 34, 0, 'player', 1, 1);
+    expect(fly(flying, line, 30)).toBe(2);
+    expect(front.alive).toBe(false);
+    expect(line[1]?.hp).toBe(ENEMY.maxHp - 1);
   });
 });
