@@ -336,7 +336,7 @@ async function checkDefeat(page, name, problems) {
 
   // 판이 끝났으므로 시계도 멈춰 있어야 한다.
   const stopped = await readClock(page);
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(FROZEN_WAIT);
   if ((await readClock(page)) !== stopped) {
     problems.push(`[${name}] 쓰러졌는데 게임이 계속 흐른다 (${stopped})`);
   }
@@ -489,9 +489,8 @@ async function checkRevive(page, name, problems, levelAtDeath) {
   }
 
   const before = await readClock(page);
-  await page.waitForTimeout(900);
-  const after = await readClock(page);
-  if (before === after) {
+  const after = await waitForClockChange(page, before);
+  if (after === null) {
     problems.push(`[${name}] 이어하기를 했는데 게임이 멈춰 있다 (${before} 그대로)`);
     return;
   }
@@ -570,9 +569,7 @@ async function checkRestart(page, name, problems, storedBefore) {
   }
   await page.screenshot({ path: `${OUT}/${name}-restart.png` });
 
-  // 시계는 초 단위로만 적히므로 1초보다 넉넉히 기다린 뒤에 비교한다.
-  await page.waitForTimeout(1600);
-  if ((await readClock(page)) === clock) {
+  if ((await waitForClockChange(page, clock)) === null) {
     problems.push(`[${name}] 처음부터를 눌렀는데 새 판이 흐르지 않는다 (${clock} 그대로)`);
   }
   console.log(`  처음부터: ${level} · ${clock}부터 새 판이 돈다`);
@@ -622,6 +619,34 @@ function readClock(page) {
 }
 
 /**
+ * **시계는 초 단위로만 적힌다.** 그래서 "잠깐 기다렸다 견준다"로는 흐르는지를 잴 수 없다 —
+ * 1초 눈금을 넘지 못한 기다림은 **도는 게임도 멈춘 것으로 읽는다.**
+ * 세션 20에 `npm run qa`가 실제로 여기서 두 번 걸렸다(이어하기 뒤 900ms 기다림).
+ * 브라우저로 확인해 보니 시계는 1.05초마다 또박또박 넘어가고 있었다.
+ *
+ * 그래서 기다리는 시간을 늘리는 대신 **바뀔 때까지 기다린다.** 진짜로 멈춘 화면은
+ * 한도까지 가서 걸리므로 검사가 무뎌지지 않는다(오히려 빨라진다 — 흐르면 곧바로 돌아온다).
+ *
+ * 흐르면 바뀐 문구를, 한도 안에 안 바뀌면 null.
+ */
+async function waitForClockChange(page, before, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(150);
+    const now = await readClock(page);
+    if (now !== before) return now;
+  }
+  return null;
+}
+
+/**
+ * 반대쪽("멈춰 있는가")을 잴 때 기다리는 시간(ms).
+ * 1초 눈금을 확실히 넘기고도 그대로여야 멈춘 것이다 — 700ms로 재면
+ * 흐르는 시계도 열 번에 세 번은 멈춘 것으로 보인다.
+ */
+const FROZEN_WAIT = 1400;
+
+/**
  * 레벨업 3중 1택(DESIGN 4번)을 화면에서 확인한다.
  * 코어를 주워 레벨이 오른 직후에 부른다 — 그 시점에 카드가 떠 있어야 한다.
  *
@@ -654,7 +679,7 @@ async function checkUpgradeCards(page, name, problems, pickCard) {
 
   // ① 멈추는가. 화면의 시계가 멈춰 있어야 한다.
   const before = await readClock(page);
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(FROZEN_WAIT);
   const during = await readClock(page);
   if (before !== during) {
     problems.push(`[${name}] 카드가 떠 있는데 게임이 계속 흐른다 (${before} → ${during})`);
@@ -689,9 +714,7 @@ async function checkUpgradeCards(page, name, problems, pickCard) {
   }
 
   // ③ 다시 흐르는가. 여기까지 봐야 "멈춘 채로 남는" 고장을 잡는다.
-  await page.waitForTimeout(700);
-  const after = await readClock(page);
-  if (after === during) {
+  if ((await waitForClockChange(page, during)) === null) {
     problems.push(`[${name}] 카드를 고른 뒤에도 게임이 멈춰 있다 (${during} 그대로)`);
   }
 
