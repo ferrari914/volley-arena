@@ -6,40 +6,85 @@ export interface Player {
   facing: number;
   /** 다음 발사까지 남은 시간(s). */
   fireCooldown: number;
-}
-
-export interface Arrow {
-  /** 렌더러가 메시를 짝지을 때 쓰는 고유 번호. */
-  id: number;
-  pos: Vec2;
-  /** 이동 속도 벡터(m/s). */
-  vel: Vec2;
-  age: number;
-  alive: boolean;
-}
-
-/** 자동 조준이 잡는 대상. 5번(적 봇)에서 실제 적으로 교체된다. */
-export interface Target {
-  /** 맞은 뒤 같은 자리에 다시 세우기 위해 기억해 둔다. */
-  home: Vec2;
-  pos: Vec2;
-  alive: boolean;
-  respawnTimer: number;
+  hp: number;
+  maxHp: number;
+  /** 남은 무적 시간(s). 0보다 크면 적의 화살이 그냥 지나간다. */
+  invulnerable: number;
   /** 피격 연출용. 1에서 0으로 줄어든다. */
   hitFlash: number;
 }
 
-export function createPlayer(): Player {
-  return { pos: { x: 0, y: 0 }, facing: 0, fireCooldown: 0 };
+/**
+ * 화살은 누가 쐈는지를 들고 다닌다. 이것이 없으면 적의 화살이 적을 맞히고
+ * 플레이어의 화살이 플레이어를 맞힌다 — 5번에서 가장 중요한 한 줄이다.
+ */
+export type ArrowOwner = 'player' | 'enemy';
+
+export interface Arrow {
+  /** 렌더러가 메시를 짝지을 때 쓰는 고유 번호. */
+  id: number;
+  owner: ArrowOwner;
+  pos: Vec2;
+  /** 이동 속도 벡터(m/s). */
+  vel: Vec2;
+  /** 맞았을 때 깎는 체력. */
+  damage: number;
+  age: number;
+  /**
+   * 이 시간이 지나면 사라진다(s). 화살마다 들고 있는 이유:
+   * 적의 화살은 느려서 더 오래 날아야 하고, 주인별 표를 다시 찾아보지 않게 한다.
+   */
+  lifetime: number;
+  alive: boolean;
 }
 
-export function createTarget(x: number, y: number): Target {
+/** 적 봇 (DESIGN 5번). 플레이어를 쫓아와 겨누고 쏜다. */
+export interface Enemy {
+  /** 렌더러가 메시를 짝지을 때 쓰는 고유 번호. 옆으로 도는 방향도 여기서 갈린다. */
+  id: number;
+  /** 쓰러진 뒤 같은 자리에 다시 세우기 위해 기억해 둔다. */
+  home: Vec2;
+  pos: Vec2;
+  /** 바라보는 각도(rad). 화살은 이 방향으로 나간다. */
+  facing: number;
+  hp: number;
+  maxHp: number;
+  alive: boolean;
+  respawnTimer: number;
+  /** 피격 연출용. 1에서 0으로 줄어든다. */
+  hitFlash: number;
+  /** 겨누는 중이면 남은 시간(s). 0보다 크면 멈춰 서 있고, 0이 되는 순간 쏜다. */
+  aimTimer: number;
+  /** 다음으로 겨눌 수 있을 때까지 남은 시간(s). */
+  fireCooldown: number;
+}
+
+export function createPlayer(maxHp: number): Player {
   return {
+    pos: { x: 0, y: 0 },
+    facing: 0,
+    fireCooldown: 0,
+    hp: maxHp,
+    maxHp,
+    invulnerable: 0,
+    hitFlash: 0,
+  };
+}
+
+export function createEnemy(id: number, x: number, y: number, maxHp: number): Enemy {
+  return {
+    id,
     home: { x, y },
     pos: { x, y },
+    // 처음부터 아레나 가운데(플레이어의 시작 자리)를 본다.
+    facing: Math.atan2(-y, -x),
+    hp: maxHp,
+    maxHp,
     alive: true,
     respawnTimer: 0,
     hitFlash: 0,
+    aimTimer: 0,
+    fireCooldown: 0,
   };
 }
 

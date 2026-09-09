@@ -1,22 +1,30 @@
 import * as THREE from 'three';
 import type { World } from '../core/World';
-import { ARENA, ARROW, CORE } from '../data/config';
+import { ARENA, ARROW, CORE, ENEMY } from '../data/config';
 import type { Vec2 } from '../core/math';
-import type { CoreOrigin } from '../entities/types';
+import type { ArrowOwner, CoreOrigin } from '../entities/types';
 import {
   createArena,
   createArrow,
   createCore,
+  createEnemy,
   createLockMarker,
   createPlayer,
-  createTarget,
+  CAMERA_OFFSET as CAMERA_OFFSET_SPEC,
+  PALETTE,
+  type EnemyView,
 } from './models';
 
 /**
  * 쿼터뷰 카메라가 플레이어로부터 떨어져 있는 거리. 1인칭도 정탑다운도 아니다.
  * 더 멀리 빼면 주변이 넓게 보이지만 작은 화면에서 플레이어가 점이 된다.
+ * 값은 models.ts가 갖고 있다 — 적 머리 위 체력바가 같은 각도를 써야 하기 때문이다.
  */
-const CAMERA_OFFSET = new THREE.Vector3(0, 15.5, 12.5);
+const CAMERA_OFFSET = new THREE.Vector3(
+  CAMERA_OFFSET_SPEC.x,
+  CAMERA_OFFSET_SPEC.y,
+  CAMERA_OFFSET_SPEC.z,
+);
 /** 픽셀 비율 상한. 3배 이상 화면에서 그대로 그리면 중급 기기가 못 버틴다. */
 const MAX_PIXEL_RATIO = 2;
 
@@ -28,10 +36,11 @@ export class Renderer {
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
   private readonly playerMesh = createPlayer();
-  private readonly targetMeshes: THREE.Group[] = [];
+  private readonly enemyViews: EnemyView[] = [];
   private readonly lockMarker = createLockMarker();
-  private readonly arrowMeshes = new Map<number, THREE.Group>();
-  private readonly arrowPool: THREE.Group[] = [];
+  /** 화살 메시. 주인을 함께 들고 있어야 회수할 때 맞는 쪽 풀로 돌려보낸다(코어와 같은 규칙). */
+  private readonly arrowMeshes = new Map<number, { mesh: THREE.Group; owner: ArrowOwner }>();
+  private readonly arrowPools: Record<ArrowOwner, THREE.Group[]> = { player: [], enemy: [] };
   /** 코어 메시. 출처를 함께 들고 있어야 회수할 때 맞는 쪽 풀로 돌려보낼 수 있다. */
   private readonly coreMeshes = new Map<number, { mesh: THREE.Mesh; origin: CoreOrigin }>();
   private readonly corePools: Record<CoreOrigin, THREE.Mesh[]> = { ambient: [], drop: [] };
@@ -94,30 +103,64 @@ export class Renderer {
     this.playerMesh.position.set(player.pos.x, 0, player.pos.y);
     this.playerMesh.rotation.y = yawFromAngle(player.facing);
 
-    this.syncTargets(world);
+    // 맞은 순간 잠깐 부풀렸다 돌아온다. 몸이 반응하지 않으면 맞은 줄 모른다.
+    const pop = 1 + world.player.hitFlash * 0.16;
+    this.playerMesh.scale.set(pop, pop, pop);
+
+    this.syncEnemies(world);
     this.syncArrows(world);
     this.syncCores(world);
     this.syncCamera(player.pos, dt);
   }
 
-  private syncTargets(world: World): void {
-    while (this.targetMeshes.length < world.targets.length) {
-      const mesh = createTarget();
-      this.targetMeshes.push(mesh);
-      this.scene.add(mesh);
+  /**
+   * 적. 수는 판 내내 바뀌지 않으므로 배열 자리로 짝짓는다.
+   * 매 프레임 만지는 것은 셋이다 — 자리·체력바·겨누는 예고.
+   */
+  private syncEnemies(world: World): void {
+    while (this.enemyViews.length < world.enemies.length) {
+      const view = createEnemy();
+      this.enemyViews.push(view);
+      this.scene.add(view.group);
     }
-    world.targets.forEach((target, index) => {
-      const mesh = this.targetMeshes[index];
-      if (!mesh) return;
-      mesh.visible = target.alive;
-      mesh.position.set(target.pos.x, 0, target.pos.y);
+
+    world.enemies.forEach((enemy, index) => {
+      const view = this.enemyViews[index];
+      if (!view) return;
+      const group = view.group;
+      group.visible = enemy.alive;
+      if (!enemy.alive) return;
+
+      group.position.set(enemy.pos.x, 0, enemy.pos.y);
+      group.rotation.y = yawFromAngle(enemy.facing);
       // 맞는 순간 잠깐 부풀렸다 돌아온다. 명중이 화면에 보이지 않으면 쏘는 맛이 없다.
-      const pop = 1 + target.hitFlash * 0.28;
-      mesh.scale.set(pop, pop, pop);
+      const pop = 1 + enemy.hitFlash * 0.22;
+      group.scale.set(pop, pop, pop);
+
+      // 체력바는 한 대라도 맞은 적에게만 띄운다. 전부 띄우면 화면이 막대로 덮인다.
+      const ratio = Math.max(enemy.hp, 0) / enemy.maxHp;
+      view.hpBar.visible = ratio < 1;
+      view.hpFill.scale.x = ratio;
+
+      // 겨누는 동안: 몸이 달아오르고 발밑 고리가 좁혀진다.
+      // 여기가 이 게임에서 유일한 "지금 나를 노리고 있다"는 예고다.
+      const aiming = enemy.aimTimer > 0;
+      view.aimRing.visible = aiming;
+      if (aiming) {
+        const charge = 1 - enemy.aimTimer / ENEMY.aimTime;
+        view.aimRing.scale.setScalar(2.1 - charge * 1.1);
+        view.bodyMaterial.emissive.setHex(PALETTE.enemyArrow);
+        view.bodyMaterial.emissiveIntensity = 0.15 + charge * 0.5;
+      } else if (enemy.hitFlash > 0) {
+        view.bodyMaterial.emissive.setHex(PALETTE.enemyHit);
+        view.bodyMaterial.emissiveIntensity = enemy.hitFlash * 0.8;
+      } else {
+        view.bodyMaterial.emissiveIntensity = 0;
+      }
     });
 
-    const locked = world.lockedTarget;
-    this.lockMarker.visible = locked !== null;
+    const locked = world.lockedEnemy;
+    this.lockMarker.visible = locked !== null && locked.alive;
     if (locked) {
       this.lockMarker.position.set(locked.pos.x, 0.04, locked.pos.y);
       this.lockMarker.rotation.z += 0.02;
@@ -128,24 +171,25 @@ export class Renderer {
     const seen = new Set<number>();
     for (const arrow of world.arrows) {
       seen.add(arrow.id);
-      let mesh = this.arrowMeshes.get(arrow.id);
-      if (!mesh) {
-        mesh = this.arrowPool.pop() ?? createArrow();
+      let entry = this.arrowMeshes.get(arrow.id);
+      if (!entry) {
+        const mesh = this.arrowPools[arrow.owner].pop() ?? createArrow(arrow.owner);
         mesh.visible = true;
         this.scene.add(mesh);
-        this.arrowMeshes.set(arrow.id, mesh);
+        entry = { mesh, owner: arrow.owner };
+        this.arrowMeshes.set(arrow.id, entry);
       }
-      mesh.position.set(arrow.pos.x, ARROW.height, arrow.pos.y);
-      mesh.rotation.y = yawFromAngle(Math.atan2(arrow.vel.y, arrow.vel.x));
+      entry.mesh.position.set(arrow.pos.x, ARROW.height, arrow.pos.y);
+      entry.mesh.rotation.y = yawFromAngle(Math.atan2(arrow.vel.y, arrow.vel.x));
     }
 
-    for (const [id, mesh] of this.arrowMeshes) {
+    for (const [id, entry] of this.arrowMeshes) {
       if (seen.has(id)) continue;
-      this.scene.remove(mesh);
-      mesh.visible = false;
+      this.scene.remove(entry.mesh);
+      entry.mesh.visible = false;
       this.arrowMeshes.delete(id);
       // 새 화살은 초당 여러 발 나간다. 매번 새로 만들면 GC가 프레임을 튀게 한다.
-      this.arrowPool.push(mesh);
+      this.arrowPools[entry.owner].push(entry.mesh);
     }
   }
 

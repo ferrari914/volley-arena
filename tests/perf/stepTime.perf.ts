@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LOAD_ARROWS, LOAD_TARGETS, LoadScene } from '../support/loadScene';
+import { LOAD_ARROWS, LOAD_ENEMIES, LoadScene } from '../support/loadScene';
 
 const DT = 1 / 60;
 /** 60fps 한 프레임의 전체 예산(ms). 시뮬레이션은 이 중 일부만 써야 한다. */
@@ -15,7 +15,7 @@ const STEP_BUDGET_MS = FRAME_BUDGET_MS / 8;
  * ①만 두면 너무 헐겁다 — 실제 측정값(중앙값 0.015ms 안팎)의 100배가 느려져도
  * ①은 통과한다. 그래서 실측값의 20배쯤에 선을 하나 더 둔다.
  * 이건 "빠른가"가 아니라 "구조가 바뀌었나"를 보는 선이다.
- * 화살↔대상 전수 비교(60×20)보다 나쁜 것이 들어오면 여기서 먼저 걸린다.
+ * 화살↔적 전수 비교(60×20)보다 나쁜 것이 들어오면 여기서 먼저 걸린다.
  *
  * 기계가 바뀌어 이 선이 실제로 좁으면, 임의로 올리지 말고
  * 새 기계의 실측값을 STATUS.md에 적고 함께 올릴 것.
@@ -30,7 +30,7 @@ function quantile(sorted: readonly number[], q: number): number {
   return sorted[index] ?? 0;
 }
 
-describe(`World.step() 처리 시간 — 적 ${LOAD_TARGETS} · 투사체 ${LOAD_ARROWS}`, () => {
+describe(`World.step() 처리 시간 — 적 ${LOAD_ENEMIES} · 투사체 ${LOAD_ARROWS}`, () => {
   it('한 스텝이 프레임 예산 안에 들어온다', () => {
     const scene = new LoadScene();
 
@@ -41,7 +41,7 @@ describe(`World.step() 처리 시간 — 적 ${LOAD_TARGETS} · 투사체 ${LOAD
     }
 
     const samples: number[] = [];
-    let minAliveTargets = Number.POSITIVE_INFINITY;
+    let minAliveEnemies = Number.POSITIVE_INFINITY;
     let minArrows = Number.POSITIVE_INFINITY;
     const startElapsed = scene.world.elapsed;
 
@@ -49,7 +49,7 @@ describe(`World.step() 처리 시간 — 적 ${LOAD_TARGETS} · 투사체 ${LOAD
       // 부하를 되돌리는 시간은 게임의 시간이 아니므로 측정 밖에 둔다.
       scene.replenish();
       const input = scene.nextInput();
-      minAliveTargets = Math.min(minAliveTargets, scene.aliveTargets);
+      minAliveEnemies = Math.min(minAliveEnemies, scene.aliveEnemies);
       minArrows = Math.min(minArrows, scene.world.arrows.length);
 
       const start = performance.now();
@@ -58,7 +58,7 @@ describe(`World.step() 처리 시간 — 적 ${LOAD_TARGETS} · 투사체 ${LOAD
     }
 
     // 텅 빈 장면을 재고 "빠르다"고 말하는 일이 없게, 부하가 실제로 걸렸는지 먼저 본다.
-    expect(minAliveTargets).toBe(LOAD_TARGETS);
+    expect(minAliveEnemies).toBe(LOAD_ENEMIES);
     expect(minArrows).toBeGreaterThanOrEqual(LOAD_ARROWS);
     // 시뮬레이션이 실제로 매 스텝 돌았는지. 4번의 카드가 떠 있으면 step()은 빈 함수가 되고,
     // 그 상태의 0.000ms는 "빠르다"가 아니라 "아무것도 재지 않았다"이다.
@@ -75,7 +75,7 @@ describe(`World.step() 처리 시간 — 적 ${LOAD_TARGETS} · 투사체 ${LOAD
     console.log(
       [
         '',
-        `  부하 장면: 적 ${LOAD_TARGETS}마리(전부 살아 있음) · 투사체 ${LOAD_ARROWS}개 · ${MEASURED_STEPS} 스텝`,
+        `  부하 장면: 적 ${LOAD_ENEMIES}마리(전부 살아 있음) · 투사체 ${LOAD_ARROWS}개 · ${MEASURED_STEPS} 스텝`,
         `  프레임 예산(60fps): ${FRAME_BUDGET_MS.toFixed(2)} ms`,
         `  중앙값: ${median.toFixed(4)} ms  (프레임 예산의 ${pct(median)})`,
         `  평균  : ${mean.toFixed(4)} ms`,

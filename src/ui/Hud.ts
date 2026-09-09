@@ -7,19 +7,22 @@ const HINT_SECONDS = 6;
 const LEVEL_UP_SECONDS = 1.4;
 
 /**
- * 화면 위쪽 한 줄: 레벨 · 경험치바 · 시간/처치 · 진단(fps·조준).
- * 체력바는 5번(적 봇)에서 이 줄에 붙는다.
+ * 화면 위쪽 한 줄: 레벨 · 체력바/경험치바 · 시간/처치 · 진단(fps·조준).
  *
  * 한 줄에 몰아 둔 이유: 가로 화면의 세로 길이는 390px밖에 안 되고,
  * 아래쪽 절반은 엄지손가락과 가상 스틱의 자리다(DESIGN 화면 구성).
+ * 두 바는 위아래로 겹쳐 쌓는다 — 나란히 놓으면 각각이 절반 길이가 되어
+ * 작은 화면에서 얼마나 찼는지 읽히지 않는다. 위가 체력, 아래가 경험치다.
  */
 export class Hud {
   private readonly level: HTMLElement;
+  private readonly hpFill: HTMLElement;
   private readonly xpFill: HTMLElement;
   private readonly stats: HTMLElement;
   private readonly readout: HTMLElement;
   private readonly hint: HTMLElement;
   private readonly levelUp: HTMLElement;
+  private readonly hurt: HTMLElement;
 
   private hintHidden = false;
   private lastLevel = 1;
@@ -35,12 +38,23 @@ export class Hud {
     this.level.textContent = 'Lv 1';
     top.appendChild(this.level);
 
+    const bars = document.createElement('div');
+    bars.id = 'hud-bars';
+
+    const hp = document.createElement('div');
+    hp.id = 'hud-hp';
+    this.hpFill = document.createElement('div');
+    this.hpFill.id = 'hud-hp-fill';
+    hp.appendChild(this.hpFill);
+    bars.appendChild(hp);
+
     const bar = document.createElement('div');
     bar.id = 'hud-xp';
     this.xpFill = document.createElement('div');
     this.xpFill.id = 'hud-xp-fill';
     bar.appendChild(this.xpFill);
-    top.appendChild(bar);
+    bars.appendChild(bar);
+    top.appendChild(bars);
 
     this.stats = document.createElement('div');
     this.stats.id = 'hud-stats';
@@ -59,8 +73,14 @@ export class Hud {
 
     this.hint = document.createElement('div');
     this.hint.id = 'hint';
-    this.hint.textContent = '왼쪽으로 이동 · 오른쪽으로 조준 · 코어를 주우면 레벨이 오른다';
+    this.hint.textContent = '멈추지 말고 움직일 것 · 서 있으면 적의 화살에 맞는다';
     host.appendChild(this.hint);
+
+    // 맞았을 때 화면 가장자리가 붉어진다. 작은 화면에서는 위쪽 체력바보다
+    // 이쪽이 먼저 눈에 들어온다 — 시선은 발밑(적과 화살)에 가 있기 때문이다.
+    this.hurt = document.createElement('div');
+    this.hurt.id = 'hurt';
+    host.appendChild(this.hurt);
   }
 
   update(world: World, fps: number): void {
@@ -71,8 +91,15 @@ export class Hud {
 
     const mm = Math.floor(seconds / 60);
     const ss = Math.floor(seconds % 60);
-    this.stats.textContent = `${mm}:${ss.toString().padStart(2, '0')}   처치 ${world.hits}`;
-    this.readout.textContent = `${Math.round(fps)}fps ${world.lockedTarget ? '자동' : '수동'}`;
+    this.stats.textContent = `${mm}:${ss.toString().padStart(2, '0')}   처치 ${world.kills}`;
+    this.readout.textContent = `${Math.round(fps)}fps ${world.lockedEnemy ? '자동' : '수동'}`;
+
+    const player = world.player;
+    const hpRatio = Math.max(player.hp, 0) / player.maxHp;
+    this.hpFill.style.transform = `scaleX(${hpRatio.toFixed(4)})`;
+    // 체력이 얼마 안 남았으면 바 자체가 뛴다. 숫자를 읽지 않아도 알아야 한다.
+    this.hpFill.dataset['low'] = hpRatio <= 0.3 ? '1' : '0';
+    this.hurt.style.opacity = (player.hitFlash * 0.72).toFixed(3);
 
     const progress = world.progress;
     if (progress.level !== this.lastLevel) {

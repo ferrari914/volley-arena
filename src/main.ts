@@ -2,6 +2,7 @@ import { Ticker } from './core/Ticker';
 import { World } from './core/World';
 import { InputManager } from './input/InputManager';
 import { Renderer } from './render/Renderer';
+import { Defeat } from './ui/Defeat';
 import { Hud } from './ui/Hud';
 import { UpgradeCards } from './ui/UpgradeCards';
 import { IDLE_INPUT } from './input/types';
@@ -53,12 +54,14 @@ function boot(): void {
   const frameProbe = window.__frameProbe;
   const hud = new Hud(uiLayer);
   const cards = new UpgradeCards(uiLayer, (id) => world.chooseUpgrade(id));
+  const defeat = new Defeat(uiLayer);
   const input = new InputManager(app);
 
   const ticker = new Ticker(
     (dt) => {
-      // 카드를 고르는 동안은 입력을 읽지 않는다. 멈춤 자체는 World가 지키지만(step이 빈다),
-      // 카드를 누르려고 댄 손가락이 가상 스틱으로 새는 것은 여기서 막아야 한다.
+      // 카드를 고르는 동안과 쓰러진 뒤에는 입력을 읽지 않는다. 멈춤 자체는 World가
+      // 지키지만(step이 빈다), 화면의 버튼을 누르려고 댄 손가락이 가상 스틱으로 새는 것은
+      // 여기서 막아야 한다.
       if (world.isPaused) return;
 
       const state = document.hidden
@@ -74,6 +77,7 @@ function boot(): void {
       renderer.render();
       hud.update(world, ticker.fps);
       cards.sync(world.offer);
+      defeat.sync(world);
       frameProbe?.(world);
     },
   );

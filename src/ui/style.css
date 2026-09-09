@@ -104,7 +104,7 @@ body[data-paused='1'] .stick {
   opacity: 0.12;
 }
 
-/* --- 위쪽 정보 줄: 레벨 · 경험치바 · 시간/처치 · 진단 --- */
+/* --- 위쪽 정보 줄: 레벨 · 체력바/경험치바 · 시간/처치 · 진단 --- */
 
 /*
  * 한 줄로 묶는다. 가로 화면의 세로 길이는 390px뿐이고
@@ -139,10 +139,51 @@ body[data-paused='1'] .stick {
   animation: level-pop 600ms ease-out;
 }
 
-#hud-xp {
+/* 체력바와 경험치바는 위아래로 쌓는다. 나란히 두면 각각이 절반 길이가 되어
+   작은 화면에서 얼마나 찼는지 읽히지 않는다. 위가 체력, 아래가 경험치다. */
+#hud-bars {
   flex: 1 1 auto;
   max-width: 420px;
-  height: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#hud-hp {
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 138, 92, 0.28);
+  background: rgba(11, 16, 32, 0.55);
+  overflow: hidden;
+}
+
+#hud-hp-fill {
+  width: 100%;
+  height: 100%;
+  transform: scaleX(1);
+  transform-origin: left center;
+  background: linear-gradient(90deg, #ff6b6b, #ffb26b);
+  /* 폭이 아니라 scaleX를 움직인다 — 레이아웃을 다시 계산하지 않는다. */
+  transition: transform 120ms ease-out;
+}
+
+/* 얼마 안 남으면 바가 뛴다. 숫자를 읽지 않아도 알아야 한다. */
+#hud-hp-fill[data-low='1'] {
+  animation: hp-low 900ms ease-in-out infinite;
+}
+
+@keyframes hp-low {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+#hud-xp {
+  height: 8px;
   border-radius: 999px;
   border: 1px solid rgba(234, 240, 255, 0.16);
   background: rgba(234, 240, 255, 0.1);
@@ -161,7 +202,7 @@ body[data-paused='1'] .stick {
 
 #hud-stats {
   flex: none;
-  /* 경험치바가 최대 폭에서 멈춰도 이쪽은 오른쪽 끝에 붙는다. */
+  /* 바가 최대 폭에서 멈춰도 이쪽은 오른쪽 끝에 붙는다. */
   margin-left: auto;
   font-size: 13px;
   color: var(--ink);
@@ -214,6 +255,22 @@ body[data-paused='1'] .stick {
   100% {
     transform: scale(1);
   }
+}
+
+/*
+ * 맞았을 때 화면 가장자리가 붉어진다. 밝기는 Hud가 매 프레임 넣는다.
+ * 가운데는 비워 둔다 — 한창 싸우는 중에 화면 가운데를 덮으면 적이 보이지 않는다.
+ */
+#hurt {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    rgba(255, 60, 60, 0) 42%,
+    rgba(255, 45, 45, 0.55) 100%
+  );
 }
 
 #hint {
@@ -493,6 +550,82 @@ body[data-input='touch'] .up-card__key {
 
   .up-card,
   #upgrade-head {
+    animation: none;
+  }
+}
+
+
+/* --- 쓰러진 화면 (DESIGN 5번의 사망 처리) --- */
+
+/*
+ * 리스폰(무료)과 부활(광고)은 6번의 일이다. 지금은 "처음부터" 한 갈래만 둔다 —
+ * 죽은 뒤에 아무 일도 일어나지 않는 화면을 남겨 두지 않기 위해서다.
+ */
+#defeat {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 10px)
+    calc(var(--safe-l) + 12px);
+  background: radial-gradient(circle at 50% 45%, rgba(40, 10, 16, 0.62), rgba(6, 9, 20, 0.88));
+  pointer-events: auto;
+  z-index: 6;
+}
+
+#defeat[data-show='1'] {
+  display: flex;
+  animation: card-in 260ms ease-out both;
+}
+
+#defeat-title {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #ffb9b9;
+  text-shadow: 0 0 22px rgba(255, 107, 107, 0.45);
+}
+
+#defeat-summary {
+  font-size: 14px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+#defeat-again {
+  margin-top: 6px;
+  /* 손가락으로 누를 것이므로 애플이 말하는 44px 최소 크기를 지킨다. */
+  min-width: 168px;
+  min-height: 46px;
+  padding: 0 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(123, 255, 207, 0.5);
+  background: rgba(123, 255, 207, 0.16);
+  color: #a9ffe0;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#defeat-again:active {
+  transform: scale(0.97);
+}
+
+#defeat-again:focus-visible {
+  outline: 2px solid #7bffcf;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #defeat[data-show='1'] {
+    animation: none;
+  }
+
+  #hud-hp-fill[data-low='1'] {
     animation: none;
   }
 }

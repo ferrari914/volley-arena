@@ -1,20 +1,22 @@
-import { AIM, ARENA, ARROW, CORE, LEVEL, PLAYER, TARGET, UPGRADE } from '../data/config';
+import { AIM, ARENA, ARROW, CORE, ENEMY, LEVEL, PLAYER, UPGRADE } from '../data/config';
 import { UPGRADE_CARDS } from '../data/upgrades';
 import {
+  createEnemy,
   createPlayer,
-  createTarget,
   createXpCore,
   type Arrow,
+  type ArrowOwner,
+  type Enemy,
   type Player,
   type PlayerStats,
   type Progress,
-  type Target,
   type UpgradeOffer,
   type XpCore,
 } from '../entities/types';
 import { normalize, rotateToward, type Vec2 } from './math';
-import { findNearestTarget } from '../systems/autoAim';
-import { stepArrows, stepTargets } from '../systems/combat';
+import { findNearestEnemy } from '../systems/autoAim';
+import { stepArrows, stepPlayerRecovery } from '../systems/combat';
+import { stepEnemies } from '../systems/enemyAi';
 import {
   createDropCores,
   createProgress,
@@ -32,8 +34,11 @@ export interface FrameInput {
   aim: Vec2 | null;
 }
 
-/** 표준 대상 배치. 자동 조준이 "가장 가까운" 것을 고르는지 눈으로 보이게 흩어 둔다. */
-const TARGET_LAYOUT: readonly Vec2[] = [
+/**
+ * 표준 적 배치. 자동 조준이 "가장 가까운" 것을 고르는지 눈으로 보이게 흩어 둔다.
+ * 적은 쓰러지면 이 자리로 돌아와 다시 선다 — 플레이어에게서 먼 자리라 숨 돌릴 틈이 생긴다.
+ */
+const ENEMY_LAYOUT: readonly Vec2[] = [
   { x: 0, y: -13 },
   { x: 12, y: 6 },
   { x: -12, y: 6 },
@@ -42,8 +47,8 @@ const TARGET_LAYOUT: readonly Vec2[] = [
 ];
 
 export interface WorldOptions {
-  /** 대상이 설 자리. 생략하면 표준 배치. 부하 측정 장면이 여기로 20개를 세운다. */
-  targets?: readonly Vec2[];
+  /** 적이 설 자리. 생략하면 표준 배치. 부하 측정 장면이 여기로 20마리를 세운다. */
+  enemies?: readonly Vec2[];
   /**
    * 난수 씨앗. 코어가 생기는 자리에만 쓴다.
    * 씨앗을 고정해 두는 이유: 성능 측정(`npm run perf`)과 테스트가 바퀴마다
@@ -66,17 +71,26 @@ function makeRandom(seed: number): () => number {
  * 렌더러가 없어도 돌아가므로 테스트에서 그대로 쓸 수 있다.
  */
 export class World {
-  readonly player: Player = createPlayer();
+  readonly player: Player = createPlayer(PLAYER.maxHp);
   readonly arrows: Arrow[] = [];
-  readonly targets: Target[];
+  readonly enemies: Enemy[];
   readonly cores: XpCore[] = [];
 
   /** 살아온 시간(s). */
   elapsed = 0;
-  /** 명중 횟수. 7번(결과 화면)에서 그대로 쓴다. */
+  /** 적을 맞힌 횟수. 적에게 체력이 생긴 뒤로는 처치 수와 다르다. */
   hits = 0;
-  /** 지금 자동 조준이 잡고 있는 대상. 없으면 null. */
-  lockedTarget: Target | null = null;
+  /** 쓰러뜨린 적의 수. HUD의 "처치"이자 7번(결과 화면)이 그대로 쓸 값이다. */
+  kills = 0;
+  /** 지금 자동 조준이 잡고 있는 적. 없으면 null. */
+  lockedEnemy: Enemy | null = null;
+
+  /**
+   * 플레이어가 쓰러졌는가. true가 되면 `step()`은 아무 일도 하지 않는다 —
+   * 카드가 떠 있을 때와 같은 규칙이다(멈춤은 부르는 쪽이 아니라 World가 지킨다).
+   * 여기서 이어지는 리스폰·부활은 DESIGN 6번의 일이다.
+   */
+  defeated = false;
 
   /** 레벨과 경험치. */
   readonly progress: Progress = createProgress(LEVEL);
@@ -116,19 +130,22 @@ export class World {
 
   private manualAimHold = 0;
   private nextArrowId = 1;
+  private nextEnemyId = 1;
   private nextCoreId = 1;
   private ambientTimer = CORE.ambient.spawnInterval;
   private readonly random: () => number;
 
   constructor(options: WorldOptions = {}) {
-    this.targets = (options.targets ?? TARGET_LAYOUT).map((p) => createTarget(p.x, p.y));
+    this.enemies = (options.enemies ?? ENEMY_LAYOUT).map((p) =>
+      createEnemy(this.nextEnemyId++, p.x, p.y, ENEMY.maxHp),
+    );
     this.random = makeRandom(options.seed ?? 20260909);
     for (let i = 0; i < CORE.ambient.initial; i += 1) this.spawnAmbientCore();
   }
 
-  /** 카드가 떠 있는가. 떠 있으면 게임은 멈춰 있다. */
+  /** 카드가 떠 있거나 쓰러졌는가. 둘 중 하나면 게임은 멈춰 있다. */
   get isPaused(): boolean {
-    return this.offer !== null;
+    return this.offer !== null || this.defeated;
   }
 
   /** 아직 고르지 않은 레벨업 수. 화면과 테스트가 "놓친 레벨업이 없다"를 확인한다. */
@@ -138,9 +155,10 @@ export class World {
 
   /** 고정 시간 간격으로 호출된다. dt는 항상 같은 값이다. */
   step(input: FrameInput, dt: number): void {
-    // 카드를 고르는 동안은 시간도 흐르지 않는다. 부르는 쪽이 깜빡해도 게임이 흘러가지 않도록
-    // 멈춤을 여기서 지킨다 — 화면은 계속 그려야 하므로 멈추는 것은 시뮬레이션뿐이다.
-    if (this.offer) return;
+    // 카드를 고르는 동안과 쓰러진 뒤에는 시간도 흐르지 않는다. 부르는 쪽이 깜빡해도
+    // 게임이 흘러가지 않도록 멈춤을 여기서 지킨다 — 화면은 계속 그려야 하므로
+    // 멈추는 것은 시뮬레이션뿐이다.
+    if (this.offer || this.defeated) return;
 
     this.elapsed += dt;
 
@@ -155,25 +173,61 @@ export class World {
 
     this.updateAim(input, dt);
     this.updateFiring(dt);
+    stepPlayerRecovery(this.player, dt);
 
-    const result = stepArrows(this.arrows, this.targets, {
+    // 적이 먼저 쏘고 그 화살까지 이번 스텝에 함께 움직인다.
+    // 순서를 뒤집으면 적이 쏜 화살이 한 프레임 동안 총구에 붙어 있다.
+    for (const shot of this.updateEnemies(dt)) this.addArrow(shot.pos, shot.dir, 'enemy');
+
+    const result = stepArrows(this.arrows, {
       dt,
       arenaRadius: ARENA.radius,
       arrowRadius: ARROW.radius,
-      targetRadius: TARGET.radius,
-      lifetime: ARROW.lifetime,
-      respawnDelay: TARGET.respawnDelay,
+      enemyRadius: ENEMY.radius,
+      playerRadius: PLAYER.radius,
+      invulnerable: PLAYER.invulnerable,
+      respawnDelay: ENEMY.respawnDelay,
+      player: this.player,
+      enemies: this.enemies,
     });
     this.hits += result.hits;
-    for (const point of result.hitPoints) this.dropCores(point);
+    this.kills += result.kills;
+    for (const point of result.killPoints) this.dropCores(point);
 
-    stepTargets(this.targets, dt);
     this.updateCores(dt);
     this.removeDeadArrows();
+
+    // 체력이 다하면 여기서 판이 끝난다. 스텝의 나머지를 다 돌린 뒤에 판정하는 이유:
+    // 마지막 한 발이 적을 쓰러뜨렸다면 그 처치도 기록에 남아야 한다.
+    if (this.player.hp <= 0) this.defeated = true;
 
     // 레벨이 올랐으면 카드를 띄운다. 스텝의 마지막이어야 이번 스텝의 이동·명중이
     // 모두 반영된 뒤에 멈춘다(카드가 뜬 프레임에 화살이 허공에서 멈추지 않는다).
     if (!this.offer && this.pendingLevelUps > 0) this.openOffer();
+  }
+
+  /** 적을 한 스텝 움직인다. 돌려받은 것은 이번에 적이 쏜 화살들이다. */
+  private updateEnemies(dt: number) {
+    return stepEnemies(this.enemies, {
+      dt,
+      playerPos: this.player.pos,
+      playerAlive: this.player.hp > 0,
+      arenaRadius: ARENA.radius,
+      bodyRadius: ENEMY.radius,
+      speed: ENEMY.speed,
+      turnRate: ENEMY.turnRate,
+      respawnDelay: ENEMY.respawnDelay,
+      fireRange: ENEMY.fireRange,
+      approachDistance: ENEMY.approachDistance,
+      keepDistance: ENEMY.keepDistance,
+      strafeRatio: ENEMY.strafeRatio,
+      separation: ENEMY.separation,
+      aimTime: ENEMY.aimTime,
+      fireCooldown: ENEMY.fireCooldown,
+      spread: ENEMY.spread,
+      muzzleOffset: ENEMY.arrow.muzzleOffset,
+      random: this.random,
+    });
   }
 
   /** 코어: 끌려오기·줍기·수명, 그리고 맵에 저절로 생기는 몫. */
@@ -258,7 +312,7 @@ export class World {
     }
   }
 
-  /** 조준: 수동 입력이 있으면 그쪽, 없으면 가장 가까운 대상. */
+  /** 조준: 수동 입력이 있으면 그쪽, 없으면 가장 가까운 적. */
   private updateAim(input: FrameInput, dt: number): void {
     let desired: number | null = null;
 
@@ -267,7 +321,7 @@ export class World {
       if (dir.x !== 0 || dir.y !== 0) {
         desired = Math.atan2(dir.y, dir.x);
         this.manualAimHold = AIM.manualHold;
-        this.lockedTarget = null;
+        this.lockedEnemy = null;
       }
     } else if (this.manualAimHold > 0) {
       // 손가락을 뗀 직후에 방향이 홱 돌아가지 않도록 잠깐 붙잡아 둔다.
@@ -275,10 +329,10 @@ export class World {
     }
 
     if (desired === null && this.manualAimHold <= 0) {
-      const target = findNearestTarget(this.player.pos, this.targets, AIM.autoRange);
-      this.lockedTarget = target;
-      if (target) {
-        desired = Math.atan2(target.pos.y - this.player.pos.y, target.pos.x - this.player.pos.x);
+      const enemy = findNearestEnemy(this.player.pos, this.enemies, AIM.autoRange);
+      this.lockedEnemy = enemy;
+      if (enemy) {
+        desired = Math.atan2(enemy.pos.y - this.player.pos.y, enemy.pos.x - this.player.pos.x);
       }
     }
 
@@ -332,17 +386,21 @@ export class World {
   }
 
   /**
-   * 화살 하나를 장전한다. 쏘는 지점과 방향만 받는다.
+   * 화살 하나를 장전한다. 쏘는 지점·방향·주인만 받는다.
    * 발사 규칙(쿨다운·조준)을 거치지 않는 유일한 입구다 —
-   * 8번 다중 발사와 부하 측정 장면이 둘 다 여기로 들어온다.
+   * 플레이어·적·8번 다중 발사·부하 측정 장면이 전부 여기로 들어온다.
    */
-  addArrow(pos: Vec2, dir: Vec2): void {
+  addArrow(pos: Vec2, dir: Vec2, owner: ArrowOwner = 'player'): void {
     const d = normalize(dir);
     if (d.x === 0 && d.y === 0) return;
+    const spec = owner === 'enemy' ? ENEMY.arrow : ARROW;
     this.arrows.push({
       id: this.nextArrowId++,
+      owner,
       pos: { x: pos.x, y: pos.y },
-      vel: { x: d.x * ARROW.speed, y: d.y * ARROW.speed },
+      vel: { x: d.x * spec.speed, y: d.y * spec.speed },
+      damage: spec.damage,
+      lifetime: spec.lifetime,
       age: 0,
       alive: true,
     });

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { ARENA, ARROW, CORE, PLAYER, TARGET } from '../data/config';
+import type { ArrowOwner } from '../entities/types';
+import { ARENA, ARROW, CORE, ENEMY, PLAYER } from '../data/config';
 
 /**
  * 모든 도형 생성은 이 파일 안에서만 한다.
@@ -15,12 +16,24 @@ export const PALETTE = {
   player: 0x5ec8ff,
   playerDark: 0x2b7fb8,
   arrow: 0xffe6a3,
-  target: 0xff6b6b,
-  targetHit: 0xfff1b8,
+  /** 적의 화살. 플레이어의 것과 색이 달라야 "저건 피해야 하는 것"으로 읽힌다. */
+  enemyArrow: 0xff8a5c,
+  enemy: 0xff6b6b,
+  enemyDark: 0xc1354a,
+  enemyHit: 0xfff1b8,
   accent: 0xffd479,
   core: 0x7bffcf,
   coreDrop: 0xa6ff5e,
 } as const;
+
+/**
+ * 쿼터뷰 카메라가 플레이어로부터 떨어져 있는 자리.
+ * 여기 두는 이유: 적 머리 위 체력바가 카메라를 마주 보는 각도가 이 값에서 나온다.
+ * 카메라는 돌지 않으므로 각도를 한 번 구해 두면 어느 자리에서나 맞는다
+ * (원근 때문에 화면 가장자리에서 아주 조금 기울지만 눈에 띄지 않는다).
+ */
+export const CAMERA_OFFSET = { x: 0, y: 15.5, z: 12.5 } as const;
+export const CAMERA_TILT = Math.atan2(CAMERA_OFFSET.y, CAMERA_OFFSET.z);
 
 function standard(color: number, extra: THREE.MeshStandardMaterialParameters = {}) {
   return new THREE.MeshStandardMaterial({ color, flatShading: true, ...extra });
@@ -127,19 +140,26 @@ export function createPlayer(): THREE.Group {
   return group;
 }
 
-/** 화살 한 발. 축은 -Z가 진행 방향. */
-export function createArrow(): THREE.Group {
+/**
+ * 화살 한 발. 축은 -Z가 진행 방향.
+ * 주인에 따라 색이 다르다 — 날아오는 것이 내 것인지 적 것인지 한눈에 갈려야 한다.
+ */
+export function createArrow(owner: ArrowOwner): THREE.Group {
+  const enemy = owner === 'enemy';
+  const shaftColor = enemy ? PALETTE.enemyArrow : PALETTE.arrow;
+  const tipColor = enemy ? PALETTE.enemyDark : PALETTE.accent;
+
   const group = new THREE.Group();
   const shaft = new THREE.Mesh(
     new THREE.CylinderGeometry(ARROW.radius * 0.7, ARROW.radius * 0.7, 0.95, 5),
-    standard(PALETTE.arrow, { emissive: PALETTE.arrow, emissiveIntensity: 0.35 }),
+    standard(shaftColor, { emissive: shaftColor, emissiveIntensity: enemy ? 0.55 : 0.35 }),
   );
   shaft.rotation.x = Math.PI / 2;
   group.add(shaft);
 
   const tip = new THREE.Mesh(
     new THREE.ConeGeometry(ARROW.radius * 1.5, 0.5, 6),
-    standard(PALETTE.accent, { emissive: PALETTE.accent, emissiveIntensity: 0.6 }),
+    standard(tipColor, { emissive: tipColor, emissiveIntensity: 0.6 }),
   );
   tip.rotation.x = -Math.PI / 2;
   tip.position.z = -0.66;
@@ -148,31 +168,109 @@ export function createArrow(): THREE.Group {
   return group;
 }
 
-/** 자동 조준 대상. 5번에서 실제 적 모델이 이 자리를 대신한다. */
-export function createTarget(): THREE.Group {
+/**
+ * 적 한 마리가 쓰는 것들. 매 프레임 만지는 부분(재질·체력바·예고 고리)을
+ * 이름으로 다시 찾지 않도록 만들 때 함께 돌려준다.
+ */
+export interface EnemyView {
+  group: THREE.Group;
+  /** 겨눌 때 달아오르게 하려고 들고 있는다. 적마다 따로 만든 재질이다. */
+  bodyMaterial: THREE.MeshStandardMaterial;
+  /** 체력바의 채워진 부분. scale.x로 줄인다. */
+  hpFill: THREE.Mesh;
+  /** 체력바 전체. 가득 찼을 때는 숨긴다. */
+  hpBar: THREE.Group;
+  /** 겨누는 동안 발밑에서 좁혀지는 고리. */
+  aimRing: THREE.Mesh;
+}
+
+/** 적 봇. 앞(-Z)에 활을 든 팔이 있어서 어느 쪽을 겨누는지 보인다. */
+export function createEnemy(): EnemyView {
   const group = new THREE.Group();
+  group.name = 'enemy';
+
+  const bodyMaterial = standard(PALETTE.enemy, { roughness: 0.5 });
   const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(TARGET.radius, TARGET.radius * 0.85, TARGET.height, 6),
-    standard(PALETTE.target, { roughness: 0.5 }),
+    new THREE.CylinderGeometry(ENEMY.radius, ENEMY.radius * 0.85, ENEMY.height, 6),
+    bodyMaterial,
   );
-  body.position.y = TARGET.height / 2;
+  body.position.y = ENEMY.height / 2;
   body.castShadow = true;
   group.add(body);
 
   const cap = new THREE.Mesh(
-    new THREE.SphereGeometry(TARGET.radius * 0.55, 10, 6),
-    standard(PALETTE.targetHit, { roughness: 0.35 }),
+    new THREE.SphereGeometry(ENEMY.radius * 0.55, 10, 6),
+    standard(PALETTE.enemyHit, { roughness: 0.35 }),
   );
-  cap.position.y = TARGET.height + TARGET.radius * 0.25;
+  cap.position.y = ENEMY.height + ENEMY.radius * 0.25;
   group.add(cap);
 
-  return group;
+  // 겨누는 쪽을 가리키는 짧은 팔. 플레이어의 코와 같은 역할이다.
+  const arm = new THREE.Mesh(
+    new THREE.BoxGeometry(0.18, 0.18, 0.7),
+    standard(PALETTE.enemyDark, { roughness: 0.4 }),
+  );
+  arm.position.set(0, ENEMY.height * 0.62, -ENEMY.radius - 0.28);
+  group.add(arm);
+
+  const aimRing = new THREE.Mesh(
+    new THREE.RingGeometry(ENEMY.radius * 1.1, ENEMY.radius * 1.35, 24),
+    new THREE.MeshBasicMaterial({
+      color: PALETTE.enemyArrow,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide,
+    }),
+  );
+  aimRing.rotation.x = -Math.PI / 2;
+  aimRing.position.y = 0.05;
+  aimRing.visible = false;
+  group.add(aimRing);
+
+  const { bar, fill } = createHealthBar();
+  bar.position.y = ENEMY.height + ENEMY.radius * 0.9;
+  group.add(bar);
+
+  return { group, bodyMaterial, hpFill: fill, hpBar: bar, aimRing };
 }
 
-/** 자동 조준이 잡은 대상 아래에 깔리는 표식. */
+/**
+ * 적 머리 위 체력바. 판 두 장(바탕·채움)으로 만든다.
+ *
+ * 카메라가 돌지 않는 쿼터뷰라서, 카메라를 마주 보는 각도를 한 번 고정해 두면
+ * 매 프레임 방향을 다시 계산할 필요가 없다(적 20마리면 그 계산이 그냥 낭비다).
+ * 채움은 지오메트리를 옆으로 밀어 두어 scale.x가 왼쪽 끝에 붙어 줄어들게 한다 —
+ * 가운데에서 양쪽으로 줄어들면 체력바로 읽히지 않는다.
+ */
+function createHealthBar(): { bar: THREE.Group; fill: THREE.Mesh } {
+  const width = ENEMY.radius * 2.4;
+  const height = 0.16;
+
+  const bar = new THREE.Group();
+  bar.rotation.x = -CAMERA_TILT;
+
+  const back = new THREE.Mesh(
+    new THREE.PlaneGeometry(width + 0.07, height + 0.07),
+    new THREE.MeshBasicMaterial({ color: 0x0b1020, transparent: true, opacity: 0.72 }),
+  );
+  bar.add(back);
+
+  const fillGeometry = new THREE.PlaneGeometry(width, height);
+  fillGeometry.translate(width / 2, 0, 0.001);
+  const fill = new THREE.Mesh(
+    fillGeometry,
+    new THREE.MeshBasicMaterial({ color: PALETTE.enemyArrow }),
+  );
+  fill.position.x = -width / 2;
+  bar.add(fill);
+
+  return { bar, fill };
+}
+
+/** 자동 조준이 잡은 적 아래에 깔리는 표식. */
 export function createLockMarker(): THREE.Mesh {
   const marker = new THREE.Mesh(
-    new THREE.RingGeometry(TARGET.radius * 1.25, TARGET.radius * 1.55, 6),
+    new THREE.RingGeometry(ENEMY.radius * 1.25, ENEMY.radius * 1.55, 6),
     new THREE.MeshBasicMaterial({
       color: PALETTE.accent,
       transparent: true,
