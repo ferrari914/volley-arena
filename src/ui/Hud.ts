@@ -83,6 +83,22 @@ export class Hud {
     host.appendChild(this.hurt);
   }
 
+  /**
+   * 판을 처음부터 다시 시작할 때 (DESIGN 6번의 리스폰). 지난 판의 흔적을 지운다.
+   *
+   * `lastLevel`을 되돌리는 것이 핵심이다. 18레벨에서 죽고 1레벨로 다시 시작하면
+   * "레벨이 바뀌었다"는 조건에 걸려 새 판 첫 프레임에 LEVEL UP이 번쩍인다.
+   */
+  reset(): void {
+    this.lastLevel = 1;
+    this.lastElapsed = 0;
+    this.levelUpTimer = 0;
+    this.level.textContent = 'Lv 1';
+    this.level.classList.remove('is-up');
+    delete this.levelUp.dataset.show;
+    this.hurt.style.opacity = '0';
+  }
+
   update(world: World, fps: number): void {
     const seconds = world.elapsed;
     // 화면 시간이 아니라 시뮬레이션 시간으로 잰다. 탭이 멈추면 게임도 멈춘다.

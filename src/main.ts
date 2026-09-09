@@ -2,6 +2,7 @@ import { Ticker } from './core/Ticker';
 import { World } from './core/World';
 import { InputManager } from './input/InputManager';
 import { Renderer } from './render/Renderer';
+import { AdBreak } from './ui/AdBreak';
 import { Defeat } from './ui/Defeat';
 import { Hud } from './ui/Hud';
 import { UpgradeCards } from './ui/UpgradeCards';
@@ -34,6 +35,22 @@ function showFatal(message: string): void {
   layer.appendChild(box);
 }
 
+/**
+ * "지금 멈춰 있다"를 화면 전체에 알린다(가상 스틱이 이걸 보고 흐려진다).
+ *
+ * 멈추는 이유는 둘이고(카드 · 쓰러짐) 서로 겹칠 수도 있다 — 쓰러진 그 스텝에 레벨이
+ * 올라 카드가 함께 떠 있는 경우다. 그래서 각 화면이 제 사정으로 이 표시를 켰다 껐다 하면
+ * 한쪽이 남아 있는데도 다른 쪽이 꺼 버린다. 판단은 World 하나(`isPaused`)만 보고 한다.
+ * 값이 바뀔 때만 쓴다 — 이 함수는 초당 60번 불린다.
+ */
+let pausedShown = false;
+function syncPaused(paused: boolean): void {
+  if (paused === pausedShown) return;
+  pausedShown = paused;
+  if (paused) document.body.dataset['paused'] = '1';
+  else delete document.body.dataset['paused'];
+}
+
 function boot(): void {
   const canvas = document.getElementById('game-canvas');
   const uiLayer = document.getElementById('ui-layer');
@@ -50,11 +67,29 @@ function boot(): void {
     return;
   }
 
-  const world = new World();
+  /**
+   * 지금 돌고 있는 판. **다시 시작(리스폰)은 이 자리를 새 World로 갈아 끼운다** —
+   * DESIGN 6번이 요구하는 "레벨과 업그레이드 전부 초기화"를, 되돌릴 값을 하나씩
+   * 세는 대신 판을 통째로 새로 만들어서 지킨다. 하나라도 빠뜨리면 지난 판이 새 판에
+   * 스며드는데, 그건 화면을 봐도 알아채기 어려운 종류의 고장이다.
+   * 아래 콜백들이 전부 이 변수를 그때그때 읽으므로, 갈아 끼우면 다 함께 따라온다.
+   */
+  let world = new World();
   const frameProbe = window.__frameProbe;
   const hud = new Hud(uiLayer);
   const cards = new UpgradeCards(uiLayer, (id) => world.chooseUpgrade(id));
-  const defeat = new Defeat(uiLayer);
+  const ad = new AdBreak(uiLayer);
+  const defeat = new Defeat(uiLayer, {
+    // 부활: 광고를 끝까지 본 사람만 그 자리에서 일어선다. 도중에 닫으면 쓰러진 화면 그대로다.
+    onRevive: () => void ad.show().then((rewarded) => rewarded && world.revive()),
+    onRestart: () => {
+      world = new World();
+      // World와 화면을 함께 되돌린다. 렌더러를 비우지 않으면 지난 판의 화살 메시가
+      // 새 판의 번호와 겹쳐 허공에 눌러앉는다(Renderer.reset 주석 참고).
+      renderer.reset(world);
+      hud.reset();
+    },
+  });
   const input = new InputManager(app);
 
   const ticker = new Ticker(
@@ -78,6 +113,7 @@ function boot(): void {
       hud.update(world, ticker.fps);
       cards.sync(world.offer);
       defeat.sync(world);
+      syncPaused(world.isPaused);
       frameProbe?.(world);
     },
   );

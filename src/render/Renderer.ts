@@ -251,6 +251,38 @@ export class Renderer {
     this.renderer.render(this.scene, this.camera);
   }
 
+  /**
+   * 판을 처음부터 다시 시작할 때 화면을 비운다 — DESIGN 6번의 "리스폰".
+   *
+   * **World를 새 것으로 갈아 끼울 때 반드시 함께 부른다.** 화살과 코어의 메시는 번호로
+   * 짝지어져 있는데(`arrowMeshes`·`coreMeshes`), 새 World는 번호를 1번부터 다시 매긴다.
+   * 비우지 않으면 지난 판에 아직 회수되지 않은 메시가 새 판의 화살 자리에 눌러앉아,
+   * 있지도 않은 화살이 허공에 멈춘 채로 남는다.
+   * (적의 메시는 배열 자리로 짝짓고 있어서 이 문제가 없다 — 그래도 수가 줄 수 있으므로 숨긴다.)
+   */
+  reset(world: World): void {
+    for (const entry of this.arrowMeshes.values()) {
+      this.scene.remove(entry.mesh);
+      entry.mesh.visible = false;
+      this.arrowPools[entry.owner].push(entry.mesh);
+    }
+    this.arrowMeshes.clear();
+
+    for (const entry of this.coreMeshes.values()) {
+      this.scene.remove(entry.mesh);
+      entry.mesh.visible = false;
+      this.corePools[entry.origin].push(entry.mesh);
+    }
+    this.coreMeshes.clear();
+
+    for (const view of this.enemyViews) view.group.visible = false;
+    this.lockMarker.visible = false;
+
+    // 카메라는 새 플레이어 자리로 즉시 옮긴다. 부드럽게 따라가게 두면
+    // 판이 시작하자마자 화면이 지난 판의 마지막 자리에서 미끄러져 온다.
+    this.cameraFocus.set(world.player.pos.x, 0, world.player.pos.y);
+  }
+
   /** 화면의 한 점이 바닥면 어디인지. 마우스 조준에 쓴다. */
   screenToGround(clientX: number, clientY: number): Vec2 | null {
     const rect = this.canvas.getBoundingClientRect();

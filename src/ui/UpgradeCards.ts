@@ -3,7 +3,8 @@ import type { UpgradeOffer } from '../entities/types';
 /**
  * 레벨업 3중 1택 카드 (DESIGN 4번).
  *
- * 카드가 떠 있는 동안 게임은 멈춰 있다(멈춤 자체는 `World`가 지킨다).
+ * 카드가 떠 있는 동안 게임은 멈춰 있다(멈춤 자체는 `World`가 지키고, 멈췄다는 표시는
+ * main.ts가 `body[data-paused]`에 한 곳에서 쓴다 — 멈추는 이유가 둘이라 각자 쓰면 어긋난다).
  * 화면은 계속 그려지므로 뒤에서 아레나가 보이고, 그 위에 카드가 얹힌다.
  *
  * 고르는 방법은 두 가지다 — 손가락으로 카드를 누르거나, 키보드 1·2·3.
@@ -41,7 +42,6 @@ export class UpgradeCards {
 
     if (!offer) {
       delete this.root.dataset['show'];
-      delete document.body.dataset['paused'];
       this.list.replaceChildren();
       return;
     }
@@ -55,8 +55,6 @@ export class UpgradeCards {
     this.root.dataset['show'] = '1';
     // 남은 선택 횟수를 화면 밖(검사)에서도 읽을 수 있게 적어 둔다.
     this.root.dataset['remaining'] = String(offer.remaining);
-    // 카드를 고르는 동안 가상 스틱을 흐리게 한다. 지금 누를 것은 카드다.
-    document.body.dataset['paused'] = '1';
   }
 
   dispose(): void {

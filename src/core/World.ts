@@ -1,4 +1,4 @@
-import { AIM, ARENA, ARROW, CORE, ENEMY, LEVEL, PLAYER, UPGRADE } from '../data/config';
+import { AIM, ARENA, ARROW, CORE, ENEMY, LEVEL, PLAYER, REVIVE, UPGRADE } from '../data/config';
 import { UPGRADE_CARDS } from '../data/upgrades';
 import {
   createEnemy,
@@ -88,9 +88,13 @@ export class World {
   /**
    * 플레이어가 쓰러졌는가. true가 되면 `step()`은 아무 일도 하지 않는다 —
    * 카드가 떠 있을 때와 같은 규칙이다(멈춤은 부르는 쪽이 아니라 World가 지킨다).
-   * 여기서 이어지는 리스폰·부활은 DESIGN 6번의 일이다.
+   * 여기서 나가는 길은 둘이다(DESIGN 6번): `revive()`로 이 자리에서 이어가거나,
+   * World를 새로 만들어 처음부터 하거나. 되돌리는 쪽은 이 객체를 버린다.
    */
   defeated = false;
+
+  /** 광고를 보고 다시 일어선 횟수. 쓰러진 화면과 결과 화면(7번)이 이 값을 적는다. */
+  revives = 0;
 
   /** 레벨과 경험치. */
   readonly progress: Progress = createProgress(LEVEL);
@@ -204,6 +208,41 @@ export class World {
     // 레벨이 올랐으면 카드를 띄운다. 스텝의 마지막이어야 이번 스텝의 이동·명중이
     // 모두 반영된 뒤에 멈춘다(카드가 뜬 프레임에 화살이 허공에서 멈추지 않는다).
     if (!this.offer && this.pendingLevelUps > 0) this.openOffer();
+  }
+
+  /**
+   * 죽은 그 자리에서 이어서 진행한다 — DESIGN 6번의 "부활(광고)".
+   *
+   * **되돌리는 것은 몸 상태뿐이다.** 레벨·능력치·고른 카드는 전부 이 객체 안에 그대로
+   * 있으므로 손대지 않는다. 그것이 리스폰(전부 초기화)과 부활을 가르는 유일한 차이이고,
+   * 광고를 볼 이유이기도 하다.
+   *
+   * 쓰러지지 않았는데 부르면 아무 일도 하지 않고 false를 돌려준다 —
+   * 화면이 어긋나 두 번 눌려도 무적 시간이 공짜로 갱신되지 않게 한다.
+   */
+  revive(): boolean {
+    if (!this.defeated) return false;
+    this.defeated = false;
+    this.revives += 1;
+
+    this.player.hp = this.player.maxHp;
+    this.player.hitFlash = 0;
+    this.player.invulnerable = REVIVE.invulnerable;
+
+    // 일어서는 순간 이미 날아오고 있던 적의 화살은 지운다. 무적이라 맞지는 않지만,
+    // 화살이 몸을 그대로 통과하는 그림은 "왜 안 맞지"로 읽힌다.
+    for (const arrow of this.arrows) {
+      if (arrow.owner === 'enemy') arrow.alive = false;
+    }
+    this.removeDeadArrows();
+
+    // 겨누고 있던 적은 겨눔을 풀고 잠깐 기다린다. 그러지 않으면 일어선 그 프레임에
+    // 발밑에서 화살이 나가고, 무적이 끝나는 즉시 같은 자리에서 또 쓰러진다.
+    for (const enemy of this.enemies) {
+      enemy.aimTimer = 0;
+      enemy.fireCooldown = Math.max(enemy.fireCooldown, REVIVE.enemyDelay);
+    }
+    return true;
   }
 
   /** 적을 한 스텝 움직인다. 돌려받은 것은 이번에 적이 쏜 화살들이다. */

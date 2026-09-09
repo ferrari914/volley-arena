@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { World } from '../src/core/World';
-import { AIM, ENEMY, PLAYER } from '../src/data/config';
+import { AIM, ARROW, CORE, ENEMY, PLAYER, REVIVE } from '../src/data/config';
 import type { FrameInput } from '../src/core/World';
 
 const DT = 1 / 60;
@@ -9,6 +9,23 @@ const idle: FrameInput = { move: { x: 0, y: 0 }, aim: null };
 function run(world: World, seconds: number, input: FrameInput = idle): void {
   const steps = Math.round(seconds / DT);
   for (let i = 0; i < steps; i += 1) world.step(input, DT);
+}
+
+/**
+ * 한 판을 쓰러질 때까지 돌린다. 먼저 돌아다니며 레벨과 카드를 쌓고, 그다음 멈춰 선다.
+ * 처음부터 서 있으면 31초 만에 1레벨로 죽어서 "무엇을 잃고 무엇을 지켰는가"를 잴 수 없다.
+ */
+function playUntilDefeat(world: World): void {
+  for (let i = 0; i < 60 * 200 && !world.defeated; i += 1) {
+    // 카드가 뜨면 골라서 내린다. 안 고르면 멈춘 채로 영영 죽지 않는다.
+    if (world.offer) {
+      world.chooseUpgrade(world.offer.choices[0]!.card.id);
+      continue;
+    }
+    const angle = i * DT * 1.1;
+    const roaming = i < 60 * 40;
+    world.step({ move: roaming ? { x: Math.cos(angle), y: Math.sin(angle) } : { x: 0, y: 0 }, aim: null }, DT);
+  }
 }
 
 describe('World', () => {
@@ -89,6 +106,93 @@ describe('World', () => {
     expect(world.elapsed).toBe(frozen.elapsed);
     expect(world.kills).toBe(frozen.kills);
     expect(world.player.pos).toEqual(frozen.pos);
+  });
+
+  it('부활하면 그 자리에서 레벨과 카드를 유지한 채 다시 선다', () => {
+    const world = new World();
+    playUntilDefeat(world);
+    expect(world.defeated).toBe(true);
+
+    const before = {
+      level: world.progress.level,
+      stats: { ...world.stats },
+      taken: [...world.takenUpgrades],
+      pos: { ...world.player.pos },
+      elapsed: world.elapsed,
+      kills: world.kills,
+    };
+    expect(before.taken.length).toBeGreaterThan(0);
+
+    expect(world.revive()).toBe(true);
+
+    // 되돌아온 것은 몸뿐이다.
+    expect(world.defeated).toBe(false);
+    expect(world.isPaused).toBe(false);
+    expect(world.player.hp).toBe(PLAYER.maxHp);
+    expect(world.player.invulnerable).toBe(REVIVE.invulnerable);
+    expect(world.revives).toBe(1);
+    // 쌓아 온 것은 그대로다 — 이것이 리스폰과 부활을 가르는 유일한 차이다.
+    expect(world.progress.level).toBe(before.level);
+    expect(world.stats).toEqual(before.stats);
+    expect(world.takenUpgrades).toEqual(before.taken);
+    expect(world.player.pos).toEqual(before.pos);
+    expect(world.elapsed).toBe(before.elapsed);
+    expect(world.kills).toBe(before.kills);
+
+    // 그리고 다시 흐른다. 멈춘 채로 남는 것이 이 기능의 가장 나쁜 고장이다.
+    run(world, 0.5);
+    expect(world.elapsed).toBeGreaterThan(before.elapsed);
+  });
+
+  it('부활 직후에는 날아오던 화살도, 겨누던 적도 없다', () => {
+    const world = new World();
+    playUntilDefeat(world);
+    expect(world.defeated).toBe(true);
+
+    world.revive();
+    expect(world.arrows.some((arrow) => arrow.owner === 'enemy')).toBe(false);
+    expect(world.enemies.every((enemy) => enemy.aimTimer === 0)).toBe(true);
+
+    // 무적이 끝나기 전에 도망칠 틈이 있어야 한다(적의 발사 지연 < 무적 시간).
+    run(world, REVIVE.enemyDelay);
+    expect(world.player.hp).toBe(PLAYER.maxHp);
+    expect(world.player.invulnerable).toBeGreaterThan(0);
+  });
+
+  it('쓰러지지 않았으면 부활하지 않는다 (무적을 공짜로 얻지 못한다)', () => {
+    const world = new World();
+    run(world, 1);
+    expect(world.revive()).toBe(false);
+    expect(world.revives).toBe(0);
+    expect(world.player.invulnerable).toBeLessThan(REVIVE.invulnerable);
+  });
+
+  it('리스폰(새 판)은 레벨도 카드도 남기지 않는다', () => {
+    const played = new World();
+    playUntilDefeat(played);
+    expect(played.progress.level).toBeGreaterThan(1);
+
+    // 리스폰은 World를 통째로 새로 만드는 것이다(main.ts). 되돌릴 값을 하나씩 세지 않으므로
+    // 새 판이 방금 켠 게임과 같은지만 보면 된다 — 여기서 빠지는 값이 지난 판의 찌꺼기다.
+    const fresh = new World();
+    expect(fresh.progress.level).toBe(1);
+    expect(fresh.progress.totalXp).toBe(0);
+    expect(fresh.takenUpgrades).toEqual([]);
+    expect(fresh.upgradeStacks).toEqual({});
+    expect(fresh.kills).toBe(0);
+    expect(fresh.elapsed).toBe(0);
+    expect(fresh.revives).toBe(0);
+    expect(fresh.defeated).toBe(false);
+    expect(fresh.offer).toBeNull();
+    expect(fresh.player.hp).toBe(PLAYER.maxHp);
+    expect(fresh.player.pos).toEqual({ x: 0, y: 0 });
+    expect(fresh.arrows).toEqual([]);
+    expect(fresh.stats).toEqual({
+      fireCooldown: ARROW.cooldown,
+      moveSpeed: PLAYER.speed,
+      magnetRadius: CORE.magnetRadius,
+      xpMultiplier: 1,
+    });
   });
 
   it('플레이어는 자기 화살에 맞지 않는다', () => {
