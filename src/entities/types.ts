@@ -80,3 +80,53 @@ export function createXpCore(
 ): XpCore {
   return { id, pos: { x: pos.x, y: pos.y }, value, origin, ttl, age: 0, alive: true };
 }
+
+/**
+ * 업그레이드가 바꾸는 값들. 카드는 여기에 곱해진다(DESIGN 4번).
+ *
+ * 시작값은 `data/config.ts`에서 온다. World가 이 묶음 하나만 들고 있고
+ * 이동·발사·코어가 전부 여기를 보므로, 새 카드를 붙일 때 고칠 자리는 한 곳이다.
+ */
+export interface PlayerStats {
+  /** 발사 간격(s). 작을수록 빠르다. */
+  fireCooldown: number;
+  /** 이동 속도(m/s). */
+  moveSpeed: number;
+  /** 코어가 끌려오기 시작하는 거리(m). */
+  magnetRadius: number;
+  /** 코어에서 얻는 경험치 배율. */
+  xpMultiplier: number;
+}
+
+/**
+ * 레벨업 때 제시하는 카드 한 장. 내용은 `data/upgrades.ts`가 데이터로 갖는다.
+ * 효과를 함수가 아니라 "무엇에 얼마를 곱하는가"로 적어 두는 이유:
+ * 데이터에 코드가 섞이면 카드를 추가할 때마다 규칙을 새로 읽어야 한다.
+ */
+export interface UpgradeCard {
+  id: string;
+  title: string;
+  /** 카드에 적히는 한 줄. 무엇이 얼마나 좋아지는지 수치로 적는다. */
+  detail: string;
+  /** 같은 카드를 최대 몇 번까지 고를 수 있는가. */
+  maxStacks: number;
+  /** 카드 색. 화면에서 서로 구별되게 한다. */
+  accent: string;
+  /** 고를 때마다 곱해지는 값. 적히지 않은 값은 그대로 둔다. */
+  multiply: Partial<Record<keyof PlayerStats, number>>;
+}
+
+/** 카드 한 장과, 그 카드를 지금까지 몇 번 골랐는지. */
+export interface UpgradeChoice {
+  card: UpgradeCard;
+  stacks: number;
+}
+
+/** 화면에 떠 있는 3중 1택. 이것이 null이 아니면 게임은 멈춘다. */
+export interface UpgradeOffer {
+  /** 이 선택을 부른 레벨. 카드 머리글에 쓴다. */
+  level: number;
+  /** 이번 것을 포함해 남은 선택 횟수. 한 스텝에 두 레벨이 오르면 2가 된다. */
+  remaining: number;
+  choices: readonly UpgradeChoice[];
+}

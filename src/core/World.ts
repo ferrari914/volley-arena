@@ -1,12 +1,15 @@
-import { AIM, ARENA, ARROW, CORE, LEVEL, PLAYER, TARGET } from '../data/config';
+import { AIM, ARENA, ARROW, CORE, LEVEL, PLAYER, TARGET, UPGRADE } from '../data/config';
+import { UPGRADE_CARDS } from '../data/upgrades';
 import {
   createPlayer,
   createTarget,
   createXpCore,
   type Arrow,
   type Player,
+  type PlayerStats,
   type Progress,
   type Target,
+  type UpgradeOffer,
   type XpCore,
 } from '../entities/types';
 import { normalize, rotateToward, type Vec2 } from './math';
@@ -20,6 +23,7 @@ import {
   stepCores,
 } from '../systems/experience';
 import { movePlayer } from '../systems/movement';
+import { applyUpgrade, rollUpgradeChoices } from '../systems/upgrades';
 
 export interface FrameInput {
   /** 이동 입력. 길이 0~1. y는 월드 Z축(화면 위가 -y). */
@@ -82,10 +86,33 @@ export class World {
    */
   readonly xpByOrigin = { ambient: 0, drop: 0 };
   /**
-   * 이번 스텝에 오른 레벨 수. 4번(3중 1택)이 이 값을 보고 카드를 띄우고 게임을 멈춘다.
-   * 매 스텝 0으로 초기화되므로 프레임을 건너뛰면 놓친다 — 4번에서는 큐로 바꾼다.
+   * 업그레이드로 바뀌는 능력치. 시작값은 config에서 온다.
+   * 이동·발사·코어 끌어당김이 전부 여기를 본다 — 카드가 실제로 게임을 바꾸는 통로다.
    */
-  levelUps = 0;
+  stats: PlayerStats = {
+    fireCooldown: ARROW.cooldown,
+    moveSpeed: PLAYER.speed,
+    magnetRadius: CORE.magnetRadius,
+    xpMultiplier: 1,
+  };
+
+  /** 카드별로 몇 번 골랐는지. 다음 제시에서 최대치에 닿은 카드를 빼는 데 쓴다. */
+  readonly upgradeStacks: Record<string, number> = {};
+
+  /** 고른 순서대로 쌓인 카드 id. 결과 화면(7번)이 "무엇으로 강해졌는가"를 보여줄 때 쓴다. */
+  readonly takenUpgrades: string[] = [];
+
+  /**
+   * 지금 떠 있는 3중 1택. null이 아닌 동안 `step()`은 아무 일도 하지 않는다 —
+   * 그것이 DESIGN 4번의 "그동안 게임은 멈춘다"이다.
+   */
+  offer: UpgradeOffer | null = null;
+
+  /**
+   * 아직 카드를 고르지 않은 레벨업 수. **덮어쓰지 않고 쌓는다.**
+   * 한 스텝에 두 레벨이 올라도, 카드를 고르는 동안 다음 레벨업이 겹쳐도 하나도 잃지 않는다.
+   */
+  private pendingLevelUps = 0;
 
   private manualAimHold = 0;
   private nextArrowId = 1;
@@ -99,15 +126,29 @@ export class World {
     for (let i = 0; i < CORE.ambient.initial; i += 1) this.spawnAmbientCore();
   }
 
+  /** 카드가 떠 있는가. 떠 있으면 게임은 멈춰 있다. */
+  get isPaused(): boolean {
+    return this.offer !== null;
+  }
+
+  /** 아직 고르지 않은 레벨업 수. 화면과 테스트가 "놓친 레벨업이 없다"를 확인한다. */
+  get pendingUpgrades(): number {
+    return this.pendingLevelUps;
+  }
+
   /** 고정 시간 간격으로 호출된다. dt는 항상 같은 값이다. */
   step(input: FrameInput, dt: number): void {
+    // 카드를 고르는 동안은 시간도 흐르지 않는다. 부르는 쪽이 깜빡해도 게임이 흘러가지 않도록
+    // 멈춤을 여기서 지킨다 — 화면은 계속 그려야 하므로 멈추는 것은 시뮬레이션뿐이다.
+    if (this.offer) return;
+
     this.elapsed += dt;
 
     this.player.pos = movePlayer(
       this.player.pos,
       input.move,
       dt,
-      PLAYER.speed,
+      this.stats.moveSpeed,
       ARENA.radius,
       PLAYER.radius,
     );
@@ -129,6 +170,10 @@ export class World {
     stepTargets(this.targets, dt);
     this.updateCores(dt);
     this.removeDeadArrows();
+
+    // 레벨이 올랐으면 카드를 띄운다. 스텝의 마지막이어야 이번 스텝의 이동·명중이
+    // 모두 반영된 뒤에 멈춘다(카드가 뜬 프레임에 화살이 허공에서 멈추지 않는다).
+    if (!this.offer && this.pendingLevelUps > 0) this.openOffer();
   }
 
   /** 코어: 끌려오기·줍기·수명, 그리고 맵에 저절로 생기는 몫. */
@@ -137,12 +182,16 @@ export class World {
       dt,
       playerPos: this.player.pos,
       pickupRadius: PLAYER.radius + CORE.radius,
-      magnetRadius: CORE.magnetRadius,
+      magnetRadius: this.stats.magnetRadius,
       magnetSpeed: CORE.magnetSpeed,
     });
-    this.xpByOrigin.ambient += gained.ambient;
-    this.xpByOrigin.drop += gained.drop;
-    this.levelUps = gainXp(this.progress, gained.ambient + gained.drop, LEVEL);
+    // 경험치 배율은 두 출처에 똑같이 곱한다. 한쪽에만 곱하면 3번에서 못 박은
+    // "전투가 채집보다 빠르다"는 비율이 카드 몇 장에 흔들린다.
+    const ambient = gained.ambient * this.stats.xpMultiplier;
+    const drop = gained.drop * this.stats.xpMultiplier;
+    this.xpByOrigin.ambient += ambient;
+    this.xpByOrigin.drop += drop;
+    this.pendingLevelUps += gainXp(this.progress, ambient + drop, LEVEL);
 
     this.ambientTimer -= dt;
     if (this.ambientTimer <= 0) {
@@ -241,8 +290,45 @@ export class World {
   private updateFiring(dt: number): void {
     this.player.fireCooldown -= dt;
     if (this.player.fireCooldown > 0) return;
-    this.player.fireCooldown += ARROW.cooldown;
+    this.player.fireCooldown += this.stats.fireCooldown;
     this.spawnArrow();
+  }
+
+  /**
+   * 카드 한 장을 고른다. 능력치에 반영하고 카드를 내린다.
+   * 고를 수 없는 id면 아무 일도 하지 않고 false — 화면이 어긋나도 게임이 멈춘 채로
+   * 남지 않게 한다(멈춘 채로 남는 것이 이 기능의 가장 나쁜 고장이다).
+   */
+  chooseUpgrade(id: string): boolean {
+    const chosen = this.offer?.choices.find((choice) => choice.card.id === id);
+    if (!chosen) return false;
+
+    this.stats = applyUpgrade(this.stats, chosen.card);
+    this.upgradeStacks[id] = (this.upgradeStacks[id] ?? 0) + 1;
+    this.takenUpgrades.push(id);
+
+    this.offer = null;
+    this.pendingLevelUps -= 1;
+    // 한 번에 두 레벨이 올랐으면 곧바로 다음 카드를 띄운다. 다음 스텝을 기다리면
+    // 게임이 한순간 움직였다가 다시 멈춰 화면이 튄다.
+    if (this.pendingLevelUps > 0) this.openOffer();
+    return true;
+  }
+
+  private openOffer(): void {
+    const choices = rollUpgradeChoices(
+      UPGRADE_CARDS,
+      this.upgradeStacks,
+      UPGRADE.choices,
+      this.random,
+    );
+    if (choices.length === 0) {
+      // 모든 카드를 최대까지 골랐다. 고를 것이 없으면 멈추지 않는다 —
+      // 여기서 카드를 띄우면 아무도 내릴 수 없는 화면이 된다.
+      this.pendingLevelUps = 0;
+      return;
+    }
+    this.offer = { level: this.progress.level, remaining: this.pendingLevelUps, choices };
   }
 
   /**

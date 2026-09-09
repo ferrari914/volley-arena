@@ -114,3 +114,11 @@ export const LEVEL = {
   /** 이 레벨에 닿으면 더 오르지 않는다. 끝없이 커지는 수를 화면에 두지 않기 위한 상한. */
   max: 40,
 } as const;
+
+/**
+ * 레벨업 3중 1택 (DESIGN 4번). 카드 내용은 `data/upgrades.ts`에 있다.
+ */
+export const UPGRADE = {
+  /** 한 번에 보여 주는 카드 수. DESIGN이 정한 3장이다. */
+  choices: 3,
+} as const;

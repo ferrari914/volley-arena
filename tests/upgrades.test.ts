@@ -1,0 +1,228 @@
+import { describe, expect, it } from 'vitest';
+import { World, type FrameInput } from '../src/core/World';
+import { LEVEL, UPGRADE } from '../src/data/config';
+import { UPGRADE_CARDS } from '../src/data/upgrades';
+import { createXpCore, type UpgradeCard } from '../src/entities/types';
+import { applyUpgrade, rollUpgradeChoices } from '../src/systems/upgrades';
+import { xpForLevel } from '../src/systems/experience';
+
+const DT = 1 / 60;
+const IDLE: FrameInput = { move: { x: 0, y: 0 }, aim: null };
+
+/** 씨앗 고정 난수. 테스트도 바퀴마다 같은 카드를 봐야 한다. */
+function makeRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+const card = (id: string, maxStacks = 3): UpgradeCard => ({
+  id,
+  title: id,
+  detail: '',
+  maxStacks,
+  accent: '#fff',
+  multiply: { moveSpeed: 1.1 },
+});
+
+/** 플레이어 발밑에 코어를 놓아 다음 스텝에 그만큼의 경험치를 준다. */
+function feedXp(world: World, amount: number): void {
+  world.cores.push(createXpCore(9000 + world.cores.length, world.player.pos, amount, 'drop', 10));
+  world.step(IDLE, DT);
+}
+
+/** 지금 떠 있는 카드 중 첫 장을 고른다. */
+function pickFirst(world: World): string {
+  const first = world.offer?.choices[0];
+  if (!first) throw new Error('카드가 떠 있지 않다');
+  world.chooseUpgrade(first.card.id);
+  return first.card.id;
+}
+
+describe('업그레이드 카드 뽑기', () => {
+  it('서로 다른 카드를 정해진 장수만큼 준다', () => {
+    const random = makeRandom(3);
+    for (let i = 0; i < 50; i += 1) {
+      const choices = rollUpgradeChoices(UPGRADE_CARDS, {}, UPGRADE.choices, random);
+      expect(choices).toHaveLength(UPGRADE.choices);
+      expect(new Set(choices.map((c) => c.card.id)).size).toBe(UPGRADE.choices);
+    }
+  });
+
+  it('최대까지 고른 카드는 다시 나오지 않는다', () => {
+    const cards = [card('a', 1), card('b', 5), card('c', 5)];
+    const random = makeRandom(5);
+    for (let i = 0; i < 50; i += 1) {
+      const choices = rollUpgradeChoices(cards, { a: 1 }, 3, random);
+      expect(choices.map((c) => c.card.id)).not.toContain('a');
+      expect(choices).toHaveLength(2);
+    }
+  });
+
+  it('고른 횟수를 함께 알려 준다 (카드에 몇 장째인지 표시한다)', () => {
+    const choices = rollUpgradeChoices([card('a', 5)], { a: 2 }, 3, makeRandom(1));
+    expect(choices[0]?.stacks).toBe(2);
+  });
+
+  it('고를 카드가 하나도 없으면 빈 목록이다', () => {
+    expect(rollUpgradeChoices([card('a', 1)], { a: 1 }, 3, makeRandom(1))).toEqual([]);
+  });
+
+  it('네 종류가 모두 뽑힌다 (한 장이 영영 안 나오는 일이 없다)', () => {
+    const random = makeRandom(99);
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i += 1) {
+      for (const choice of rollUpgradeChoices(UPGRADE_CARDS, {}, UPGRADE.choices, random)) {
+        seen.add(choice.card.id);
+      }
+    }
+    expect(seen.size).toBe(UPGRADE_CARDS.length);
+  });
+});
+
+describe('업그레이드 적용', () => {
+  it('적힌 값에만 곱하고 원래 값은 건드리지 않는다', () => {
+    const stats = { fireCooldown: 0.4, moveSpeed: 7, magnetRadius: 4, xpMultiplier: 1 };
+    const next = applyUpgrade(stats, card('swift'));
+    expect(next.moveSpeed).toBeCloseTo(7.7, 6);
+    expect(next.fireCooldown).toBe(0.4);
+    expect(stats.moveSpeed).toBe(7);
+  });
+
+  it('여러 장을 겹치면 곱해서 쌓인다', () => {
+    let stats = { fireCooldown: 0.4, moveSpeed: 7, magnetRadius: 4, xpMultiplier: 1 };
+    stats = applyUpgrade(stats, card('swift'));
+    stats = applyUpgrade(stats, card('swift'));
+    expect(stats.moveSpeed).toBeCloseTo(7 * 1.1 * 1.1, 6);
+  });
+
+  it('목록의 카드는 전부 무언가를 바꾼다', () => {
+    for (const c of UPGRADE_CARDS) {
+      expect(Object.keys(c.multiply).length).toBeGreaterThan(0);
+      expect(c.maxStacks).toBeGreaterThan(0);
+      expect(c.detail.length).toBeGreaterThan(0);
+    }
+    // id가 겹치면 고른 횟수가 뒤섞인다.
+    expect(new Set(UPGRADE_CARDS.map((c) => c.id)).size).toBe(UPGRADE_CARDS.length);
+  });
+});
+
+describe('World — 3중 1택', () => {
+  it('레벨이 오르면 카드 3장이 뜬다', () => {
+    const world = new World();
+    expect(world.offer).toBeNull();
+    feedXp(world, xpForLevel(1, LEVEL));
+    expect(world.progress.level).toBe(2);
+    expect(world.offer?.choices).toHaveLength(UPGRADE.choices);
+    expect(world.offer?.level).toBe(2);
+    expect(world.isPaused).toBe(true);
+  });
+
+  it('카드가 떠 있는 동안 게임이 멈춘다', () => {
+    const world = new World();
+    feedXp(world, xpForLevel(1, LEVEL));
+    const elapsed = world.elapsed;
+    const pos = { ...world.player.pos };
+    const arrows = world.arrows.map((a) => ({ ...a.pos }));
+
+    for (let i = 0; i < 60; i += 1) world.step({ move: { x: 1, y: 0 }, aim: null }, DT);
+
+    expect(world.elapsed).toBe(elapsed);
+    expect(world.player.pos).toEqual(pos);
+    expect(world.arrows.map((a) => ({ ...a.pos }))).toEqual(arrows);
+  });
+
+  it('고르면 카드가 사라지고 게임이 다시 흐른다', () => {
+    const world = new World();
+    feedXp(world, xpForLevel(1, LEVEL));
+    const id = pickFirst(world);
+
+    expect(world.offer).toBeNull();
+    expect(world.isPaused).toBe(false);
+    expect(world.upgradeStacks[id]).toBe(1);
+    expect(world.takenUpgrades).toEqual([id]);
+
+    const elapsed = world.elapsed;
+    world.step(IDLE, DT);
+    expect(world.elapsed).toBeGreaterThan(elapsed);
+  });
+
+  it('고른 카드가 실제로 게임을 바꾼다 — 연사를 고르면 화살이 더 나간다', () => {
+    const fire = (world: World): number => {
+      let fired = 0;
+      const seen = new Set<number>();
+      for (let i = 0; i < 300; i += 1) {
+        world.step(IDLE, DT);
+        for (const arrow of world.arrows) {
+          if (!seen.has(arrow.id)) {
+            seen.add(arrow.id);
+            fired += 1;
+          }
+        }
+      }
+      return fired;
+    };
+
+    const plain = new World();
+    const base = fire(plain);
+
+    const fast = new World();
+    // 카드를 거치지 않고 직접 능력치를 바꾼다 — 여기서 보는 것은 "능력치가 게임에 닿는가"다.
+    // 카드를 통해 닿는지는 위의 '고르면' 테스트가 본다.
+    const rapid = UPGRADE_CARDS.find((c) => c.id === 'rapid');
+    if (!rapid) throw new Error('연사 카드가 없다');
+    for (let i = 0; i < 4; i += 1) fast.stats = applyUpgrade(fast.stats, rapid);
+    expect(fire(fast)).toBeGreaterThan(base);
+  });
+
+  it('한 번에 여러 레벨이 올라도 카드를 그만큼 준다 (레벨업을 놓치지 않는다)', () => {
+    const world = new World();
+    const need = xpForLevel(1, LEVEL) + xpForLevel(2, LEVEL) + xpForLevel(3, LEVEL);
+    feedXp(world, need);
+    expect(world.progress.level).toBe(4);
+
+    expect(world.offer?.remaining).toBe(3);
+    pickFirst(world);
+    expect(world.offer?.remaining).toBe(2);
+    pickFirst(world);
+    expect(world.offer?.remaining).toBe(1);
+    pickFirst(world);
+
+    expect(world.offer).toBeNull();
+    expect(world.pendingUpgrades).toBe(0);
+    expect(world.takenUpgrades).toHaveLength(3);
+  });
+
+  it('없는 카드를 고르면 아무 일도 없다 (멈춘 채로 남지 않는다)', () => {
+    const world = new World();
+    feedXp(world, xpForLevel(1, LEVEL));
+    expect(world.chooseUpgrade('없는-카드')).toBe(false);
+    expect(world.isPaused).toBe(true);
+    expect(world.takenUpgrades).toHaveLength(0);
+    expect(pickFirst(world)).toBeTruthy();
+  });
+
+  it('고를 카드가 다 떨어지면 카드를 띄우지 않고 그냥 흐른다', () => {
+    const world = new World();
+    const total = UPGRADE_CARDS.reduce((sum, c) => sum + c.maxStacks, 0);
+
+    // 한 덩이로 최대 레벨까지 올린다. 레벨업 수(39)가 카드 총량(30)보다 많아
+    // 마지막에는 고를 것이 없는 상태가 된다.
+    feedXp(world, 1e9);
+    let picks = 0;
+    while (world.offer && picks < total + 5) {
+      pickFirst(world);
+      picks += 1;
+    }
+
+    expect(picks).toBe(total);
+    expect(world.isPaused).toBe(false);
+    expect(world.pendingUpgrades).toBe(0);
+    // 멈춘 채로 남지 않는다.
+    const elapsed = world.elapsed;
+    world.step(IDLE, DT);
+    expect(world.elapsed).toBeGreaterThan(elapsed);
+  });
+});

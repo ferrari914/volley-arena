@@ -127,10 +127,26 @@ function touch(cdp, type, point) {
 }
 
 /**
+ * 레벨업 카드(DESIGN 4번)가 떠 있으면 골라서 내린다.
+ * 카드가 떠 있는 동안 게임은 일부러 멈춰 있어 손가락을 끌어도 플레이어가 움직이지 않는다.
+ * 그건 입력 지연이 아니라 멈춤이므로, 재기 전에 걷어 내야 엉뚱한 실패로 끝나지 않는다.
+ */
+function dismissUpgradeCard(page) {
+  return page.evaluate(() => {
+    const card = document.querySelector('#upgrade[data-show="1"] .up-card');
+    if (!card) return false;
+    card.click();
+    return true;
+  });
+}
+
+/**
  * 한 번 재기: 손가락을 대고(움직임 없음) → 옆으로 끌고 → 플레이어가 움직인 첫 프레임을 찾는다.
  * 방향을 번갈아 주는 이유: 같은 쪽으로만 밀면 플레이어가 아레나 벽에 붙어 더 이상 안 움직인다.
  */
 async function measureOnce(page, cdp, index) {
+  if (await dismissUpgradeCard(page)) await waitFrames(page, 2);
+
   const start = { x: 150, y: VIEWPORT.height - 90 };
   await touch(cdp, 'touchStart', start);
   await waitFrames(page, 3);

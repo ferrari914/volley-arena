@@ -83,7 +83,9 @@ export class Hud {
       this.level.classList.remove('is-up');
       void this.level.offsetWidth;
       this.level.classList.add('is-up');
-      this.levelUp.dataset.show = '1';
+      // 보통은 3중 1택 카드가 레벨업을 알린다. 카드가 뜨지 않을 때(고를 카드가
+      // 다 떨어졌을 때)만 글자로 알린다 — 둘이 겹치면 화면이 시끄럽다.
+      if (!world.offer) this.levelUp.dataset.show = '1';
     }
     if (this.levelUpTimer > 0) {
       this.levelUpTimer -= frameSeconds;

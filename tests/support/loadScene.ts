@@ -67,6 +67,12 @@ export class LoadScene {
    *     성능은 유리한 쪽을 재면 아무것도 증명하지 못한다.
    */
   replenish(): void {
+    // 카드가 떠 있으면 골라서 내린다(4번). 그냥 두면 World가 멈춰 있어
+    // 이어지는 측정이 "아무 일도 하지 않는 step()"을 재고 빠르다고 말한다.
+    // 실제로 하는 사람도 카드를 골라야 게임이 다시 흐르므로 이쪽이 실제에 가깝다.
+    const offered = this.world.offer?.choices[0];
+    if (offered) this.world.chooseUpgrade(offered.card.id);
+
     for (const target of this.world.targets) {
       if (target.alive) continue;
       target.alive = true;

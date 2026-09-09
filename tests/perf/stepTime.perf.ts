@@ -43,6 +43,7 @@ describe(`World.step() 처리 시간 — 적 ${LOAD_TARGETS} · 투사체 ${LOAD
     const samples: number[] = [];
     let minAliveTargets = Number.POSITIVE_INFINITY;
     let minArrows = Number.POSITIVE_INFINITY;
+    const startElapsed = scene.world.elapsed;
 
     for (let i = 0; i < MEASURED_STEPS; i += 1) {
       // 부하를 되돌리는 시간은 게임의 시간이 아니므로 측정 밖에 둔다.
@@ -59,6 +60,10 @@ describe(`World.step() 처리 시간 — 적 ${LOAD_TARGETS} · 투사체 ${LOAD
     // 텅 빈 장면을 재고 "빠르다"고 말하는 일이 없게, 부하가 실제로 걸렸는지 먼저 본다.
     expect(minAliveTargets).toBe(LOAD_TARGETS);
     expect(minArrows).toBeGreaterThanOrEqual(LOAD_ARROWS);
+    // 시뮬레이션이 실제로 매 스텝 돌았는지. 4번의 카드가 떠 있으면 step()은 빈 함수가 되고,
+    // 그 상태의 0.000ms는 "빠르다"가 아니라 "아무것도 재지 않았다"이다.
+    expect(scene.world.elapsed - startElapsed).toBeCloseTo(MEASURED_STEPS * DT, 6);
+    expect(scene.world.isPaused).toBe(false);
 
     const sorted = [...samples].sort((a, b) => a - b);
     const median = quantile(sorted, 0.5);

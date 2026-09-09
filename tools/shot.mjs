@@ -15,6 +15,12 @@
  *     오는지는 아무도 보지 않는다. HUD와 World 사이가 끊겨도 테스트는 전부 통과한다.
  *     그래서 실제 브라우저에서 코어를 주우러 걸어가 보고 바가 찼는지 잰다.
  *
+ * (4) 레벨업 3중 1택 — DESIGN 4번.
+ *     코어를 주워 레벨을 올리면 카드 3장이 뜨고, 그동안 게임이 멈추고,
+ *     한 장을 누르면 카드가 사라지고 게임이 다시 흐르는지 화면에서 확인한다.
+ *     "멈춘다"는 화면 시간(HUD)이 멈추는 것으로, "다시 흐른다"는 그 시간이 다시
+ *     가는 것으로 잰다 — 멈춘 채로 영영 남는 고장은 이 기능의 가장 나쁜 고장이다.
+ *
  * 문제가 하나라도 있으면 0이 아닌 코드로 끝난다.
  */
 import { mkdir, rm } from 'node:fs/promises';
@@ -41,7 +47,8 @@ const VIEWS = [
   {
     name: 'mobile-landscape',
     safe: SAFE.none,
-    // 이 화면에서만 코어를 주우러 가 본다(같은 검사를 다섯 번 할 이유가 없다).
+    // 가로 화면 두 종류에서만 코어를 주우러 가 본다(같은 검사를 다섯 번 할 이유가 없다).
+    // 노치 화면까지 하는 이유는 레벨업 카드 세 장이 좌우 여백 안에 들어오는지 재기 위해서다.
     pickup: true,
     viewport: { width: 844, height: 390 },
     deviceScaleFactor: 3,
@@ -53,6 +60,7 @@ const VIEWS = [
     // 노치 기기의 가로 화면. 이 게임의 기본 자세이므로 가장 중요한 화면이다.
     name: 'mobile-landscape-notch',
     safe: SAFE.landscape,
+    pickup: true,
     viewport: { width: 844, height: 390 },
     deviceScaleFactor: 3,
     isMobile: true,
@@ -97,6 +105,8 @@ const GUARDED = [
   ['진단 표시', '#hud-debug'],
   ['레벨업 알림', '#level-up'],
   ['조작 안내', '#hint'],
+  ['업그레이드 안내', '#upgrade-head'],
+  ['업그레이드 카드', '.up-card'],
   ['이동 스틱', '.stick--move'],
   ['조준 스틱', '.stick--aim'],
   ['세로 안내 문구', '#rotate-notice p'],
@@ -122,25 +132,32 @@ function measureSafeArea(page, safe, guarded) {
       const height = window.innerHeight;
 
       for (const [label, selector] of items) {
-        const element = document.querySelector(selector);
-        if (!element) continue;
-        // 화면에 그려지지 않는 것은 검사 대상이 아니다.
-        if (element.getClientRects().length === 0) continue;
-        const style = getComputedStyle(element);
-        if (Number(style.opacity) === 0 || style.visibility === 'hidden') continue;
+        // 같은 이름의 것이 여럿일 수 있다(카드 3장). 하나만 재면 나머지가 넘쳐도 지나간다.
+        const elements = [...document.querySelectorAll(selector)];
+        for (const [index, element] of elements.entries()) {
+          const name = elements.length > 1 ? `${label} ${index + 1}번째` : label;
+          // 화면에 그려지지 않는 것은 검사 대상이 아니다.
+          if (element.getClientRects().length === 0) continue;
+          const style = getComputedStyle(element);
+          if (Number(style.opacity) === 0 || style.visibility === 'hidden') continue;
 
-        const rect = element.getBoundingClientRect();
-        const over = [];
-        // 0.5px은 소수점 반올림 여유. 그보다 큰 침범만 문제로 본다.
-        if (rect.top < inset.top - 0.5) over.push(`위로 ${(inset.top - rect.top).toFixed(1)}px`);
-        if (rect.left < inset.left - 0.5) over.push(`왼쪽으로 ${(inset.left - rect.left).toFixed(1)}px`);
-        if (rect.right > width - inset.right + 0.5) {
-          over.push(`오른쪽으로 ${(rect.right - (width - inset.right)).toFixed(1)}px`);
+          const rect = element.getBoundingClientRect();
+          const over = [];
+          // 0.5px은 소수점 반올림 여유. 그보다 큰 침범만 문제로 본다.
+          if (rect.top < inset.top - 0.5) over.push(`위로 ${(inset.top - rect.top).toFixed(1)}px`);
+          if (rect.left < inset.left - 0.5) {
+            over.push(`왼쪽으로 ${(inset.left - rect.left).toFixed(1)}px`);
+          }
+          if (rect.right > width - inset.right + 0.5) {
+            over.push(`오른쪽으로 ${(rect.right - (width - inset.right)).toFixed(1)}px`);
+          }
+          if (rect.bottom > height - inset.bottom + 0.5) {
+            over.push(`아래로 ${(rect.bottom - (height - inset.bottom)).toFixed(1)}px`);
+          }
+          if (over.length > 0) {
+            problems.push(`${name}(${selector})가 안전 영역을 ${over.join(', ')} 벗어났다`);
+          }
         }
-        if (rect.bottom > height - inset.bottom + 0.5) {
-          over.push(`아래로 ${(rect.bottom - (height - inset.bottom)).toFixed(1)}px`);
-        }
-        if (over.length > 0) problems.push(`${label}(${selector})가 안전 영역을 ${over.join(', ')} 벗어났다`);
       }
 
       // 3D 화면은 반대로 화면을 꽉 채워야 한다. 여백이 생기면 리사이즈 처리가 잘못된 것이다.
@@ -195,6 +212,90 @@ async function collectCores(page, cdp, viewport) {
   });
 }
 
+/** HUD 위쪽 줄의 시간·처치 문구. 게임이 흐르고 있는지를 화면에서 읽는 유일한 값이다. */
+function readClock(page) {
+  return page.evaluate(() => document.getElementById('hud-stats')?.textContent ?? '');
+}
+
+/**
+ * 레벨업 3중 1택(DESIGN 4번)을 화면에서 확인한다.
+ * 코어를 주워 레벨이 오른 직후에 부른다 — 그 시점에 카드가 떠 있어야 한다.
+ *
+ * 세 가지를 본다: 카드가 3장 떴는가 · 그동안 게임이 멈추는가 · 누르면 다시 흐르는가.
+ * "멈춘다"만 보면 영영 멈춰 버린 화면도 통과하므로 "다시 흐른다"를 반드시 함께 본다.
+ */
+async function checkUpgradeCards(page, name, problems) {
+  const opened = await page.evaluate(() => {
+    const panel = document.querySelector('#upgrade[data-show="1"]');
+    if (!panel) return { open: false };
+    const cards = [...panel.querySelectorAll('.up-card')];
+    return {
+      open: true,
+      count: cards.length,
+      head: document.getElementById('upgrade-head')?.textContent ?? '',
+      titles: cards.map((card) => card.querySelector('.up-card__title')?.textContent ?? ''),
+    };
+  });
+
+  if (!opened.open) {
+    problems.push(
+      `[${name}] 레벨이 올랐는데 3중 1택 카드가 뜨지 않았다 — World와 화면 사이가 끊겼다`,
+    );
+    return;
+  }
+  if (opened.count !== 3) {
+    problems.push(`[${name}] 카드가 3장이 아니라 ${opened.count}장 떴다`);
+    return;
+  }
+
+  // ① 멈추는가. 화면의 시계가 멈춰 있어야 한다.
+  const before = await readClock(page);
+  await page.waitForTimeout(700);
+  const during = await readClock(page);
+  if (before !== during) {
+    problems.push(`[${name}] 카드가 떠 있는데 게임이 계속 흐른다 (${before} → ${during})`);
+  }
+
+  await page.screenshot({ path: `${OUT}/${name}-cards.png` });
+
+  // ② 누르면 사라지는가. 카드 한가운데를 손가락으로 누른다.
+  // 한 번에 두 레벨이 오르면 고른 직후 다음 카드가 이어서 뜬다(그게 맞는 동작이다).
+  // 그래서 "사라졌다"는 남은 선택이 0이 될 때까지 눌러 본 뒤에 판단한다.
+  let picks = 0;
+  while (picks < 6) {
+    const box = await page.locator('.up-card').first().boundingBox();
+    if (!box) {
+      problems.push(`[${name}] 카드의 자리를 찾지 못했다`);
+      return;
+    }
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForTimeout(300);
+    picks += 1;
+    const open = await page.evaluate(() => {
+      const panel = document.querySelector('#upgrade[data-show="1"]');
+      return panel ? Number(panel.dataset.remaining) : 0;
+    });
+    if (!open) break;
+  }
+
+  const stillOpen = await page.evaluate(() =>
+    Boolean(document.querySelector('#upgrade[data-show="1"]')),
+  );
+  if (stillOpen) {
+    problems.push(`[${name}] 카드를 ${picks}번 눌렀는데 사라지지 않는다`);
+    return;
+  }
+
+  // ③ 다시 흐르는가. 여기까지 봐야 "멈춘 채로 남는" 고장을 잡는다.
+  await page.waitForTimeout(700);
+  const after = await readClock(page);
+  if (after === during) {
+    problems.push(`[${name}] 카드를 고른 뒤에도 게임이 멈춰 있다 (${during} 그대로)`);
+  }
+
+  console.log(`  3중 1택: ${opened.titles.join(' · ')} — ${opened.head} (${picks}장 고름)`);
+}
+
 const problems = [];
 const preview = await startPreview(PORT);
 
@@ -247,6 +348,12 @@ try {
         console.log(`  코어 줍기: 경험치바 ${(result.ratio * 100).toFixed(0)}% · ${result.level}`);
       }
       await page.screenshot({ path: `${OUT}/${name}-xp.png` });
+
+      // 카드가 떠 있는 지금이 카드 배치를 재기에 맞는 시점이다(고르면 사라진다).
+      for (const problem of await measureSafeArea(page, safe, GUARDED)) {
+        problems.push(`[${name}] 안전 영역(카드): ${problem}`);
+      }
+      await checkUpgradeCards(page, name, problems);
     }
 
     // 스틱이 쉬는 자리로 돌아온 지금이 배치를 재기에 맞는 시점이다.

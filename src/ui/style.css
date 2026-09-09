@@ -99,6 +99,11 @@ body[data-input='keyboard'] .stick {
   display: none;
 }
 
+/* 카드를 고르는 동안에는 스틱을 흐리게 둔다. 지금 누를 것은 카드다. */
+body[data-paused='1'] .stick {
+  opacity: 0.12;
+}
+
 /* --- 위쪽 정보 줄: 레벨 · 경험치바 · 시간/처치 · 진단 --- */
 
 /*
@@ -173,7 +178,10 @@ body[data-input='keyboard'] .stick {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 
-/* 레벨업 알림. 4번(3중 1택)이 들어오면 이 자리를 카드 3장이 대신한다. */
+/*
+ * 레벨업 알림. 보통은 3중 1택 카드가 이 자리를 대신하므로,
+ * 카드가 뜨지 않는 레벨업(고를 카드가 다 떨어졌을 때)에만 나온다.
+ */
 #level-up {
   position: absolute;
   left: 50%;
@@ -282,6 +290,166 @@ body[data-input='keyboard'] .stick {
   }
 }
 
+
+/* --- 레벨업 3중 1택 카드 --- */
+
+/*
+ * 카드가 떠 있는 동안 게임은 멈춘다(DESIGN 4번). 뒤의 아레나는 계속 그려지므로
+ * 어두운 막만 덮고 화면을 가리지 않는다 — 방금 무슨 일이 있었는지 보이는 편이 낫다.
+ * 가로 화면의 세로 길이는 390px뿐이라 카드는 가로로 눕힌 한 줄에 넣는다.
+ */
+#upgrade {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 10px)
+    calc(var(--safe-l) + 12px);
+  background: radial-gradient(circle at 50% 45%, rgba(11, 16, 32, 0.62), rgba(6, 9, 20, 0.86));
+  pointer-events: auto;
+  z-index: 5;
+}
+
+#upgrade[data-show='1'] {
+  display: flex;
+}
+
+#upgrade-head {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #a9ffe0;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
+  animation: card-in 200ms ease-out both;
+}
+
+#upgrade-list {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.up-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  width: 196px;
+  /* 손가락으로 누를 것이므로 넉넉히. 좁은 화면에서는 아래 미디어 쿼리가 줄인다. */
+  padding: 14px 14px 12px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 62%),
+    rgba(16, 22, 42, 0.92);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  animation: card-in 220ms ease-out both;
+  transition: transform 90ms ease;
+}
+
+.up-card:active {
+  transform: scale(0.97);
+}
+
+/* 카드를 고른 뒤 잔상이 남지 않게: 눌린 상태의 색만 잠깐 밝힌다. */
+.up-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 코어와 같은 결정 모양. 색으로 카드를 구별한다. */
+.up-card__mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  transform: rotate(45deg);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 92%, white), var(--accent));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.up-card__key {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid rgba(234, 240, 255, 0.22);
+  font-size: 11px;
+  color: var(--ink-dim);
+  text-align: center;
+}
+
+/* 키 안내는 키보드가 있을 때만 뜻이 있다. */
+body[data-input='touch'] .up-card__key {
+  display: none;
+}
+
+.up-card__title {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--accent) 55%, var(--ink));
+}
+
+.up-card__detail {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-dim);
+}
+
+/* 이 카드를 몇 장까지 겹칠 수 있고 지금 몇 장인지. 채워진 칸이 지금까지 고른 수다. */
+.up-card__pips {
+  display: flex;
+  gap: 3px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+.up-card__pips i {
+  width: 12px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(234, 240, 255, 0.16);
+}
+
+.up-card__pips i[data-on='1'] {
+  background: var(--accent);
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 노치가 좌우를 47px씩 먹는 가로 화면에서도 세 장이 한 줄에 들어와야 한다. */
+@media (max-width: 780px) {
+  .up-card {
+    width: 172px;
+    padding: 12px 12px 10px;
+  }
+
+  .up-card__title {
+    font-size: 17px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   #rotate-notice .rotate-icon {
     animation: none;
@@ -289,6 +457,11 @@ body[data-input='keyboard'] .stick {
   }
 
   #hud-level.is-up {
+    animation: none;
+  }
+
+  .up-card,
+  #upgrade-head {
     animation: none;
   }
 }

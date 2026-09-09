@@ -3,6 +3,7 @@ import { World } from './core/World';
 import { InputManager } from './input/InputManager';
 import { Renderer } from './render/Renderer';
 import { Hud } from './ui/Hud';
+import { UpgradeCards } from './ui/UpgradeCards';
 import { IDLE_INPUT } from './input/types';
 
 declare global {
@@ -51,10 +52,15 @@ function boot(): void {
   const world = new World();
   const frameProbe = window.__frameProbe;
   const hud = new Hud(uiLayer);
+  const cards = new UpgradeCards(uiLayer, (id) => world.chooseUpgrade(id));
   const input = new InputManager(app);
 
   const ticker = new Ticker(
     (dt) => {
+      // 카드를 고르는 동안은 입력을 읽지 않는다. 멈춤 자체는 World가 지키지만(step이 빈다),
+      // 카드를 누르려고 댄 손가락이 가상 스틱으로 새는 것은 여기서 막아야 한다.
+      if (world.isPaused) return;
+
       const state = document.hidden
         ? IDLE_INPUT
         : input.read({
@@ -67,6 +73,7 @@ function boot(): void {
       renderer.sync(world);
       renderer.render();
       hud.update(world, ticker.fps);
+      cards.sync(world.offer);
       frameProbe?.(world);
     },
   );

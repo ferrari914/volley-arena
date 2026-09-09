@@ -36,6 +36,21 @@ function makeRandom(seed: number): () => number {
   };
 }
 
+const IDLE: FrameInput = { move: { x: 0, y: 0 }, aim: null };
+
+/**
+ * 한 판을 돌린다. 카드가 떠 있으면 첫 장을 고른다 —
+ * 실제로 하는 사람도 골라야 게임이 다시 흐른다. 고르지 않으면 World는 멈춘 채로 남고,
+ * 그 뒤의 측정은 "아무 일도 일어나지 않은 판"을 재게 된다.
+ */
+function play(world: World, steps: number, input: (w: World) => FrameInput): void {
+  for (let i = 0; i < steps; i += 1) {
+    const first = world.offer?.choices[0];
+    if (first) world.chooseUpgrade(first.card.id);
+    world.step(input(world), DT);
+  }
+}
+
 describe('레벨 곡선', () => {
   it('레벨이 오를수록 더 많이 필요하다', () => {
     expect(xpForLevel(2, curve)).toBeGreaterThan(xpForLevel(1, curve));
@@ -190,16 +205,18 @@ describe('World — 경험치 코어', () => {
 
   it('코어를 주우면 레벨이 오른다', () => {
     const world = new World();
-    for (let i = 0; i < 60 * 30; i += 1) world.step(walkToNearestCore(world), DT);
+    play(world, 60 * 30, walkToNearestCore);
     expect(world.progress.totalXp).toBeGreaterThan(0);
     expect(world.progress.level).toBeGreaterThan(1);
-    expect(world.levelUps).toBeGreaterThanOrEqual(0);
+    // 오른 레벨은 하나도 남김없이 카드 한 장이 됐다(4번).
+    expect(world.pendingUpgrades).toBe(0);
+    expect(world.takenUpgrades.length).toBe(world.progress.level - 1);
   });
 
   it('맵에 저절로 생기는 코어는 정해진 수를 넘지 않는다', () => {
     // 가만히 서 있으면 앰비언트 코어는 최소 거리 밖에 생겨 저절로 줍히지 않는다.
     const world = new World();
-    for (let i = 0; i < 60 * 120; i += 1) world.step({ move: { x: 0, y: 0 }, aim: null }, DT);
+    play(world, 60 * 120, () => IDLE);
     const ambient = world.cores.filter((c) => c.origin === 'ambient').length;
     expect(ambient).toBeLessThanOrEqual(CORE.ambient.max);
     expect(ambient).toBe(CORE.ambient.max);
@@ -208,7 +225,7 @@ describe('World — 경험치 코어', () => {
   it('난전에서도 코어가 무한정 쌓이지 않는다', () => {
     // 코어를 줍지 않고 계속 쏘기만 하는 최악의 경우.
     const world = new World();
-    for (let i = 0; i < 60 * 120; i += 1) world.step({ move: { x: 0, y: 0 }, aim: null }, DT);
+    play(world, 60 * 120, () => IDLE);
     expect(world.cores.length).toBeLessThanOrEqual(CORE.maxAlive);
   });
 });
@@ -225,13 +242,15 @@ describe('밸런스 — 전투가 채집보다 빠르다', () => {
    * 전투를 피하는 사람의 수입 상한(XP/s).
    * 맵 코어는 `spawnInterval`마다 하나씩만 생기므로, 아무리 빨리 뛰어다녀도
    * 장기적으로는 이 속도 이상 벌 수 없다. 상한이라 실측보다 강한 주장이다.
+   *
+   * 4번의 '정제' 카드(경험치 배율)는 두 수입에 똑같이 곱해지므로 이 비교를 흔들지 않는다.
    */
   const ambientCeiling = CORE.ambient.value / CORE.ambient.spawnInterval;
 
   it('전투 수입이 채집 수입 상한의 3배를 넘는다', () => {
     const seconds = 60;
     const world = new World();
-    for (let i = 0; i < 60 * seconds; i += 1) world.step(walkToNearestCore(world), DT);
+    play(world, 60 * seconds, walkToNearestCore);
 
     const dropRate = world.xpByOrigin.drop / seconds;
     // 눈으로도 볼 수 있게 남긴다. 밸런스를 만질 때 이 수치를 보고 판단한다.
@@ -245,8 +264,13 @@ describe('밸런스 — 전투가 채집보다 빠르다', () => {
 
   it('한 판(3~5분) 안에 레벨이 충분히 오른다', () => {
     const world = new World();
-    for (let i = 0; i < 60 * 240; i += 1) world.step(walkToNearestCore(world), DT);
-    // 4번(3중 1택)에서 레벨업 한 번이 카드 한 장이 된다. 4분에 10장 밑이면 심심하다.
+    play(world, 60 * 240, walkToNearestCore);
+    console.log(
+      `4분에 Lv${world.progress.level} · 카드 ${world.takenUpgrades.length}장 · ` +
+        `${world.hits}처치 (고른 카드: ${world.takenUpgrades.join(',')})`,
+    );
+    // 레벨업 한 번이 카드 한 장이다(4번). 4분에 10장 밑이면 심심하다.
     expect(world.progress.level).toBeGreaterThanOrEqual(10);
+    expect(world.takenUpgrades.length).toBe(world.progress.level - 1);
   });
 });
