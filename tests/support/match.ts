@@ -1,7 +1,7 @@
 import { World } from '../../src/core/World';
 import type { FrameInput } from '../../src/core/World';
 import { ENEMY, PLAYER } from '../../src/data/config';
-import type { XpCore } from '../../src/entities/types';
+import type { UpgradeChoice, XpCore } from '../../src/entities/types';
 
 /** 한 스텝의 길이(s). 게임 루프와 같은 60fps. */
 export const DT = 1 / 60;
@@ -10,17 +10,57 @@ export const DT = 1 / 60;
 export const IDLE: FrameInput = { move: { x: 0, y: 0 }, aim: null };
 
 /**
- * 한 판을 돌린다. 카드가 떠 있으면 첫 장을 고른다 —
+ * 카드가 떴을 때 **무엇을 고르는 사람인가.** 고른 카드의 id를 돌려준다.
+ *
+ * 판을 재는 자는 사람 하나가 아니라 둘이다 — **어떻게 움직이는가**(`input`)와
+ * **어떻게 고르는가**(여기). 세션 16~19가 밸런스를 흔들 때마다 이 두 번째 자를
+ * 그 자리에서 새로 짜고 재고 지웠고, 지운 뒤에는 그 수치를 다시 낼 방법이 없었다.
+ * 그래서 자를 여기에 못 박아 둔다(`tests/perf/balance.perf.ts`가 셋을 한 표본으로 묶어 잰다).
+ */
+export type Chooser = (choices: readonly UpgradeChoice[], world: World) => string;
+
+/**
+ * 아무거나 고르는 사람. **첫 장을 고르는 것이 곧 아무거나 고르는 것이다** —
+ * 세션 17이 카드가 서는 자리를 섞었으므로(`rollUpgradeChoices`) 첫 칸에 무엇이
+ * 서는지가 판마다 굴러간다. 그 전까지는 화력이 늘 왼쪽에 섰다.
+ */
+export const takeAny: Chooser = (choices) => choices[0]?.card.id ?? '';
+
+/** 화력을 먼저 고르는 사람. 없으면 남은 것 중 첫 장. 판이 가장 길게 자라는 쪽이다. */
+export const preferPower: Chooser = (choices) =>
+  (choices.find((c) => c.card.role === 'power') ?? choices[0])?.card.id ?? '';
+
+/**
+ * 보조를 먼저 고르는 사람. 화력이 가장 약하게 자라는 쪽 — **아래쪽 꼬리를 만드는 사람**이다.
+ * `UPGRADE.maxSupport`가 한 번에 보조를 한 장까지로 막으므로 이 사람도 결국 화력을 고르게 된다.
+ * (세션 17은 여기에 '무작위로 고르는 사람'을 뒀지만, 자리를 섞은 뒤로는 `takeAny`와 같은 사람이다.)
+ */
+export const preferSupport: Chooser = (choices) =>
+  (choices.find((c) => c.card.role === 'support') ?? choices[0])?.card.id ?? '';
+
+/**
+ * 한 판을 돌린다. 카드가 떠 있으면 `choose`가 한 장을 고른다 —
  * 실제로 하는 사람도 골라야 게임이 다시 흐른다. 고르지 않으면 World는 멈춘 채로 남고,
  * 그 뒤의 측정은 "아무 일도 일어나지 않은 판"을 재게 된다.
  *
  * 쓰러지면 거기서 판이 끝난다(5번). 더 돌려도 step()이 빈 함수라 시간만 버린다.
  */
-export function play(world: World, steps: number, input: (w: World) => FrameInput): void {
+export function play(
+  world: World,
+  steps: number,
+  input: (w: World) => FrameInput,
+  choose: Chooser = takeAny,
+): void {
   for (let i = 0; i < steps; i += 1) {
     if (world.defeated) return;
-    const first = world.offer?.choices[0];
-    if (first) world.chooseUpgrade(first.card.id);
+    const offer = world.offer;
+    if (offer) {
+      // 고를 수 없는 id를 돌려주면 게임이 멈춘 채로 남고, 그 뒤의 측정은 전부 거짓이 된다.
+      // 조용히 넘기지 않고 여기서 세운다.
+      const id = choose(offer.choices, world);
+      if (!world.chooseUpgrade(id))
+        throw new Error(`고르는 사람이 없는 카드를 골랐다: ${JSON.stringify(id)}`);
+    }
     world.step(input(world), DT);
   }
 }
@@ -116,6 +156,8 @@ export function playMatch(
    * 다른 사람을 재고 싶으면 여기에 넣어 나란히 재라(`dodgeCharger`).
    */
   input: (world: World) => FrameInput = walkToNearestCore,
+  /** 어떻게 고르는 사람인가. 기본값은 아무거나 고르는 사람이다 — 위와 같은 이유로 옮기지 않는다. */
+  choose: Chooser = takeAny,
 ): MatchResult {
   const world = new World({ seed });
   // 한 스텝씩 돌리며 체력이 처음 줄어드는 순간을 잡는다. `play`를 그대로 쓰는 이유:
@@ -124,7 +166,7 @@ export function playMatch(
   const steps = Math.round(60 * maxSeconds);
   for (let i = 0; i < steps && !world.defeated; i += 1) {
     const hp = world.player.hp;
-    play(world, 1, input);
+    play(world, 1, input, choose);
     if (firstHit === Infinity && world.player.hp < hp) firstHit = world.elapsed;
   }
   return {
