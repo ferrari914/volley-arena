@@ -210,14 +210,26 @@ describe('World — 경험치 코어', () => {
   });
 
   it('적을 쓰러뜨리면 그 자리에 코어가 떨어진다', () => {
-    const world = new World();
+    // 멀리 선 활잡이 하나만 세운다. 표준 배치로 재면 발밑까지 오는 돌진형(DESIGN 9번)이
+    // 먼저 쓰러지고, 떨어진 코어가 그 자리에서 곧바로 끌려와 주워진다 —
+    // 그러면 "떨어졌는가"가 아니라 "주웠는가"를 재게 된다.
+    const world = new World({ enemies: [{ x: 12, y: 0 }] });
+    let fell = { x: 12, y: 0 };
     for (let i = 0; i < 600 && world.kills === 0; i += 1) {
+      const enemy = world.enemies[0];
+      if (enemy?.alive) fell = { ...enemy.pos };
       world.step({ move: { x: 0, y: 0 }, aim: null }, DT);
     }
     expect(world.kills).toBeGreaterThan(0);
-    expect(world.cores.filter((c) => c.origin === 'drop').length).toBeGreaterThanOrEqual(
-      CORE.drop.perKill,
-    );
+
+    const drops = world.cores.filter((c) => c.origin === 'drop');
+    expect(drops.length).toBeGreaterThanOrEqual(CORE.drop.perKill);
+    // 떨어진 자리는 쓰러진 자리다(플레이어 발밑이 아니다).
+    for (const core of drops) {
+      expect(Math.hypot(core.pos.x - fell.x, core.pos.y - fell.y)).toBeLessThanOrEqual(
+        CORE.drop.scatter + 1e-9,
+      );
+    }
   });
 
   it('코어를 주우면 레벨이 오른다', () => {

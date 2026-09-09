@@ -75,10 +75,9 @@ const ENEMY_LAYOUT: readonly EnemySpawn[] = [
 ];
 
 /** 종류별 최대 체력. 적을 세우는 자리가 여기 하나뿐이라 표도 하나면 된다. */
-const ENEMY_MAX_HP: Record<EnemyKind, number> = {
-  archer: ENEMY.maxHp,
-  charger: CHARGER.maxHp,
-};
+function maxHpOf(kind: EnemyKind): number {
+  return kind === 'charger' ? CHARGER.maxHp : ENEMY.maxHp;
+}
 
 export interface WorldOptions {
   /** 적이 설 자리. 생략하면 표준 배치. 부하 측정 장면이 여기로 20마리를 세운다. */
@@ -179,7 +178,7 @@ export class World {
   constructor(options: WorldOptions = {}) {
     this.enemies = (options.enemies ?? ENEMY_LAYOUT).map((p) => {
       const kind = p.kind ?? 'archer';
-      return createEnemy(this.nextEnemyId++, p.x, p.y, ENEMY_MAX_HP[kind], kind);
+      return createEnemy(this.nextEnemyId++, p.x, p.y, maxHpOf(kind), kind);
     });
     this.random = makeRandom(options.seed ?? 20260909);
     for (let i = 0; i < CORE.ambient.initial; i += 1) this.spawnAmbientCore();
