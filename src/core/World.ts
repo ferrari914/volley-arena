@@ -21,6 +21,11 @@ const TARGET_LAYOUT: readonly Vec2[] = [
   { x: -18, y: -9 },
 ];
 
+export interface WorldOptions {
+  /** 대상이 설 자리. 생략하면 표준 배치. 부하 측정 장면이 여기로 20개를 세운다. */
+  targets?: readonly Vec2[];
+}
+
 /**
  * 순수 시뮬레이션. Three.js를 알지 못한다.
  * 렌더러가 없어도 돌아가므로 테스트에서 그대로 쓸 수 있다.
@@ -28,7 +33,7 @@ const TARGET_LAYOUT: readonly Vec2[] = [
 export class World {
   readonly player: Player = createPlayer();
   readonly arrows: Arrow[] = [];
-  readonly targets: Target[] = TARGET_LAYOUT.map((p) => createTarget(p.x, p.y));
+  readonly targets: Target[];
 
   /** 살아온 시간(s). */
   elapsed = 0;
@@ -39,6 +44,10 @@ export class World {
 
   private manualAimHold = 0;
   private nextArrowId = 1;
+
+  constructor(options: WorldOptions = {}) {
+    this.targets = (options.targets ?? TARGET_LAYOUT).map((p) => createTarget(p.x, p.y));
+  }
 
   /** 고정 시간 간격으로 호출된다. dt는 항상 같은 값이다. */
   step(input: FrameInput, dt: number): void {
@@ -106,18 +115,32 @@ export class World {
     this.spawnArrow();
   }
 
-  private spawnArrow(): void {
-    const dir = { x: Math.cos(this.player.facing), y: Math.sin(this.player.facing) };
+  /**
+   * 화살 하나를 장전한다. 쏘는 지점과 방향만 받는다.
+   * 발사 규칙(쿨다운·조준)을 거치지 않는 유일한 입구다 —
+   * 8번 다중 발사와 부하 측정 장면이 둘 다 여기로 들어온다.
+   */
+  addArrow(pos: Vec2, dir: Vec2): void {
+    const d = normalize(dir);
+    if (d.x === 0 && d.y === 0) return;
     this.arrows.push({
       id: this.nextArrowId++,
-      pos: {
-        x: this.player.pos.x + dir.x * ARROW.muzzleOffset,
-        y: this.player.pos.y + dir.y * ARROW.muzzleOffset,
-      },
-      vel: { x: dir.x * ARROW.speed, y: dir.y * ARROW.speed },
+      pos: { x: pos.x, y: pos.y },
+      vel: { x: d.x * ARROW.speed, y: d.y * ARROW.speed },
       age: 0,
       alive: true,
     });
+  }
+
+  private spawnArrow(): void {
+    const dir = { x: Math.cos(this.player.facing), y: Math.sin(this.player.facing) };
+    this.addArrow(
+      {
+        x: this.player.pos.x + dir.x * ARROW.muzzleOffset,
+        y: this.player.pos.y + dir.y * ARROW.muzzleOffset,
+      },
+      dir,
+    );
   }
 
   private removeDeadArrows(): void {

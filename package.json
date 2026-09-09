@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "qa": "npm run build && node tools/shot.mjs"
+    "qa": "npm run build && node tools/shot.mjs",
+    "perf": "vitest run --config vitest.perf.config.ts"
   },
   "dependencies": {
     "three": "^0.185.1"
