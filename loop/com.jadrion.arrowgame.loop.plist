@@ -8,11 +8,11 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
-        <string>/Users/development/Desktop/화살 게임 개발/loop/loop.sh</string>
+        <string>/Users/development/Projects/화살 게임 개발/loop/loop.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/development/Desktop/화살 게임 개발</string>
+    <string>/Users/development/Projects/화살 게임 개발</string>
 
     <!-- 로그인하면 시작 -->
     <key>RunAtLoad</key>
@@ -37,8 +37,8 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/development/Desktop/화살 게임 개발/logs/launchd.out.log</string>
+    <string>/Users/development/Projects/화살 게임 개발/logs/launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/development/Desktop/화살 게임 개발/logs/launchd.err.log</string>
+    <string>/Users/development/Projects/화살 게임 개발/logs/launchd.err.log</string>
 </dict>
 </plist>
