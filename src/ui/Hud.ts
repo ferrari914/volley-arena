@@ -73,7 +73,7 @@ export class Hud {
 
     this.hint = document.createElement('div');
     this.hint.id = 'hint';
-    this.hint.textContent = '멈추지 말고 움직일 것 · 서 있으면 적의 화살에 맞는다';
+    this.hint.textContent = '왼쪽으로 이동 · 오른쪽으로 조준 · 멈춰 서면 적의 화살에 맞는다';
     host.appendChild(this.hint);
 
     // 맞았을 때 화면 가장자리가 붉어진다. 작은 화면에서는 위쪽 체력바보다
@@ -99,7 +99,9 @@ export class Hud {
     this.hpFill.style.transform = `scaleX(${hpRatio.toFixed(4)})`;
     // 체력이 얼마 안 남았으면 바 자체가 뛴다. 숫자를 읽지 않아도 알아야 한다.
     this.hpFill.dataset['low'] = hpRatio <= 0.3 ? '1' : '0';
-    this.hurt.style.opacity = (player.hitFlash * 0.72).toFixed(3);
+    // 쓰러지면 시뮬레이션이 멈춰 hitFlash가 그 값 그대로 얼어붙는다. 그대로 두면
+    // 결과 화면 내내 화면이 붉게 남아 고장처럼 보인다 — 할 말은 쓰러진 화면이 한다.
+    this.hurt.style.opacity = world.defeated ? '0' : (player.hitFlash * 0.72).toFixed(3);
 
     const progress = world.progress;
     if (progress.level !== this.lastLevel) {

@@ -174,6 +174,12 @@ export function createArrow(owner: ArrowOwner): THREE.Group {
  */
 export interface EnemyView {
   group: THREE.Group;
+  /**
+   * 몸통·머리·팔만 담긴 안쪽 묶음. 조준 방향으로 도는 것은 여기다.
+   * 바깥 묶음을 돌리면 그 안의 체력바까지 함께 돌아가서, 적이 등을 보이는 순간
+   * 체력바가 뒤집혀 사라진다(실제로 그렇게 만들었다가 스크린샷에서 잡았다).
+   */
+  pivot: THREE.Group;
   /** 겨눌 때 달아오르게 하려고 들고 있는다. 적마다 따로 만든 재질이다. */
   bodyMaterial: THREE.MeshStandardMaterial;
   /** 체력바의 채워진 부분. scale.x로 줄인다. */
@@ -188,6 +194,8 @@ export interface EnemyView {
 export function createEnemy(): EnemyView {
   const group = new THREE.Group();
   group.name = 'enemy';
+  const pivot = new THREE.Group();
+  group.add(pivot);
 
   const bodyMaterial = standard(PALETTE.enemy, { roughness: 0.5 });
   const body = new THREE.Mesh(
@@ -196,14 +204,14 @@ export function createEnemy(): EnemyView {
   );
   body.position.y = ENEMY.height / 2;
   body.castShadow = true;
-  group.add(body);
+  pivot.add(body);
 
   const cap = new THREE.Mesh(
     new THREE.SphereGeometry(ENEMY.radius * 0.55, 10, 6),
     standard(PALETTE.enemyHit, { roughness: 0.35 }),
   );
   cap.position.y = ENEMY.height + ENEMY.radius * 0.25;
-  group.add(cap);
+  pivot.add(cap);
 
   // 겨누는 쪽을 가리키는 짧은 팔. 플레이어의 코와 같은 역할이다.
   const arm = new THREE.Mesh(
@@ -211,7 +219,7 @@ export function createEnemy(): EnemyView {
     standard(PALETTE.enemyDark, { roughness: 0.4 }),
   );
   arm.position.set(0, ENEMY.height * 0.62, -ENEMY.radius - 0.28);
-  group.add(arm);
+  pivot.add(arm);
 
   const aimRing = new THREE.Mesh(
     new THREE.RingGeometry(ENEMY.radius * 1.1, ENEMY.radius * 1.35, 24),
@@ -231,7 +239,7 @@ export function createEnemy(): EnemyView {
   bar.position.y = ENEMY.height + ENEMY.radius * 0.9;
   group.add(bar);
 
-  return { group, bodyMaterial, hpFill: fill, hpBar: bar, aimRing };
+  return { group, pivot, bodyMaterial, hpFill: fill, hpBar: bar, aimRing };
 }
 
 /**

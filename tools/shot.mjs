@@ -21,6 +21,14 @@
  *     "멈춘다"는 화면 시간(HUD)이 멈추는 것으로, "다시 흐른다"는 그 시간이 다시
  *     가는 것으로 잰다 — 멈춘 채로 영영 남는 고장은 이 기능의 가장 나쁜 고장이다.
  *
+ * (5) 적이 실제로 쫓아와 쏘는지 — DESIGN 5번.
+ *     적의 AI와 피해 계산은 단위 테스트가 보지만, 그것이 화면의 체력바까지 오는지는
+ *     아무도 보지 않는다. 그래서 가만히 서서 기다려 보고 체력바가 실제로 줄어드는지 잰다.
+ *     "서 있으면 맞는다"가 이 게임의 유일한 규칙이므로, 이게 화면에서 안 보이면
+ *     플레이어는 왜 죽었는지 알 수 없다.
+ *     그대로 서서 끝까지 기다려 쓰러진 화면까지 함께 본다 —
+ *     죽은 뒤에 아무 일도 일어나지 않는 화면이 이 기능의 가장 나쁜 고장이다.
+ *
  * 문제가 하나라도 있으면 0이 아닌 코드로 끝난다.
  */
 import { mkdir, rm } from 'node:fs/promises';
@@ -50,6 +58,8 @@ const VIEWS = [
     // 가로 화면 두 종류에서만 코어를 주우러 가 본다(같은 검사를 다섯 번 할 이유가 없다).
     // 노치 화면까지 하는 이유는 레벨업 카드 세 장이 좌우 여백 안에 들어오는지 재기 위해서다.
     pickup: true,
+    // 적이 쫓아와 쏘는지는 이 화면에서만 본다(DESIGN 5번). 이 게임의 기본 자세다.
+    pressure: true,
     viewport: { width: 844, height: 390 },
     deviceScaleFactor: 3,
     isMobile: true,
@@ -103,6 +113,7 @@ const VIEWS = [
 const GUARDED = [
   ['위쪽 정보 줄', '#hud-top'],
   ['레벨 표시', '#hud-level'],
+  ['체력바', '#hud-hp'],
   ['경험치바', '#hud-xp'],
   ['시간·처치', '#hud-stats'],
   ['진단 표시', '#hud-debug'],
@@ -110,6 +121,8 @@ const GUARDED = [
   ['조작 안내', '#hint'],
   ['업그레이드 안내', '#upgrade-head'],
   ['업그레이드 카드', '.up-card'],
+  ['쓰러진 화면 제목', '#defeat-title'],
+  ['다시 시작 버튼', '#defeat-again'],
   ['이동 스틱', '.stick--move'],
   ['조준 스틱', '.stick--aim'],
   ['세로 안내 문구', '#rotate-notice p'],
@@ -190,21 +203,129 @@ function touch(cdp, type, point) {
 /**
  * 코어를 주우러 걸어가 보고, 경험치바가 찼는지 본다.
  *
- * 화면 위쪽(-z)에 표적이 있고 자동 조준이 그쪽을 먼저 쏘므로 코어는 거기에 쌓인다.
- * 이동 스틱을 위로 끌면 그 자리를 지나간다 — 맵에 깔린 코어까지 있으므로
- * 걸어가는 동안 하나도 못 줍는 일은 없다.
+ * 한 방향으로만 걷지 않고 아레나를 네 방향으로 가로지른다(데스크톱 쪽과 같은 길).
+ * 5번에서 적이 돌아다니기 시작한 뒤로는 코어가 어느 한 자리에 쌓이지 않는다 —
+ * 적이 쓰러진 자리에 떨어지고, 그 자리는 매번 다르다.
  */
 async function collectCores(page, cdp, viewport) {
   const origin = { x: 150, y: viewport.height - 90 };
-  await touch(cdp, 'touchStart', origin);
-  await page.waitForTimeout(80);
   // 스틱 반지름(56px)보다 크게 끌어 최대 속도로 민다.
-  await touch(cdp, 'touchMove', { x: origin.x, y: origin.y - 90 });
-  await page.waitForTimeout(2600);
-  await touch(cdp, 'touchEnd', null);
+  const pull = 90;
+  const legs = [
+    { x: 0, y: -pull },
+    { x: pull, y: 0 },
+    { x: 0, y: pull },
+    { x: -pull, y: 0 },
+  ];
+
+  for (let i = 0; i < 8; i += 1) {
+    const leg = legs[i % legs.length];
+    await touch(cdp, 'touchStart', origin);
+    await page.waitForTimeout(80);
+    await touch(cdp, 'touchMove', { x: origin.x + leg.x, y: origin.y + leg.y });
+    await page.waitForTimeout(2400);
+    await touch(cdp, 'touchEnd', null);
+    if (await page.$('#upgrade[data-show="1"]')) break;
+  }
   await page.waitForTimeout(250);
 
   return readXpBar(page);
+}
+
+/** 화면의 바가 얼마나 찼는지 읽는다. transform: scaleX(r)은 matrix(r,0,0,1,0,0)이 된다. */
+function readBar(page, id) {
+  return page.evaluate((barId) => {
+    const fill = document.getElementById(barId);
+    if (!fill) return null;
+    const matrix = getComputedStyle(fill).transform;
+    return matrix === 'none' ? 1 : Number(matrix.replace(/^matrix\(|\)$/g, '').split(',')[0]);
+  }, id);
+}
+
+/**
+ * 적이 쫓아와 쏘는지를 화면에서 확인한다 (DESIGN 5번).
+ *
+ * 가만히 서서 체력바가 줄기를 기다린다. 적은 걸어와야 하므로 곧바로 줄지는 않는다 —
+ * 그래서 한 번 보고 끝내지 않고 정해진 시간까지 지켜본다.
+ * 여기서 실패하면 셋 중 하나다: 적이 다가오지 않거나, 쏘지 않거나,
+ * 맞은 것이 화면(HUD)까지 오지 않는다.
+ */
+async function checkEnemyPressure(page, name, problems) {
+  const before = await readBar(page, 'hud-hp-fill');
+  if (before === null) {
+    problems.push(`[${name}] 체력바를 찾지 못했다`);
+    return;
+  }
+
+  const deadline = Date.now() + 14000;
+  let after = before;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(500);
+    after = await readBar(page, 'hud-hp-fill');
+    if (after !== null && after < before - 0.001) break;
+    // 카드가 뜨면 게임이 멈춘다. 골라서 내리고 계속 기다린다.
+    if (await page.$('#upgrade[data-show="1"]')) await page.keyboard.press('Digit1');
+  }
+
+  await page.screenshot({ path: `${OUT}/${name}-combat.png` });
+
+  if (!(after < before - 0.001)) {
+    problems.push(
+      `[${name}] 가만히 서 있었는데 체력이 줄지 않았다 (체력바 ${before} 그대로) — ` +
+        '적이 다가오지 않거나, 쏘지 않거나, 맞은 것이 화면까지 오지 않는다',
+    );
+    return;
+  }
+  console.log(`  적의 압박: 서 있는 동안 체력바 ${(before * 100).toFixed(0)}% → ${(after * 100).toFixed(0)}%`);
+
+  await checkDefeat(page, name, problems);
+}
+
+/**
+ * 그대로 서서 끝까지 기다려 쓰러진 화면을 확인한다 (DESIGN 5번의 사망 처리).
+ *
+ * 세 가지를 본다: 화면이 뜨는가 · 그 뒤로 게임이 멈추는가 · 다시 시작할 길이 있는가.
+ * 셋째를 반드시 함께 본다 — 죽은 채로 아무것도 할 수 없는 화면이 가장 나쁜 고장이다.
+ */
+async function checkDefeat(page, name, problems) {
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    if (await page.$('#defeat[data-show="1"]')) break;
+    // 카드가 뜨면 게임이 멈춘다. 골라서 내리고 계속 기다린다.
+    if (await page.$('#upgrade[data-show="1"]')) await page.keyboard.press('Digit1');
+    await page.waitForTimeout(500);
+  }
+
+  const shown = await page.evaluate(() => {
+    const panel = document.querySelector('#defeat[data-show="1"]');
+    if (!panel) return null;
+    return {
+      title: document.getElementById('defeat-title')?.textContent ?? '',
+      summary: document.getElementById('defeat-summary')?.textContent ?? '',
+      again: Boolean(document.getElementById('defeat-again')),
+    };
+  });
+
+  if (!shown) {
+    problems.push(`[${name}] 체력이 다 닳도록 서 있었는데 쓰러진 화면이 뜨지 않았다`);
+    return;
+  }
+  await page.screenshot({ path: `${OUT}/${name}-defeat.png` });
+
+  // 판이 끝났으므로 시계도 멈춰 있어야 한다.
+  const before = await readClock(page);
+  await page.waitForTimeout(700);
+  if ((await readClock(page)) !== before) {
+    problems.push(`[${name}] 쓰러졌는데 게임이 계속 흐른다 (${before})`);
+  }
+  // 도달 레벨·처치·생존 시간이 적혀 있어야 한다. 빈 요약은 "무엇을 했는지 모르는 끝"이다.
+  if (!/레벨 \d+ · 처치 \d+ · \d+:\d\d 생존/.test(shown.summary)) {
+    problems.push(`[${name}] 쓰러진 화면의 요약이 이상하다: "${shown.summary}"`);
+  }
+  if (!shown.again) {
+    problems.push(`[${name}] 쓰러진 화면에 다시 시작할 길이 없다`);
+  }
+  console.log(`  쓰러진 화면: ${shown.title} — ${shown.summary}`);
 }
 
 /** 경험치바가 얼마나 찼는지 화면에서 읽는다. */
@@ -393,6 +514,10 @@ try {
         return true;
       });
     }
+
+    // 적의 압박은 화면 하나에서만 본다. 입력 경로(터치/키보드)와 상관없는 검사라
+    // 여러 화면에서 되풀이해도 같은 코드를 다시 볼 뿐이고, 화면마다 14초씩 붙는다.
+    if (view.pressure) await checkEnemyPressure(page, name, problems);
 
     // 스틱이 쉬는 자리로 돌아온 지금이 배치를 재기에 맞는 시점이다.
     for (const problem of await measureSafeArea(page, safe, GUARDED)) {

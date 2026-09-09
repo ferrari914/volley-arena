@@ -132,7 +132,8 @@ export class Renderer {
       if (!enemy.alive) return;
 
       group.position.set(enemy.pos.x, 0, enemy.pos.y);
-      group.rotation.y = yawFromAngle(enemy.facing);
+      // 도는 것은 몸통뿐이다. 바깥 묶음을 돌리면 체력바까지 함께 돌아 등을 보인다.
+      view.pivot.rotation.y = yawFromAngle(enemy.facing);
       // 맞는 순간 잠깐 부풀렸다 돌아온다. 명중이 화면에 보이지 않으면 쏘는 맛이 없다.
       const pop = 1 + enemy.hitFlash * 0.22;
       group.scale.set(pop, pop, pop);
@@ -152,8 +153,10 @@ export class Renderer {
         view.bodyMaterial.emissive.setHex(PALETTE.enemyArrow);
         view.bodyMaterial.emissiveIntensity = 0.15 + charge * 0.5;
       } else if (enemy.hitFlash > 0) {
+        // 세게 주면 몸 전체가 하얗게 떠서 다른 종류의 적처럼 보인다(스크린샷에서 잡았다).
+        // 크기가 함께 튀므로 밝기는 거들기만 하면 된다.
         view.bodyMaterial.emissive.setHex(PALETTE.enemyHit);
-        view.bodyMaterial.emissiveIntensity = enemy.hitFlash * 0.8;
+        view.bodyMaterial.emissiveIntensity = enemy.hitFlash * 0.3;
       } else {
         view.bodyMaterial.emissiveIntensity = 0;
       }
