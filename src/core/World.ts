@@ -187,7 +187,13 @@ export class World {
   constructor(options: WorldOptions = {}) {
     this.enemies = (options.enemies ?? ENEMY_LAYOUT).map((p) => {
       const kind = p.kind ?? 'archer';
-      return createEnemy(this.nextEnemyId++, p.x, p.y, maxHpOf(kind), kind);
+      const enemy = createEnemy(this.nextEnemyId++, p.x, p.y, maxHpOf(kind), kind);
+      // 처음 선 적은 잠깐 다가오기만 한다(`ENEMY.startDelay`). 손을 대기도 전에
+      // 첫 대를 맞으면 무엇에 맞았는지 알 수 없다 — 일어선 사람에게 적이 기다려 주는 것
+      // (`REVIVE.enemyDelay`)과 같은 자리다. **증원에는 주지 않는다**: 22m 밖에서
+      // 걸어 들어오느라 이미 시간이 걸린다(`updateReinforcements`).
+      enemy.fireCooldown = ENEMY.startDelay;
+      return enemy;
     });
     this.random = makeRandom(options.seed ?? 20260909);
     for (let i = 0; i < CORE.ambient.initial; i += 1) this.spawnAmbientCore();

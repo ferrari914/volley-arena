@@ -78,6 +78,50 @@ describe('World', () => {
     expect(sawEnemyArrow).toBe(true);
   });
 
+  /**
+   * DESIGN 품질 기준: "처음 하는 사람이 설명 없이 30초 안에 조작을 이해할 것".
+   *
+   * 처음 선 적은 전부 `fireCooldown` 0으로 태어나 **첫 프레임부터 겨눴다** —
+   * 배치의 활잡이 둘이 13m(`fireRange` 15 안쪽)에 서 있어, 180판을 재니 첫 피격이
+   * 3초 안에 온 판이 90판이었다(가장 이른 것 0.9초). 손을 대기도 전에 맞으면
+   * 무엇에 맞았는지 알 수 없다. `ENEMY.startDelay`가 그 자리를 막는다.
+   *
+   * **"쏘지 않는다"가 아니라 "겨누지도 않는다"를 잰다.** 겨눔은 예고이자 멈춤이라,
+   * 준비 시간 동안 겨누고 있으면 준비 시간이 끝나는 순간 화살이 나간다 — 그러면
+   * 기다린 것이 아무 일도 하지 않은 것이 된다.
+   */
+  it('판이 시작하고 준비 시간 동안에는 아무도 겨누지 않는다 (DESIGN 품질 기준)', () => {
+    const world = new World();
+    const startDistances = world.enemies.map((e) => Math.hypot(e.pos.x, e.pos.y));
+
+    run(world, ENEMY.startDelay);
+
+    for (const enemy of world.enemies) {
+      expect(enemy.aimTimer, `적 ${enemy.id}가 겨누고 있다`).toBe(0);
+      expect(enemy.dashTimer, `적 ${enemy.id}가 몸을 던졌다`).toBe(0);
+    }
+    expect(world.arrows.some((a) => a.owner === 'enemy')).toBe(false);
+    expect(world.player.hp).toBe(PLAYER.maxHp);
+
+    // 그렇다고 멈춰 서 있지는 않는다. 다가오는 적이 보여야 무슨 게임인지 읽힌다 —
+    // 얼어붙은 적 다섯은 고장으로 보인다.
+    const moved = world.enemies.filter(
+      (e, i) => Math.abs(Math.hypot(e.pos.x, e.pos.y) - (startDistances[i] ?? 0)) > 0.5,
+    );
+    expect(moved.length, '준비 시간 동안 적이 한 발짝도 움직이지 않았다').toBeGreaterThan(0);
+  });
+
+  /**
+   * 준비 시간은 **예고 시간과 더해서** 뜻이 생긴다. 준비가 끝나는 순간 곧바로 아픈 것이
+   * 아니라, 거기서 겨눔(활잡이 `aimTime`) 또는 웅크림(돌진형 `windup`)이 한 번 더 붙는다.
+   * 그 합이 첫 대가 올 수 있는 가장 이른 시각이다 — 실측 3.0초(스무 판 × 두 사람).
+   * 값을 만질 때 이 합이 3초 밑으로 내려가면 첫 2초 문제가 그대로 돌아온다.
+   */
+  it('첫 대가 올 수 있는 가장 이른 시각이 3초보다 이르지 않다', () => {
+    const earliest = ENEMY.startDelay + Math.min(ENEMY.aimTime, CHARGER.windup);
+    expect(earliest, `준비 ${ENEMY.startDelay}초 + 예고`).toBeGreaterThanOrEqual(2.9);
+  });
+
   it('적을 쓰러뜨리려면 여러 발이 든다', () => {
     const world = new World();
     for (let i = 0; i < 600 && world.kills === 0; i += 1) world.step(idle, DT);
@@ -95,9 +139,12 @@ describe('World', () => {
   });
 
   it('돌진형의 몸통도 화살과 같은 무적 규칙을 지난다 (DESIGN 9번)', () => {
-    // 돌진형 하나만 세운다. 5m면 곧바로 웅크리고, 그 뒤에 몸이 날아온다.
+    // 돌진형 하나만 세운다. 5m면 준비 시간(`ENEMY.startDelay`)이 지나는 대로 웅크리고,
+    // 그 뒤에 몸이 날아온다. **첫 몸통 한 대가 올 때까지 넉넉히 기다린다** —
+    // 준비 시간 동안 자동 발사가 이 놈을 한 번 쓰러뜨리고 다시 서기도 하기 때문이다.
+    // 여기서 재는 것은 "언제 닿는가"가 아니라 "한 번의 돌진이 몇 번 아픈가"다.
     const world = new World({ enemies: [{ x: 5, y: 0, kind: 'charger' }] });
-    for (let i = 0; i < 60 * 3 && world.player.hp === PLAYER.maxHp; i += 1) world.step(idle, DT);
+    for (let i = 0; i < 60 * 12 && world.player.hp === PLAYER.maxHp; i += 1) world.step(idle, DT);
 
     // 한 번의 돌진은 딱 한 번 깎는다. 몸이 겹쳐 있는 여러 프레임 동안 계속 깎이면
     // 예고 한 번에 판이 끝난다.

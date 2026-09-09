@@ -91,6 +91,12 @@ export interface MatchResult {
   cards: readonly string[];
   /** 돌진형의 몸에 닿힌 횟수. 한 대가 12점이라 판 길이를 가장 크게 흔든다. */
   bodyHits: number;
+  /**
+   * 체력이 처음 줄어든 시각(s). 한 번도 안 맞았으면 Infinity.
+   * **판의 첫머리를 재는 값이다** — 손을 대기도 전에 맞으면 무엇에 맞았는지 알 수 없다
+   * (DESIGN 품질 기준의 "설명 없이 30초 안에 이해할 것", `ENEMY.startDelay`).
+   */
+  firstHit: number;
 }
 
 /**
@@ -112,7 +118,15 @@ export function playMatch(
   input: (world: World) => FrameInput = walkToNearestCore,
 ): MatchResult {
   const world = new World({ seed });
-  play(world, Math.round(60 * maxSeconds), input);
+  // 한 스텝씩 돌리며 체력이 처음 줄어드는 순간을 잡는다. `play`를 그대로 쓰는 이유:
+  // 카드를 고르는 규칙이 두 벌이 되면 두 자가 서로 다른 사람을 재게 된다.
+  let firstHit = Infinity;
+  const steps = Math.round(60 * maxSeconds);
+  for (let i = 0; i < steps && !world.defeated; i += 1) {
+    const hp = world.player.hp;
+    play(world, 1, input);
+    if (firstHit === Infinity && world.player.hp < hp) firstHit = world.elapsed;
+  }
   return {
     seed,
     elapsed: world.elapsed,
@@ -121,6 +135,7 @@ export function playMatch(
     kills: world.kills,
     cards: [...world.takenUpgrades],
     bodyHits: world.bodyHits,
+    firstHit,
   };
 }
 

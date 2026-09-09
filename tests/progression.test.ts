@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { World } from '../src/core/World';
 import type { FrameInput } from '../src/core/World';
-import { ARENA, CORE, LEVEL, PLAYER } from '../src/data/config';
+import { ARENA, CORE, ENEMY, LEVEL, PLAYER } from '../src/data/config';
 import { createXpCore, type XpCore } from '../src/entities/types';
 import { DT, IDLE, dodgeCharger, median, play, playMatch, walkToNearestCore } from './support/match';
 import {
@@ -291,8 +291,10 @@ const SHORTEST = 150;
 const LONGEST = 330;
 /** 씨앗은 고정한다. 바퀴마다 다른 판을 재면 수치를 비교할 수 없다. */
 const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
-/** 코어만 보고 걷는 사람의 스무 판. 아래 두 묶음이 같은 스무 판을 나눠 본다. */
+/** 코어만 보고 걷는 사람의 스무 판. 아래 묶음들이 같은 스무 판을 나눠 본다. */
 const results = SEEDS.map((seed) => playMatch(seed));
+/** 예고를 보고 비키는 사람의 같은 스무 판(세션 18). 두 번째 자다 — 한 사람만 재면 버릇을 게임으로 오해한다. */
+const dodged = SEEDS.map((seed) => playMatch(seed, 600, dodgeCharger));
 
 describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
   const lengths = results.map((r) => r.elapsed);
@@ -346,6 +348,47 @@ describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
 });
 
 /**
+ * DESIGN 품질 기준: **"처음 하는 사람이 설명 없이 30초 안에 조작을 이해할 것."**
+ *
+ * 세션 18이 스크린샷(0:02)에서 찾은 고장이 여기 있었다 — 체력바가 이미 깎여 있고
+ * 돌진형이 몸에 붙어 있었다. 처음 선 적이 전부 `fireCooldown` 0으로 태어나
+ * **첫 프레임부터 겨눴기** 때문이다(배치의 활잡이 둘이 `fireRange` 안쪽인 13m에 선다).
+ * 180판으로 재니 첫 피격이 3초 안에 온 판이 90판, 2초 안이 63판이었다.
+ *
+ * `ENEMY.startDelay`가 그 자리를 막는다. **여기서 재는 것은 그 값이 화면이 아니라
+ * 판에서 실제로 통하는가**다 — 한 프레임짜리 검사(`tests/world.test.ts`)는
+ * "준비 시간 동안 겨누지 않는다"까지만 보고, 그 뒤 실제로 언제 첫 대가 오는지는 못 본다.
+ * 두 사람(안 비키는 사람 · 비키는 사람)으로 함께 재는 이유는 세션 18과 같다:
+ * 한 사람의 버릇을 게임의 성질로 오해하지 않기 위해서다.
+ */
+describe('밸런스 — 판을 열고 3초 안에는 아무도 맞지 않는다', () => {
+  const firstHits = [...results, ...dodged].map((r) => r.firstHit).sort((a, b) => a - b);
+
+  it('가장 이른 첫 피격도 3초보다 이르지 않다', () => {
+    const earliest = firstHits[0] ?? Infinity;
+    console.log(
+      `첫 피격 — 가장 이른 판 ${earliest.toFixed(1)}초 · 중앙값 ${median(firstHits).toFixed(1)}초 ` +
+        `(마흔 판 · 준비 시간 ${ENEMY.startDelay}초)`,
+    );
+    // 준비 시간이 판에서 실제로 통하는지부터 본다. 어느 한 자리(증원·부활·되살아남)에서
+    // 새 적이 준비 없이 태어나면 여기가 먼저 걸린다.
+    expect(earliest, '준비 시간이 끝나기도 전에 맞았다').toBeGreaterThan(ENEMY.startDelay);
+    // 실측 3.0초. 이 선이 깨지면 `ENEMY.startDelay`를 되돌릴 것이지, 선을 옮기지 말 것.
+    expect(earliest).toBeGreaterThanOrEqual(3);
+  });
+
+  it('그렇다고 첫 대가 영영 오지 않는 것은 아니다', () => {
+    // 반대쪽 고장도 함께 막는다. 준비 시간을 늘리면 판이 순해지고,
+    // "서 있으면 죽는다"(아래 묶음)가 먼저 무너진다 — 실측 3.0초로 준 값이 30초 이상이면
+    // 그것은 준비 시간이 아니라 게임을 무르게 만든 것이다.
+    expect(median(firstHits)).toBeLessThan(30);
+    for (const r of [...results, ...dodged]) {
+      expect(Number.isFinite(r.firstHit), `씨앗 ${r.seed}에서 한 번도 맞지 않았다`).toBe(true);
+    }
+  });
+});
+
+/**
  * DESIGN 9번이 돌진형에게 요구하는 단 하나의 대응: **옆으로 비키면 빗나간다.**
  *
  * 한 프레임짜리 검사는 `tests/enemies.test.ts`에 있다("돌진 중에는 방향을 바꾸지 않는다").
@@ -363,7 +406,6 @@ describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
  * 하나가 무너지면 이 적은 "피할 수 없는 적"이거나 "무해한 적"이 된다.
  */
 describe('밸런스 — 예고를 보고 비키면 몸에 닿지 않는다 (DESIGN 9번)', () => {
-  const dodged = SEEDS.map((seed) => playMatch(seed, 600, dodgeCharger));
   const bodyHits = (rows: readonly { bodyHits: number }[]): number =>
     rows.reduce((sum, r) => sum + r.bodyHits, 0);
   const shortest = (rows: readonly { elapsed: number }[]): number =>
