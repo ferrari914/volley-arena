@@ -46,14 +46,23 @@ describe('부하 장면', () => {
   it('경험치 코어도 부하에 포함된다', () => {
     // 3번에서 코어가 붙었다. 적이 계속 쓰러지므로 코어는 상한 가까이 차 있어야 한다 —
     // 코어가 0인 장면을 재고 "빠르다"고 말하지 않기 위한 확인이다.
+    //
+    // **한 프레임의 최소값이 아니라 프레임 전체의 중앙값으로 잰다(세션 17).**
+    // 이 장면의 플레이어도 카드를 고르므로(`loadScene.ts`), 뽑히는 카드가 달라지면
+    // 한 번씩 코어를 쓸어 담아 순간적으로 얇아지는 프레임이 생긴다 — 실측 48 → 18 → 47.
+    // perf가 재는 것은 1200프레임 내내의 부하이고, 한 프레임이 얇은 것은 그 부하를
+    // 대표하지 않는다. 대신 **바닥은 따로 지킨다** — 얇아져도 텅 비지는 않아야 한다.
     const scene = new LoadScene();
-    let minCores = Number.POSITIVE_INFINITY;
+    const counts: number[] = [];
     for (let i = 0; i < 1200; i += 1) {
       scene.replenish();
       scene.world.step(scene.nextInput(), DT);
-      if (i > 400) minCores = Math.min(minCores, scene.world.cores.length);
+      if (i > 400) counts.push(scene.world.cores.length);
     }
-    expect(minCores).toBeGreaterThanOrEqual(CORE.maxAlive / 2);
+    const sorted = [...counts].sort((a, b) => a - b);
+    const middle = sorted[sorted.length >> 1] ?? 0;
+    expect(middle).toBeGreaterThanOrEqual(CORE.maxAlive / 2);
+    expect(sorted[0] ?? 0).toBeGreaterThanOrEqual(CORE.maxAlive / 8);
     expect(scene.world.cores.length).toBeLessThanOrEqual(CORE.maxAlive);
   });
 

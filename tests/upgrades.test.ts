@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { World, type FrameInput } from '../src/core/World';
 import { ARROW, LEVEL, PLAYER, UPGRADE } from '../src/data/config';
 import { UPGRADE_CARDS } from '../src/data/upgrades';
-import { createXpCore, type PlayerStats, type UpgradeCard } from '../src/entities/types';
+import {
+  createXpCore,
+  type PlayerStats,
+  type UpgradeCard,
+  type UpgradeRole,
+} from '../src/entities/types';
 import { applyUpgrade, rollUpgradeChoices } from '../src/systems/upgrades';
 import { healPlayer } from '../src/systems/combat';
 import { xpForLevel } from '../src/systems/experience';
+import { walkToNearestCore } from './support/match';
 
 const DT = 1 / 60;
 const IDLE: FrameInput = { move: { x: 0, y: 0 }, aim: null };
@@ -30,10 +36,11 @@ const baseStats = (): PlayerStats => ({
   bounce: 0,
 });
 
-const card = (id: string, maxStacks = 3): UpgradeCard => ({
+const card = (id: string, maxStacks = 3, role: UpgradeRole = 'power'): UpgradeCard => ({
   id,
   title: id,
   detail: '',
+  role,
   maxStacks,
   accent: '#fff',
   multiply: { moveSpeed: 1.1 },
@@ -94,6 +101,97 @@ describe('업그레이드 카드 뽑기', () => {
   });
 });
 
+/**
+ * 석 장이 모두 보조로 뜨면 그 레벨업에는 화력을 기를 길이 없다 —
+ * 화력을 기를지 말지를 고르는 사람이 아니라 뽑기가 정하게 된다.
+ * 그렇게 약하게 자란 판이 3분을 못 채우고 끝나던 것이 세션 16이 남긴 아래쪽 꼬리다.
+ */
+describe('업그레이드 카드 뽑기 — 보조 카드 상한', () => {
+  const isSupport = (id: string): boolean =>
+    UPGRADE_CARDS.find((c) => c.id === id)?.role === 'support';
+
+  it('데이터가 상한을 지킬 수 있다 (화력 카드가 채울 만큼 있다)', () => {
+    // 화력이 이보다 적으면 상한이 카드 장수를 3장 밑으로 깎는다. 새 카드를 보조로만
+    // 늘리면 여기서 먼저 걸린다.
+    const power = UPGRADE_CARDS.filter((c) => c.role === 'power').length;
+    expect(power).toBeGreaterThanOrEqual(UPGRADE.choices - UPGRADE.maxSupport);
+  });
+
+  it('한 번에 상한 장수까지만 보조가 섞인다', () => {
+    const random = makeRandom(7);
+    for (let i = 0; i < 300; i += 1) {
+      const choices = rollUpgradeChoices(
+        UPGRADE_CARDS,
+        {},
+        UPGRADE.choices,
+        random,
+        true,
+        UPGRADE.maxSupport,
+      );
+      const support = choices.filter((c) => isSupport(c.card.id)).length;
+      expect(support).toBeLessThanOrEqual(UPGRADE.maxSupport);
+    }
+  });
+
+  it('화력이 동나면 보조로 채운다 — 상한 때문에 두 장만 보여 주지 않는다', () => {
+    // 관통·튕김·다중 발사는 두 장이 상한이라 판 후반에 실제로 동난다.
+    const stacks: Record<string, number> = {};
+    for (const c of UPGRADE_CARDS) if (c.role === 'power') stacks[c.id] = c.maxStacks;
+    const choices = rollUpgradeChoices(
+      UPGRADE_CARDS,
+      stacks,
+      UPGRADE.choices,
+      makeRandom(11),
+      true,
+      UPGRADE.maxSupport,
+    );
+    expect(choices).toHaveLength(UPGRADE.choices);
+    expect(new Set(choices.map((c) => c.card.id)).size).toBe(UPGRADE.choices);
+  });
+
+  it('적지 않으면 막지 않는다 (상한이 없던 시절의 부름이 뜻을 바꾸지 않는다)', () => {
+    const only = [card('a', 9, 'support'), card('b', 9, 'support'), card('c', 9, 'support')];
+    expect(rollUpgradeChoices(only, {}, 3, makeRandom(13))).toHaveLength(3);
+  });
+
+  it('한 판 내내 어느 레벨업에도 화력을 고를 길이 있다', () => {
+    // 판 후반에는 화력이 동난다(관통·튕김·다중 발사는 두 장이 상한이다). 그때는 보조로
+    // 채우는 것이 맞다 — 두 장짜리 3중 1택을 막으려던 것과 같은 이유다.
+    // 그래서 재는 것은 "보조가 몇 장인가"가 아니라 **아직 고를 수 있는 화력이 남았는데도
+    // 안 보여 주는 일이 있는가**이다.
+    const world = new World({ seed: 20260909 });
+    const power = UPGRADE_CARDS.filter((c) => c.role === 'power');
+    let offers = 0;
+    for (let i = 0; i < 60 * 300; i += 1) {
+      if (world.defeated) break;
+      const offer = world.offer;
+      if (offer) {
+        offers += 1;
+        const taken = new Map<string, number>();
+        for (const id of world.takenUpgrades) taken.set(id, (taken.get(id) ?? 0) + 1);
+        const left = power.filter((c) => (taken.get(c.id) ?? 0) < c.maxStacks).length;
+        const shown = offer.choices.filter((c) => !isSupport(c.card.id)).length;
+        expect(shown, `${offer.level}레벨의 카드`).toBeGreaterThanOrEqual(
+          Math.min(left, UPGRADE.choices - UPGRADE.maxSupport),
+        );
+      }
+      if (offer) world.chooseUpgrade(offer.choices[0]!.card.id);
+      world.step(walkToNearestCore(world), DT);
+    }
+    // 서 있으면 두 판만에 죽어 표본이 안 된다. 코어를 주우러 다니는 사람으로 돌린다.
+    expect(offers).toBeGreaterThan(10);
+  });
+
+  it('카드가 서는 자리도 섞인다 — 화력이 늘 첫 칸에 있지 않다', () => {
+    // 안 섞으면 어느 자리가 센 카드인지가 읽기 전에 보인다.
+    const random = makeRandom(17);
+    const firstIsSupport = Array.from({ length: 200 }, () =>
+      rollUpgradeChoices(UPGRADE_CARDS, {}, UPGRADE.choices, random, true, UPGRADE.maxSupport),
+    ).filter((choices) => isSupport(choices[0]!.card.id)).length;
+    expect(firstIsSupport).toBeGreaterThan(0);
+  });
+});
+
 describe('업그레이드 적용', () => {
   it('적힌 값에만 곱하고 원래 값은 건드리지 않는다', () => {
     const stats = baseStats();
@@ -109,6 +207,7 @@ describe('업그레이드 적용', () => {
       id: 'volley',
       title: 'volley',
       detail: '',
+      role: 'power',
       maxStacks: 2,
       accent: '#fff',
       add: { arrowCount: 2 },

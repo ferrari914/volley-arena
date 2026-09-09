@@ -24,6 +24,7 @@ import type { UpgradeCard } from '../entities/types';
 export const UPGRADE_CARDS: readonly UpgradeCard[] = [
   {
     id: 'rapid',
+    role: 'power',
     title: '연사',
     detail: '발사 간격 10% 감소',
     maxStacks: 8,
@@ -32,6 +33,7 @@ export const UPGRADE_CARDS: readonly UpgradeCard[] = [
   },
   {
     id: 'swift',
+    role: 'support',
     title: '질주',
     detail: '이동 속도 7% 증가',
     maxStacks: 8,
@@ -40,6 +42,7 @@ export const UPGRADE_CARDS: readonly UpgradeCard[] = [
   },
   {
     id: 'magnet',
+    role: 'support',
     title: '끌어당김',
     detail: '코어를 끌어오는 거리 25% 증가',
     maxStacks: 6,
@@ -48,6 +51,7 @@ export const UPGRADE_CARDS: readonly UpgradeCard[] = [
   },
   {
     id: 'multishot',
+    role: 'power',
     title: '다중 발사',
     detail: '화살이 한 번에 2발 더 나간다',
     // 1발 → 3발 → 5발. 개수가 는 만큼 초당 피해가 그대로 곱해지므로 두 장에서 멈춘다.
@@ -58,6 +62,7 @@ export const UPGRADE_CARDS: readonly UpgradeCard[] = [
   },
   {
     id: 'pierce',
+    role: 'power',
     title: '관통',
     detail: '화살이 적 1명을 더 뚫고 지나간다',
     // 0 → 1 → 2명. 다중 발사와 같은 이유로 두 장에서 멈춘다(개수는 겹칠수록 이득이
@@ -69,6 +74,7 @@ export const UPGRADE_CARDS: readonly UpgradeCard[] = [
   },
   {
     id: 'bounce',
+    role: 'power',
     title: '튕김',
     detail: '화살이 다음 적에게 1번 더 튕긴다',
     // 0 → 1 → 2번. 관통과 같은 이유로 두 장에서 멈춘다.
@@ -83,6 +89,7 @@ export const UPGRADE_CARDS: readonly UpgradeCard[] = [
   },
   {
     id: 'mend',
+    role: 'support',
     title: '회복',
     detail: '체력을 15 되돌린다',
     // **초당 회복이 아니라 한 번의 회복이다. 재서 그렇게 정했다.**
@@ -104,6 +111,7 @@ export const UPGRADE_CARDS: readonly UpgradeCard[] = [
   },
   {
     id: 'refine',
+    role: 'support',
     title: '정제',
     detail: '코어 경험치 12% 증가',
     maxStacks: 8,

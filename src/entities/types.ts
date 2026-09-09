@@ -212,11 +212,25 @@ export interface PlayerStats {
  * 효과를 함수가 아니라 "무엇에 얼마를 곱하는가"로 적어 두는 이유:
  * 데이터에 코드가 섞이면 카드를 추가할 때마다 규칙을 새로 읽어야 한다.
  */
+/**
+ * 카드가 하는 일의 갈래.
+ *
+ * - `power` — 적을 더 빨리 지운다(연사·다중 발사·관통·튕김).
+ * - `support` — 그 밖의 모든 것(이동·수집·경험치·회복).
+ *
+ * **이 갈래는 화면에 나오지 않는다.** 한 번에 보여 주는 `support` 장수를 막는 데만 쓴다
+ * (`rollUpgradeChoices`의 `maxSupport`). 세 장이 모두 보조면 이번 레벨업에 화력을 고를
+ * 기회 자체가 없고, 그러면 화력을 기를지 말지를 고르는 사람이 아니라 뽑기가 정한다.
+ */
+export type UpgradeRole = 'power' | 'support';
+
 export interface UpgradeCard {
   id: string;
   title: string;
   /** 카드에 적히는 한 줄. 무엇이 얼마나 좋아지는지 수치로 적는다. */
   detail: string;
+  /** 화력인가 보조인가. 새 카드를 만들 때 반드시 정해야 한다 — 기본값을 두지 않는 이유다. */
+  role: UpgradeRole;
   /** 같은 카드를 최대 몇 번까지 고를 수 있는가. */
   maxStacks: number;
   /** 카드 색. 화면에서 서로 구별되게 한다. */

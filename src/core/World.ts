@@ -513,6 +513,8 @@ export class World {
       this.random,
       // 가득 찬 체력으로는 회복 카드를 보지 않는다 — 고를 수 없는 카드는 선택이 아니다.
       this.player.hp < this.player.maxHp,
+      // 석 장이 모두 보조면 이번 레벨업에 화력을 고를 길이 없다. 왜 이 값인지는 config에.
+      UPGRADE.maxSupport,
     );
     if (choices.length === 0) {
       // 모든 카드를 최대까지 골랐다. 고를 것이 없으면 멈추지 않는다 —
