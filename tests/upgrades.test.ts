@@ -182,13 +182,27 @@ describe('업그레이드 카드 뽑기 — 보조 카드 상한', () => {
     expect(offers).toBeGreaterThan(10);
   });
 
-  it('카드가 서는 자리도 섞인다 — 화력이 늘 첫 칸에 있지 않다', () => {
+  it('카드가 서는 자리도 섞인다 — 보조가 늘 끝 칸에 있지 않다', () => {
     // 안 섞으면 어느 자리가 센 카드인지가 읽기 전에 보인다.
+    // 자리마다 한 번씩은 서는지를 본다 — "늘 마지막 칸"이면 여기서 걸린다.
     const random = makeRandom(17);
-    const firstIsSupport = Array.from({ length: 200 }, () =>
-      rollUpgradeChoices(UPGRADE_CARDS, {}, UPGRADE.choices, random, true, UPGRADE.maxSupport),
-    ).filter((choices) => isSupport(choices[0]!.card.id)).length;
-    expect(firstIsSupport).toBeGreaterThan(0);
+    const seats = [0, 0, 0];
+    for (let i = 0; i < 300; i += 1) {
+      const choices = rollUpgradeChoices(
+        UPGRADE_CARDS,
+        {},
+        UPGRADE.choices,
+        random,
+        true,
+        UPGRADE.maxSupport,
+      );
+      choices.forEach((c, seat) => {
+        if (isSupport(c.card.id)) seats[seat] = (seats[seat] ?? 0) + 1;
+      });
+    }
+    for (const [seat, count] of seats.entries()) {
+      expect(count, `${seat + 1}번째 칸에 선 보조 카드`).toBeGreaterThan(0);
+    }
   });
 });
 
