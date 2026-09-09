@@ -35,7 +35,7 @@ export class Renderer {
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
-  private readonly playerMesh = createPlayer();
+  private readonly playerView = createPlayer();
   private readonly enemyViews: EnemyView[] = [];
   private readonly lockMarker = createLockMarker();
   /** 화살 메시. 주인을 함께 들고 있어야 회수할 때 맞는 쪽 풀로 돌려보낸다(코어와 같은 규칙). */
@@ -64,7 +64,7 @@ export class Renderer {
     this.scene.add(this.camera);
 
     this.scene.add(createArena());
-    this.scene.add(this.playerMesh);
+    this.scene.add(this.playerView.group);
     this.scene.add(this.lockMarker);
     this.addLights();
 
@@ -100,12 +100,20 @@ export class Renderer {
     this.lastRenderTime = now;
 
     const player = world.player;
-    this.playerMesh.position.set(player.pos.x, 0, player.pos.y);
-    this.playerMesh.rotation.y = yawFromAngle(player.facing);
+    const body = this.playerView.group;
+    body.position.set(player.pos.x, 0, player.pos.y);
+    body.rotation.y = yawFromAngle(player.facing);
 
     // 맞은 순간 잠깐 부풀렸다 돌아온다. 몸이 반응하지 않으면 맞은 줄 모른다.
     const pop = 1 + world.player.hitFlash * 0.16;
-    this.playerMesh.scale.set(pop, pop, pop);
+    body.scale.set(pop, pop, pop);
+
+    // 무적인 동안에는 보호막이 감싼다(부활 직후 3초 · 맞은 직후 0.55초).
+    // 숨 쉬듯 두께가 변한다 — 멈춰 있는 껍질은 화면에 붙은 얼룩처럼 보인다.
+    this.playerView.shield.visible = player.invulnerable > 0;
+    if (player.invulnerable > 0) {
+      this.playerView.shieldMaterial.opacity = 0.14 + 0.1 * (0.5 + 0.5 * Math.sin(now * 0.011));
+    }
 
     this.syncEnemies(world);
     this.syncArrows(world);

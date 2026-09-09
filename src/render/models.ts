@@ -95,7 +95,18 @@ function createGrid(): THREE.LineSegments {
 }
 
 /** 플레이어. -Z 방향을 앞으로 삼는다(Three.js 기본 정면). */
-export function createPlayer(): THREE.Group {
+/**
+ * 플레이어 모델과, 렌더러가 매 프레임 만져야 하는 부분들.
+ * 적(`EnemyView`)과 같은 방식이다 — 씬을 이름으로 뒤지지 않게 손잡이를 함께 돌려준다.
+ */
+export interface PlayerView {
+  group: THREE.Group;
+  /** 무적일 때만 보이는 보호막. 화살이 몸을 그냥 통과하는 이유를 화면에 적어 준다. */
+  shield: THREE.Mesh;
+  shieldMaterial: THREE.MeshBasicMaterial;
+}
+
+export function createPlayer(): PlayerView {
   const group = new THREE.Group();
   group.name = 'player';
 
@@ -137,7 +148,25 @@ export function createPlayer(): THREE.Group {
   shadowRing.position.y = 0.03;
   group.add(shadowRing);
 
-  return group;
+  /*
+   * 무적 보호막. 부활 직후(3초)와 한 대 맞은 직후(0.55초)에 켜진다.
+   * 이것이 없으면 적의 화살이 몸을 그대로 통과하는 그림만 남아 고장처럼 읽힌다 —
+   * 특히 광고를 보고 막 일어선 사람에게는 "이어하기가 된 건가?"가 된다.
+   * depthWrite를 끄는 이유: 반투명 껍질이 그 안의 몸을 가리지 않게 한다.
+   */
+  const shieldMaterial = new THREE.MeshBasicMaterial({
+    color: PALETTE.player,
+    transparent: true,
+    opacity: 0.2,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const shield = new THREE.Mesh(new THREE.SphereGeometry(PLAYER.radius * 1.9, 16, 12), shieldMaterial);
+  shield.position.y = PLAYER.height * 0.5;
+  shield.visible = false;
+  group.add(shield);
+
+  return { group, shield, shieldMaterial };
 }
 
 /**

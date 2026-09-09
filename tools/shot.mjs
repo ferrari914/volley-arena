@@ -29,6 +29,11 @@
  *     그대로 서서 끝까지 기다려 쓰러진 화면까지 함께 본다 —
  *     죽은 뒤에 아무 일도 일어나지 않는 화면이 이 기능의 가장 나쁜 고장이다.
  *
+ * (6) 쓰러진 뒤의 두 갈래 — DESIGN 6번.
+ *     이어하기(광고)를 눌러 그 자리에서 레벨을 지킨 채 이어지는지, 다시 쓰러진 뒤
+ *     처음부터를 눌러 1레벨의 새 판이 도는지 화면에서 확인한다.
+ *     둘을 갈라놓는 값(레벨)을 함께 재지 않으면 두 버튼이 같은 일을 해도 통과한다.
+ *
  * 문제가 하나라도 있으면 0이 아닌 코드로 끝난다.
  */
 import { mkdir, rm } from 'node:fs/promises';
@@ -122,7 +127,11 @@ const GUARDED = [
   ['업그레이드 안내', '#upgrade-head'],
   ['업그레이드 카드', '.up-card'],
   ['쓰러진 화면 제목', '#defeat-title'],
-  ['다시 시작 버튼', '#defeat-again'],
+  ['이어하기 버튼', '#defeat-revive'],
+  ['처음부터 버튼', '#defeat-again'],
+  ['갈래 설명', '.defeat-note'],
+  ['광고 안내', '#adbreak-label'],
+  ['광고 닫기', '#adbreak-close'],
   ['이동 스틱', '.stick--move'],
   ['조준 스틱', '.stick--aim'],
   ['세로 안내 문구', '#rotate-notice p'],
@@ -282,50 +291,157 @@ async function checkEnemyPressure(page, name, problems) {
 }
 
 /**
- * 그대로 서서 끝까지 기다려 쓰러진 화면을 확인한다 (DESIGN 5번의 사망 처리).
+ * 그대로 서서 끝까지 기다려 쓰러진 화면을 확인하고, **거기서 나가는 두 갈래를 다 걸어 본다**
+ * (DESIGN 6번 — 사망 · 리스폰 · 부활).
  *
- * 세 가지를 본다: 화면이 뜨는가 · 그 뒤로 게임이 멈추는가 · 다시 시작할 길이 있는가.
- * 셋째를 반드시 함께 본다 — 죽은 채로 아무것도 할 수 없는 화면이 가장 나쁜 고장이다.
+ *   ① 쓰러진 화면이 뜨는가 · 그 뒤로 시계가 멈추는가 · 요약이 적히는가
+ *   ② 이어하기(광고) — 광고가 뜨고, 끝나면 그 자리에서 다시 흐르고, **레벨이 그대로인가**
+ *   ③ 처음부터    — 다시 쓰러진 뒤 누르면 1레벨부터 다시 흐르는가
+ *
+ * ②의 "레벨이 그대로"와 ③의 "1레벨부터"가 이 기능의 전부다. 화면이 다시 흐르는 것만
+ * 보면 두 버튼이 같은 일을 해도 통과한다 — 실제로 둘을 갈라놓는 값을 함께 잰다.
  */
 async function checkDefeat(page, name, problems) {
-  const deadline = Date.now() + 60000;
-  while (Date.now() < deadline) {
-    if (await page.$('#defeat[data-show="1"]')) break;
-    // 카드가 뜨면 게임이 멈춘다. 골라서 내리고 계속 기다린다.
-    if (await page.$('#upgrade[data-show="1"]')) await page.keyboard.press('Digit1');
-    await page.waitForTimeout(500);
-  }
-
-  const shown = await page.evaluate(() => {
-    const panel = document.querySelector('#defeat[data-show="1"]');
-    if (!panel) return null;
-    return {
-      title: document.getElementById('defeat-title')?.textContent ?? '',
-      summary: document.getElementById('defeat-summary')?.textContent ?? '',
-      again: Boolean(document.getElementById('defeat-again')),
-    };
-  });
-
-  if (!shown) {
+  if (!(await waitForDefeat(page))) {
     problems.push(`[${name}] 체력이 다 닳도록 서 있었는데 쓰러진 화면이 뜨지 않았다`);
     return;
   }
+
+  const shown = await page.evaluate(() => ({
+    title: document.getElementById('defeat-title')?.textContent ?? '',
+    summary: document.getElementById('defeat-summary')?.textContent ?? '',
+    revive: Boolean(document.getElementById('defeat-revive')),
+    again: Boolean(document.getElementById('defeat-again')),
+  }));
   await page.screenshot({ path: `${OUT}/${name}-defeat.png` });
 
   // 판이 끝났으므로 시계도 멈춰 있어야 한다.
-  const before = await readClock(page);
+  const stopped = await readClock(page);
   await page.waitForTimeout(700);
-  if ((await readClock(page)) !== before) {
-    problems.push(`[${name}] 쓰러졌는데 게임이 계속 흐른다 (${before})`);
+  if ((await readClock(page)) !== stopped) {
+    problems.push(`[${name}] 쓰러졌는데 게임이 계속 흐른다 (${stopped})`);
   }
   // 도달 레벨·처치·생존 시간이 적혀 있어야 한다. 빈 요약은 "무엇을 했는지 모르는 끝"이다.
   if (!/레벨 \d+ · 처치 \d+ · \d+:\d\d 생존/.test(shown.summary)) {
     problems.push(`[${name}] 쓰러진 화면의 요약이 이상하다: "${shown.summary}"`);
   }
-  if (!shown.again) {
-    problems.push(`[${name}] 쓰러진 화면에 다시 시작할 길이 없다`);
+  if (!shown.revive || !shown.again) {
+    problems.push(
+      `[${name}] 쓰러진 화면에 두 갈래가 다 있지 않다 (이어하기 ${shown.revive}, 처음부터 ${shown.again})`,
+    );
+    return;
   }
   console.log(`  쓰러진 화면: ${shown.title} — ${shown.summary}`);
+
+  const levelAtDeath = await readLevel(page);
+  await checkRevive(page, name, problems, levelAtDeath);
+  await checkRestart(page, name, problems);
+}
+
+/** 가만히 서서 쓰러질 때까지 기다린다. 카드가 뜨면 골라서 내린다(안 고르면 멈춘 채로 안 죽는다). */
+async function waitForDefeat(page) {
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    if (await page.$('#defeat[data-show="1"]')) return true;
+    if (await page.$('#upgrade[data-show="1"]')) await page.keyboard.press('Digit1');
+    await page.waitForTimeout(500);
+  }
+  return false;
+}
+
+/**
+ * 이어하기(광고 · DESIGN 6번의 부활).
+ * 광고 화면이 뜨는가 → 끝나면 그 자리에서 다시 흐르는가 → **레벨과 카드를 지켰는가**.
+ */
+async function checkRevive(page, name, problems, levelAtDeath) {
+  await page.click('#defeat-revive');
+  await page.waitForTimeout(300);
+
+  if (!(await page.$('#adbreak[data-show="1"]'))) {
+    problems.push(`[${name}] 이어하기를 눌렀는데 광고 화면이 뜨지 않았다`);
+    return;
+  }
+  await page.screenshot({ path: `${OUT}/${name}-ad.png` });
+  // 광고가 도는 동안에는 아직 살아나면 안 된다. 여기서 이미 흐르면 광고는 장식이다.
+  if (!(await page.$('#defeat[data-show="1"]'))) {
+    problems.push(`[${name}] 광고가 끝나기도 전에 쓰러진 화면이 내려갔다`);
+  }
+
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline && (await page.$('#adbreak[data-show="1"]'))) {
+    await page.waitForTimeout(250);
+  }
+  if (await page.$('#adbreak[data-show="1"]')) {
+    problems.push(`[${name}] 광고가 끝나지 않는다 — 빠져나갈 길이 없는 화면이다`);
+    return;
+  }
+
+  const before = await readClock(page);
+  await page.waitForTimeout(900);
+  const after = await readClock(page);
+  if (before === after) {
+    problems.push(`[${name}] 이어하기를 했는데 게임이 멈춰 있다 (${before} 그대로)`);
+    return;
+  }
+  if (await page.$('#defeat[data-show="1"]')) {
+    problems.push(`[${name}] 이어하기를 했는데 쓰러진 화면이 그대로 덮고 있다`);
+    return;
+  }
+
+  const hp = await readBar(page, 'hud-hp-fill');
+  if (!(hp > 0.99)) problems.push(`[${name}] 이어하기를 했는데 체력이 차지 않았다 (${hp})`);
+
+  // 여기가 이어하기의 전부다: 쌓아 온 것을 들고 간다.
+  const level = await readLevel(page);
+  if (level !== levelAtDeath) {
+    problems.push(
+      `[${name}] 이어하기인데 레벨이 초기화됐다 (${levelAtDeath} → ${level}) — 처음부터와 같은 일을 한다`,
+    );
+  }
+  await page.screenshot({ path: `${OUT}/${name}-revived.png` });
+  console.log(`  이어하기: 광고 뒤 그 자리에서 다시 흐른다 (${levelAtDeath} 유지 · ${before} → ${after})`);
+}
+
+/** 처음부터(DESIGN 6번의 리스폰). 다시 쓰러뜨린 뒤 눌러, 1레벨부터 새 판이 도는지 본다. */
+async function checkRestart(page, name, problems) {
+  if (!(await waitForDefeat(page))) {
+    problems.push(`[${name}] 이어한 뒤 다시 서 있었는데 두 번째로 쓰러지지 않았다`);
+    return;
+  }
+  await page.click('#defeat-again');
+  // 새 판의 첫 모습은 곧바로 잰다. 여기서 검사가 오래 기다리면 그사이에 진짜로 맞는다 —
+  // 서 있는 사람에게는 새 판에서도 1.3초쯤에 첫 화살이 꽂힌다(그게 이 게임의 규칙이다).
+  await page.waitForTimeout(350);
+
+  if (await page.$('#defeat[data-show="1"]')) {
+    problems.push(`[${name}] 처음부터를 눌렀는데 쓰러진 화면이 그대로다`);
+    return;
+  }
+
+  const level = await readLevel(page);
+  if (level !== 'Lv 1') {
+    problems.push(`[${name}] 처음부터인데 레벨이 남아 있다 (${level}) — 전부 초기화가 아니다`);
+  }
+  const hp = await readBar(page, 'hud-hp-fill');
+  if (!(hp > 0.99)) problems.push(`[${name}] 새 판인데 체력이 가득 차 있지 않다 (${hp})`);
+
+  const clock = await readClock(page);
+  if (!/^0:0[0-9]/.test(clock)) {
+    problems.push(`[${name}] 처음부터인데 시계가 처음부터 가지 않는다 (${clock})`);
+  }
+  await page.screenshot({ path: `${OUT}/${name}-restart.png` });
+
+  // 시계는 초 단위로만 적히므로 1초보다 넉넉히 기다린 뒤에 비교한다.
+  await page.waitForTimeout(1600);
+  if ((await readClock(page)) === clock) {
+    problems.push(`[${name}] 처음부터를 눌렀는데 새 판이 흐르지 않는다 (${clock} 그대로)`);
+  }
+  console.log(`  처음부터: ${level} · ${clock}부터 새 판이 돈다`);
+}
+
+/** HUD의 레벨 표시. 이어하기와 처음부터를 가르는 값이다. */
+function readLevel(page) {
+  return page.evaluate(() => document.getElementById('hud-level')?.textContent ?? '');
 }
 
 /** 경험치바가 얼마나 찼는지 화면에서 읽는다. */

@@ -680,6 +680,26 @@ body[data-input='touch'] .up-card__key {
   display: flex;
 }
 
+/*
+ * 광고가 들어갈 자리. 실제 광고는 이 사각형을 채운다(DESIGN 11번).
+ * 지금 테두리를 그려 두는 이유는 빈 화면과 구분하기 위해서다 —
+ * 아무것도 없는 검은 화면은 광고가 아니라 고장으로 읽힌다.
+ */
+#adbreak-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: min(420px, 78vw);
+  /* 가로 화면(390px)에서도 위아래가 잘리지 않을 만큼만 차지한다. */
+  height: min(240px, 62vh);
+  padding: 16px;
+  border: 1px dashed rgba(234, 240, 255, 0.22);
+  border-radius: 14px;
+  background: rgba(234, 240, 255, 0.04);
+}
+
 /* 광고임을 숨기지 않는다. 게임 화면인 척하는 광고가 가장 나쁜 광고다. */
 #adbreak-tag {
   padding: 3px 10px;
@@ -705,7 +725,7 @@ body[data-input='touch'] .up-card__key {
 }
 
 #adbreak-bar {
-  width: min(260px, 60vw);
+  width: min(240px, 56vw);
   height: 4px;
   border-radius: 999px;
   background: rgba(234, 240, 255, 0.16);

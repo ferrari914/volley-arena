@@ -25,26 +25,33 @@ export class AdBreak {
     this.root = document.createElement('div');
     this.root.id = 'adbreak';
 
+    // 광고가 들어갈 자리를 테두리로 그려 둔다. 그냥 까만 화면에 글자만 띄우면
+    // 광고가 아니라 화면이 죽은 것처럼 보인다(스크린샷에서 그렇게 보였다).
+    const panel = document.createElement('div');
+    panel.id = 'adbreak-panel';
+
     const tag = document.createElement('div');
     tag.id = 'adbreak-tag';
-    tag.textContent = '광고';
-    this.root.appendChild(tag);
+    tag.textContent = '광고 자리';
+    panel.appendChild(tag);
 
     const label = document.createElement('div');
     label.id = 'adbreak-label';
     label.textContent = '광고를 보면 그 자리에서 이어서 합니다';
-    this.root.appendChild(label);
+    panel.appendChild(label);
 
     this.countdown = document.createElement('div');
     this.countdown.id = 'adbreak-countdown';
-    this.root.appendChild(this.countdown);
+    panel.appendChild(this.countdown);
 
     const track = document.createElement('div');
     track.id = 'adbreak-bar';
     this.bar = document.createElement('div');
     this.bar.id = 'adbreak-bar-fill';
     track.appendChild(this.bar);
-    this.root.appendChild(track);
+    panel.appendChild(track);
+
+    this.root.appendChild(panel);
 
     const close = document.createElement('button');
     close.type = 'button';
