@@ -64,6 +64,12 @@ function runContacts(enemies: Enemy[], seconds: number, overrides: Partial<Enemy
 const MOVE_ONLY: Partial<EnemyStepOptions> = { fireRange: 0 };
 
 /**
+ * 돌진형의 움직임만 보고 싶을 때. 사거리를 0으로 두면 웅크리지 않으므로
+ * 멈춰 서지도, 숨 고르기에 들어가지도 않는다 — `MOVE_ONLY`와 같은 이유다.
+ */
+const NEVER_DASHES: Partial<EnemyStepOptions> = { charger: { ...CHARGER, triggerRange: 0 } };
+
+/**
  * 첫 발이 나오는 순간 멈추고, 쏘기 직전의 적의 자리를 함께 돌려준다.
  * 적은 쏜 뒤에도 같은 스텝 안에서 한 발짝 움직이므로, 나중에 위치를 읽으면
  * 화살이 몸에서 얼마나 앞에 생겼는지를 잴 수 없다.
@@ -208,15 +214,47 @@ describe('돌진형', () => {
   });
 
   it('물러나지도 옆으로 돌지도 않고 곧장 다가온다', () => {
-    // 활잡이라면 물러날 거리(keepDistance 안쪽)에 세워 둔다.
-    // 숨 고르는 중으로 두어 웅크리지 않게 한다 — 웅크리면 멈춰 서므로
-    // 무엇을 보고 있는지 흐려진다(돌진을 막 끝낸 적이 실제로 이 상태다).
+    // 활잡이라면 물러날 거리(keepDistance 안쪽)에 세워 둔다. 웅크리지 않게
+    // 사거리를 지워 둔다 — 웅크리면 멈춰 서므로 무엇을 보고 있는지 흐려진다.
     const enemy = chargerAt(ENEMY.keepDistance - 2, 0);
-    enemy.fireCooldown = 1;
+    const before = enemy.pos.x;
+    run([enemy], 0.5, NEVER_DASHES);
+    expect(enemy.pos.x).toBeLessThan(before - 0.5);
+    expect(Math.abs(enemy.pos.y)).toBeLessThan(0.01);
+  });
+
+  it('숨 고르는 동안 몸에 붙어 있으면 물러난다 (플레이어를 가리고 서지 않는다)', () => {
+    // 돌진이 막 끝나 플레이어에게 겹쳐 선 자리다. 이 상태로 두면 화면에서
+    // 플레이어가 적의 몸에 가려 보이지 않는다(스크린샷에서 잡은 고장이다).
+    const enemy = chargerAt(1, 0);
+    enemy.fireCooldown = CHARGER.dashCooldown;
+    run([enemy], 1.5);
+    expect(enemy.pos.x).toBeGreaterThan(CHARGER.backoff - 0.2);
+  });
+
+  it('물러난 뒤에는 그 선 위에서 떨지 않고 서서 기다린다', () => {
+    const enemy = chargerAt(1, 0);
+    enemy.fireCooldown = 10; // 숨 고르기가 끝나 웅크리기 시작하지 않도록 길게 둔다.
+    run([enemy], 1.5);
+
+    // **한 프레임씩** 잰다. 오간 거리는 서로 지워지므로 처음과 끝의 자리만 비교하면
+    // 떨고 있어도 제자리로 보인다 — 경계가 하나뿐인 판이 실제로 이 검사를 통과했다.
+    let worst = 0;
+    for (let i = 0; i < Math.round(0.5 / DT); i += 1) {
+      const before = { ...enemy.pos };
+      stepEnemies([enemy], options());
+      worst = Math.max(worst, Math.hypot(enemy.pos.x - before.x, enemy.pos.y - before.y));
+    }
+    // 경계가 하나면 여기서 한 발짝(speed * dt)씩 앞뒤로 오간다.
+    expect(worst).toBeLessThan(CHARGER.speed * DT * 0.01);
+  });
+
+  it('숨 고르는 동안 사거리 밖으로 달아나면 다시 따라붙는다', () => {
+    const enemy = chargerAt(CHARGER.triggerRange + 4, 0);
+    enemy.fireCooldown = 10;
     const before = enemy.pos.x;
     run([enemy], 0.5);
     expect(enemy.pos.x).toBeLessThan(before - 0.5);
-    expect(Math.abs(enemy.pos.y)).toBeLessThan(0.01);
   });
 
   it('사거리 안에 들면 멈춰 웅크린다 (예고 없이 날아오지 않는다)', () => {

@@ -59,6 +59,7 @@ export interface ChargerOptions {
   dashSpeed: number;
   dashTime: number;
   dashCooldown: number;
+  backoff: number;
   damage: number;
 }
 
@@ -176,8 +177,22 @@ function stepCharger(
     return;
   }
 
-  // 그 밖에는 곧장 다가온다. 물러나지도, 옆으로 돌지도 않는다.
+  // 숨 고르는 동안에만 자리를 잡는다. 경계가 둘인 이유는 활잡이와 같다 —
+  // 하나만 두면 그 선 위에서 한 발짝마다 앞뒤로 떨린다.
+  //   backoff 안쪽      → 물러난다. 몸을 던진 자리에 붙어 서면 플레이어가 적에게 가린다.
+  //   triggerRange 바깥 → 따라붙는다. 쉬는 동안 달아나면 영영 못 잡는다.
+  //   그 사이           → 서서 기다린다.
+  // 숨을 다 골랐으면 조건 없이 곧장 다가온다 — 활잡이처럼 옆으로 돌지 않는다.
   const move = { x: dir.x, y: dir.y };
+  if (enemy.fireCooldown > 0) {
+    if (dist < charger.backoff) {
+      move.x = -dir.x;
+      move.y = -dir.y;
+    } else if (dist <= charger.triggerRange) {
+      move.x = 0;
+      move.y = 0;
+    }
+  }
   addSeparation(move, enemy, enemies, options.separation);
   moveBy(enemy, move, charger.speed, options);
 }
