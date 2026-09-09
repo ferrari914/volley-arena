@@ -28,6 +28,8 @@ export function applyUpgrade(stats: PlayerStats, card: UpgradeCard): PlayerStats
  * 이번 레벨업에 보여 줄 카드를 고른다.
  *
  * - 이미 최대까지 고른 카드는 빠진다. 고를 수 없는 카드를 보여 주면 선택이 아니다.
+ * - **체력이 가득 차 있으면 회복 카드도 같은 이유로 빠진다**(`wounded`).
+ *   되돌릴 체력이 없는 회복은 골라도 아무 일이 없어, 3중 1택이 사실상 2중 1택이 된다.
  * - 같은 카드가 두 번 나오지 않는다. 3중 1택인데 두 장이 같으면 사실상 2중 1택이다.
  * - 남은 종류가 `count`보다 적으면 있는 만큼만 돌려준다. 억지로 채우지 않는다.
  *
@@ -39,8 +41,15 @@ export function rollUpgradeChoices(
   stacks: UpgradeStacks,
   count: number,
   random: () => number,
+  /**
+   * 지금 되돌릴 체력이 있는가. 적지 않으면 있는 것으로 본다 —
+   * 회복 카드가 없던 시절의 부름(테스트 포함)이 뜻을 바꾸지 않게 한다.
+   */
+  wounded = true,
 ): UpgradeChoice[] {
-  const pool = cards.filter((card) => (stacks[card.id] ?? 0) < card.maxStacks);
+  const pool = cards.filter(
+    (card) => (stacks[card.id] ?? 0) < card.maxStacks && (wounded || card.heal === undefined),
+  );
 
   // 앞에서부터 필요한 만큼만 섞는다(부분 피셔-예이츠). 목록이 길어져도 비용이 count에 비례한다.
   const take = Math.min(count, pool.length);

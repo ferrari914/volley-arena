@@ -27,7 +27,7 @@ import {
 } from '../entities/types';
 import { normalize, rotateToward, type Vec2 } from './math';
 import { findNearestEnemy } from '../systems/autoAim';
-import { damagePlayer, stepArrows, stepPlayerRecovery } from '../systems/combat';
+import { damagePlayer, healPlayer, stepArrows, stepPlayerRecovery } from '../systems/combat';
 import { stepEnemies } from '../systems/enemyAi';
 import {
   createDropCores,
@@ -444,6 +444,9 @@ export class World {
     if (!chosen) return false;
 
     this.stats = applyUpgrade(this.stats, chosen.card);
+    // 회복 카드는 능력치가 아니라 몸에 닿는다(DESIGN 8번). 최대 체력에 대한 비율이라
+    // 나중에 최대 체력이 달라져도 카드 쪽을 고치지 않아도 된다.
+    if (chosen.card.heal) healPlayer(this.player, this.player.maxHp * chosen.card.heal);
     this.upgradeStacks[id] = (this.upgradeStacks[id] ?? 0) + 1;
     this.takenUpgrades.push(id);
 
@@ -461,6 +464,8 @@ export class World {
       this.upgradeStacks,
       UPGRADE.choices,
       this.random,
+      // 가득 찬 체력으로는 회복 카드를 보지 않는다 — 고를 수 없는 카드는 선택이 아니다.
+      this.player.hp < this.player.maxHp,
     );
     if (choices.length === 0) {
       // 모든 카드를 최대까지 골랐다. 고를 것이 없으면 멈추지 않는다 —

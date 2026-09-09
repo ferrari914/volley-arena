@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { World, type FrameInput } from '../src/core/World';
-import { ARROW, LEVEL, UPGRADE } from '../src/data/config';
+import { ARROW, LEVEL, PLAYER, UPGRADE } from '../src/data/config';
 import { UPGRADE_CARDS } from '../src/data/upgrades';
 import { createXpCore, type PlayerStats, type UpgradeCard } from '../src/entities/types';
 import { applyUpgrade, rollUpgradeChoices } from '../src/systems/upgrades';
+import { healPlayer } from '../src/systems/combat';
 import { xpForLevel } from '../src/systems/experience';
 
 const DT = 1 / 60;
@@ -127,13 +128,97 @@ describe('업그레이드 적용', () => {
 
   it('목록의 카드는 전부 무언가를 바꾼다', () => {
     for (const c of UPGRADE_CARDS) {
-      const changes = Object.keys(c.multiply ?? {}).length + Object.keys(c.add ?? {}).length;
+      // 회복은 능력치가 아니라 몸에 닿는다 — 그것도 '무언가를 바꾸는' 한 갈래다.
+      const changes =
+        Object.keys(c.multiply ?? {}).length +
+        Object.keys(c.add ?? {}).length +
+        (c.heal ? 1 : 0);
       expect(changes).toBeGreaterThan(0);
       expect(c.maxStacks).toBeGreaterThan(0);
       expect(c.detail.length).toBeGreaterThan(0);
     }
     // id가 겹치면 고른 횟수가 뒤섞인다.
     expect(new Set(UPGRADE_CARDS.map((c) => c.id)).size).toBe(UPGRADE_CARDS.length);
+  });
+});
+
+/**
+ * 회복 카드 (DESIGN 8번). 다른 카드와 달리 능력치가 아니라 몸에 곧바로 닿는다 —
+ * 그래서 "언제 보여 주는가"와 "얼마나 되돌리는가"를 둘 다 지켜야 한다.
+ */
+describe('회복 카드', () => {
+  const mend = UPGRADE_CARDS.find((c) => c.id === 'mend');
+  if (!mend?.heal) throw new Error('회복 카드가 없다');
+  const healAmount = PLAYER.maxHp * mend.heal;
+
+  /** 회복 카드가 뜰 때까지 레벨을 올린다. 뜬 자리에서 멈춘다(고르지 않는다). */
+  function offerMend(world: World, hp: number): void {
+    for (let i = 0; i < 40; i += 1) {
+      world.player.hp = hp;
+      if (world.offer?.choices.some((c) => c.card.id === 'mend')) return;
+      // 회복이 아닌 카드를 골라 넘긴다 — 회복을 골라 버리면 상한에 닿아 다시 안 뜬다.
+      const other = world.offer?.choices.find((c) => c.card.id !== 'mend');
+      if (other) world.chooseUpgrade(other.card.id);
+      feedXp(world, xpForLevel(world.progress.level, LEVEL));
+    }
+    throw new Error('회복 카드가 뜨지 않았다');
+  }
+
+  it('고르면 그 자리에서 체력이 돌아온다', () => {
+    const world = new World();
+    offerMend(world, 40);
+    expect(world.chooseUpgrade('mend')).toBe(true);
+    expect(world.player.hp).toBeCloseTo(40 + healAmount, 6);
+  });
+
+  it('최대 체력을 넘겨 채우지 않는다', () => {
+    const world = new World();
+    offerMend(world, world.player.maxHp - 3);
+    world.chooseUpgrade('mend');
+    expect(world.player.hp).toBe(world.player.maxHp);
+  });
+
+  it('능력치는 하나도 건드리지 않는다 (되돌리는 것은 몸뿐이다)', () => {
+    const stats = baseStats();
+    expect(applyUpgrade(stats, mend!)).toEqual(stats);
+  });
+
+  it('체력이 가득 차 있으면 후보에서 빠진다 (골라도 아무 일이 없는 카드다)', () => {
+    const random = makeRandom(7);
+    for (let i = 0; i < 200; i += 1) {
+      const choices = rollUpgradeChoices(UPGRADE_CARDS, {}, UPGRADE.choices, random, false);
+      expect(choices.map((c) => c.card.id)).not.toContain('mend');
+      // 빠져도 3중 1택은 그대로다 — 남은 종류가 넉넉해야 한다.
+      expect(choices).toHaveLength(UPGRADE.choices);
+    }
+  });
+
+  it('다치면 다시 후보에 든다', () => {
+    const random = makeRandom(7);
+    let seen = false;
+    for (let i = 0; i < 200 && !seen; i += 1) {
+      seen = rollUpgradeChoices(UPGRADE_CARDS, {}, UPGRADE.choices, random, true).some(
+        (c) => c.card.id === 'mend',
+      );
+    }
+    expect(seen).toBe(true);
+  });
+
+  it('가득 찬 채로 레벨업하면 World도 회복 카드를 띄우지 않는다', () => {
+    const world = new World();
+    for (let i = 0; i < 12; i += 1) {
+      world.player.hp = world.player.maxHp;
+      feedXp(world, xpForLevel(world.progress.level, LEVEL));
+      expect(world.offer?.choices.map((c) => c.card.id)).not.toContain('mend');
+      pickFirst(world);
+    }
+  });
+
+  it('쓰러진 몸은 일으키지 못한다 (그 자리는 부활의 몫이다)', () => {
+    const world = new World();
+    world.player.hp = 0;
+    expect(healPlayer(world.player, healAmount)).toBe(0);
+    expect(world.player.hp).toBe(0);
   });
 });
 
@@ -236,7 +321,11 @@ describe('World — 3중 1택', () => {
     const world = new World();
     const total = UPGRADE_CARDS.reduce((sum, c) => sum + c.maxStacks, 0);
 
-    // 한 덩이로 최대 레벨까지 올린다. 레벨업 수(39)가 카드 총량(30)보다 많아
+    // 회복 카드는 다친 사람에게만 나온다. 체력을 깎아 두지 않으면 그 두 장이
+    // 후보에서 빠져 "다 떨어졌다"는 자리에 닿지 못한다.
+    world.player.hp = world.player.maxHp * 0.5;
+
+    // 한 덩이로 최대 레벨까지 올린다. 레벨업 수(39)가 카드 총량(38)보다 많아
     // 마지막에는 고를 것이 없는 상태가 된다.
     feedXp(world, 1e9);
     let picks = 0;

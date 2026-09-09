@@ -189,3 +189,20 @@ export function stepPlayerRecovery(player: Player, dt: number): void {
   if (player.invulnerable > 0) player.invulnerable = Math.max(0, player.invulnerable - dt);
   if (player.hitFlash > 0) player.hitFlash = Math.max(0, player.hitFlash - dt * 2.2);
 }
+
+/**
+ * 체력을 되돌린다 (DESIGN 8번 · 회복 카드). 되돌린 양을 돌려준다.
+ *
+ * **이미 쓰러진 몸은 일으키지 않는다** — `damagePlayer`가 "쓰러진 뒤에는 더 아프지 않다"고
+ * 정한 것과 같은 자리다. 죽은 자리에서 돌아오는 길은 부활 하나뿐이고(DESIGN 6번),
+ * 카드가 그 자리를 겸하면 쓰러짐이 무슨 뜻인지 흐려진다.
+ *
+ * 최대 체력을 넘겨 채우지 않는다. 넘치는 몫은 그냥 버려진다 —
+ * 가득 찬 사람이 고르면 손해라는 것이 이 카드가 언제 값진지를 정한다.
+ */
+export function healPlayer(player: Player, amount: number): number {
+  if (player.hp <= 0 || amount <= 0) return 0;
+  const healed = Math.min(amount, player.maxHp - player.hp);
+  player.hp += healed;
+  return healed;
+}
