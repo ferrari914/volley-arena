@@ -116,6 +116,12 @@ export class World {
   hits = 0;
   /** 쓰러뜨린 적의 수. HUD의 "처치"이자 7번(결과 화면)이 그대로 쓸 값이다. */
   kills = 0;
+  /**
+   * 돌진형의 몸에 실제로 닿힌 횟수(무적에 막힌 것은 세지 않는다).
+   * 화면에는 쓰지 않고 `xpByOrigin`처럼 밸런스를 재는 쪽이 본다 —
+   * 한 대가 12점이라(화살 2.4발) 한 판 길이를 가장 크게 흔드는 것이 이 값이다.
+   */
+  bodyHits = 0;
   /** 지금 자동 조준이 잡고 있는 적. 없으면 null. */
   lockedEnemy: Enemy | null = null;
 
@@ -227,7 +233,9 @@ export class World {
     for (const shot of acted.shots) this.addArrow(shot.pos, shot.dir, 'enemy');
     // 돌진형이 몸으로 닿힌 몫(DESIGN 9번). 화살과 같은 무적 규칙을 지나므로,
     // 몸통과 화살이 같은 순간에 닿아도 두 대를 한꺼번에 맞지는 않는다.
-    for (const damage of acted.contacts) damagePlayer(this.player, damage, PLAYER.invulnerable);
+    for (const damage of acted.contacts) {
+      if (damagePlayer(this.player, damage, PLAYER.invulnerable)) this.bodyHits += 1;
+    }
 
     const result = stepArrows(this.arrows, {
       dt,

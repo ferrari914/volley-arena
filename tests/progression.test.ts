@@ -3,7 +3,7 @@ import { World } from '../src/core/World';
 import type { FrameInput } from '../src/core/World';
 import { ARENA, CORE, LEVEL, PLAYER } from '../src/data/config';
 import { createXpCore, type XpCore } from '../src/entities/types';
-import { DT, IDLE, median, play, playMatch, walkToNearestCore } from './support/match';
+import { DT, IDLE, dodgeCharger, median, play, playMatch, walkToNearestCore } from './support/match';
 import {
   createDropCores,
   createProgress,
@@ -286,14 +286,15 @@ describe('밸런스 — 전투가 채집보다 빠르다', () => {
  *
  * **이 선을 벗어나면 밸런스를 되돌릴 것이지, 선을 옮기지 말 것.**
  */
-describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
-  /** DESIGN "3~5분". 코어만 보고 걷는 사람이라 실제 플레이보다 짧게 끝나므로 아래쪽을 넉넉히 잡았다. */
-  const SHORTEST = 150;
-  const LONGEST = 330;
-  /** 씨앗은 고정한다. 바퀴마다 다른 판을 재면 수치를 비교할 수 없다. */
-  const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
+/** DESIGN "3~5분". 코어만 보고 걷는 사람이라 실제 플레이보다 짧게 끝나므로 아래쪽을 넉넉히 잡았다. */
+const SHORTEST = 150;
+const LONGEST = 330;
+/** 씨앗은 고정한다. 바퀴마다 다른 판을 재면 수치를 비교할 수 없다. */
+const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
+/** 코어만 보고 걷는 사람의 스무 판. 아래 두 묶음이 같은 스무 판을 나눠 본다. */
+const results = SEEDS.map((seed) => playMatch(seed));
 
-  const results = SEEDS.map((seed) => playMatch(seed));
+describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
   const lengths = results.map((r) => r.elapsed);
   const inRange = lengths.filter((s) => s >= SHORTEST && s <= LONGEST).length;
 
@@ -341,6 +342,62 @@ describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
       expect(r.level, `씨앗 ${r.seed}의 레벨`).toBeGreaterThanOrEqual(10);
       expect(r.cards.length, `씨앗 ${r.seed}의 카드 수`).toBe(r.level - 1);
     }
+  });
+});
+
+/**
+ * DESIGN 9번이 돌진형에게 요구하는 단 하나의 대응: **옆으로 비키면 빗나간다.**
+ *
+ * 한 프레임짜리 검사는 `tests/enemies.test.ts`에 있다("돌진 중에는 방향을 바꾸지 않는다").
+ * 여기서 재는 것은 그것이 **한 판 내내 실제로 통하는가**다 — 아레나에는 적이 여럿이고
+ * 벽이 있고 코어를 주우러 가야 하므로, 한 프레임에서 되는 일이 판에서도 된다는 보장이 없다.
+ *
+ * **이 묶음은 세션 18이 아래쪽 꼬리를 쫓다가 생겼다.** 스무 판 중 가장 짧은 판(139초)은
+ * 카드 운도 화력도 아니라 **몸으로 세 대 맞은 판**이었다(한 대 12점 = 화살 2.4발).
+ * 같은 씨앗을 비키는 사람으로 돌리면 313초다. 예순 판으로 넓혀도 같다:
+ * 몸통 35대 → 2대, 가장 짧은 판 89초 → 172초, **중앙값은 247초 그대로** —
+ * 비키기는 아래쪽만 들어 올린다.
+ *
+ * 그래서 이 묶음이 지키는 것은 두 가지다.
+ * (1) 돌진형은 실제로 아프다(안 비키면 맞는다). (2) 그런데 피할 수 있다.
+ * 하나가 무너지면 이 적은 "피할 수 없는 적"이거나 "무해한 적"이 된다.
+ */
+describe('밸런스 — 예고를 보고 비키면 몸에 닿지 않는다 (DESIGN 9번)', () => {
+  const dodged = SEEDS.map((seed) => playMatch(seed, 600, dodgeCharger));
+  const bodyHits = (rows: readonly { bodyHits: number }[]): number =>
+    rows.reduce((sum, r) => sum + r.bodyHits, 0);
+  const shortest = (rows: readonly { elapsed: number }[]): number =>
+    Math.min(...rows.map((r) => r.elapsed));
+
+  it('안 비키는 사람은 몸으로 맞고, 비키는 사람은 그 1/4도 맞지 않는다', () => {
+    const plain = bodyHits(results);
+    const smart = bodyHits(dodged);
+    console.log(
+      `몸통 박치기 — 안 비키는 사람 ${plain}대 / 비키는 사람 ${smart}대 (스무 판)`,
+    );
+    // 맞는 사람이 없으면 비교가 뜻이 없다. 돌진형이 순해진 것도 여기서 걸린다.
+    expect(plain, '안 비키는 사람이 몸통에 거의 맞지 않는다').toBeGreaterThanOrEqual(4);
+    // 실측 12대 → 0대. 4배는 넉넉히 잡은 선이다.
+    expect(smart * 4, `비키는 사람 ${smart}대 · 안 비키는 사람 ${plain}대`).toBeLessThanOrEqual(
+      plain,
+    );
+  });
+
+  it('아래쪽 꼬리는 게임의 성질이 아니라 안 비키는 버릇이다', () => {
+    const plain = shortest(results);
+    const smart = shortest(dodged);
+    const lengths = dodged.map((r) => r.elapsed);
+    console.log(
+      `비키는 사람의 스무 판: 중앙값 ${median(lengths).toFixed(0)}초 · ` +
+        `가장 짧은 판 ${smart.toFixed(0)}초(안 비키면 ${plain.toFixed(0)}초) · ` +
+        `가장 긴 판 ${Math.max(...lengths).toFixed(0)}초`,
+    );
+    // 실측 139초 → 175초. 같은 씨앗·같은 카드인데 아래쪽 꼬리만 사라진다.
+    expect(smart, '비켜도 가장 짧은 판이 길어지지 않는다').toBeGreaterThan(plain);
+    // 위쪽에는 선을 걸지 않는다 — 비키는 사람은 원래 조금 더 오래 산다(실측 333초).
+    // 그 천장을 지키는 것은 증원이고, 위 묶음이 안 비키는 사람으로 재고 있다.
+    expect(median(lengths)).toBeGreaterThan(SHORTEST);
+    expect(median(lengths)).toBeLessThan(LONGEST);
   });
 });
 

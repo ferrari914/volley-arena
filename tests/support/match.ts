@@ -1,5 +1,6 @@
 import { World } from '../../src/core/World';
 import type { FrameInput } from '../../src/core/World';
+import { ENEMY, PLAYER } from '../../src/data/config';
 import type { XpCore } from '../../src/entities/types';
 
 /** 한 스텝의 길이(s). 게임 루프와 같은 60fps. */
@@ -46,6 +47,37 @@ export function walkToNearestCore(world: World): FrameInput {
   };
 }
 
+/**
+ * 달려드는 돌진형의 직선에서 옆으로 비키는 사람. 그것 말고는 `walkToNearestCore`와 같다.
+ *
+ * **DESIGN 9번이 돌진형에게 요구하는 단 하나의 대응이 이것이다** —
+ * "옆으로 비키면 빗나가고, 뒤로 달아나는 것만으로는 못 피한다".
+ * `walkToNearestCore`는 코어만 보고 걷느라 이 한 가지를 하지 않는다.
+ * 그래서 그 사람이 재는 한 판 길이의 **아래쪽 꼬리는 게임의 성질이 아니라 그 사람의 버릇**이다
+ * (세션 18에 쟀다: 몸통 한 대가 12점이라 두세 대면 판이 100초씩 짧아진다).
+ *
+ * **몸을 던진 뒤(`dashTimer > 0`)에만 반응한다.** 웅크리는 동안 비켜도 소용이 없다 —
+ * 돌진 방향은 튀어나가는 순간에 정해지고 그때까지 몸이 따라 돈다(`systems/enemyAi.ts`).
+ * 화면에 보이는 것(달려오는 몸과 그 방향)만 보고 판단하므로, 사람이 할 수 없는 일을 하지 않는다.
+ */
+export function dodgeCharger(world: World): FrameInput {
+  const contactRadius = ENEMY.radius + PLAYER.radius;
+  for (const enemy of world.enemies) {
+    if (!enemy.alive || enemy.kind !== 'charger' || enemy.dashTimer <= 0) continue;
+    const ahead = { x: Math.cos(enemy.facing), y: Math.sin(enemy.facing) };
+    const dx = world.player.pos.x - enemy.pos.x;
+    const dy = world.player.pos.y - enemy.pos.y;
+    // 이미 지나갔으면 비킬 것이 없다.
+    if (dx * ahead.x + dy * ahead.y < 0) continue;
+    // 직선에서 옆으로 얼마나 벗어나 있는가. 넉넉히 벗어나 있으면 어차피 빗나간다.
+    const side = dx * -ahead.y + dy * ahead.x;
+    if (Math.abs(side) > contactRadius + 0.6) continue;
+    const sign = side >= 0 ? 1 : -1;
+    return { move: { x: -ahead.y * sign, y: ahead.x * sign }, aim: null };
+  }
+  return walkToNearestCore(world);
+}
+
 /** 한 판을 끝까지 돌리고 남은 것. 씨앗 하나에 판 하나다. */
 export interface MatchResult {
   seed: number;
@@ -57,6 +89,8 @@ export interface MatchResult {
   kills: number;
   /** 고른 카드 id를 고른 순서대로. */
   cards: readonly string[];
+  /** 돌진형의 몸에 닿힌 횟수. 한 대가 12점이라 판 길이를 가장 크게 흔든다. */
+  bodyHits: number;
 }
 
 /**
@@ -67,9 +101,18 @@ export interface MatchResult {
  * 한 판 길이가 실측 133~416초까지 흔들린다(세션 15에 잼).
  * 그래서 한 판 길이는 씨앗 하나가 아니라 여러 판의 중앙값으로 판단한다.
  */
-export function playMatch(seed: number, maxSeconds = 600): MatchResult {
+export function playMatch(
+  seed: number,
+  maxSeconds = 600,
+  /**
+   * 어떻게 움직이는 사람인가. 기본값은 코어만 보고 걷는 사람이다 —
+   * **이 자를 바꾸면 지금까지 잰 수치와 견줄 수 없게 되므로 기본값은 옮기지 않는다.**
+   * 다른 사람을 재고 싶으면 여기에 넣어 나란히 재라(`dodgeCharger`).
+   */
+  input: (world: World) => FrameInput = walkToNearestCore,
+): MatchResult {
   const world = new World({ seed });
-  play(world, Math.round(60 * maxSeconds), walkToNearestCore);
+  play(world, Math.round(60 * maxSeconds), input);
   return {
     seed,
     elapsed: world.elapsed,
@@ -77,6 +120,7 @@ export function playMatch(seed: number, maxSeconds = 600): MatchResult {
     level: world.progress.level,
     kills: world.kills,
     cards: [...world.takenUpgrades],
+    bodyHits: world.bodyHits,
   };
 }
 
