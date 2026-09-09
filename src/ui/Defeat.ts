@@ -1,4 +1,6 @@
 import type { World } from '../core/World';
+import { UPGRADE_CARDS } from '../data/upgrades';
+import { submitRun, type RecordOutcome, type RunRecord, type RunResult } from '../data/records';
 
 /** 쓰러진 화면에서 나가는 두 갈래 (DESIGN 6번). */
 export interface DefeatActions {
@@ -8,8 +10,23 @@ export interface DefeatActions {
   onRestart: () => void;
 }
 
+/** 기록을 제출하는 통로. 기본값은 진짜 localStorage, 테스트는 가짜를 끼운다. */
+export type SubmitRun = (run: RunResult) => RecordOutcome;
+
+/** 카드 id → 화면에 보일 이름. 결과 화면이 "무엇으로 강해졌는가"를 적을 때 쓴다. */
+const CARD_TITLES = new Map(UPGRADE_CARDS.map((card) => [card.id, card.title]));
+
 /**
- * 쓰러졌을 때 뜨는 화면 (DESIGN 6번 — 사망 · 리스폰 · 부활).
+ * 쓰러졌을 때 뜨는 결과 화면 (DESIGN 6번 사망·부활 + 7번 결과·기록).
+ *
+ * **화면을 하나 더 만들지 않고 이 화면을 키웠다.** 3~5분짜리 게임에서 죽은 뒤에
+ * 화면을 두 번 넘기게 하면 다음 판까지 가는 길이 그만큼 길어진다. 여기서 이번 판을
+ * 확인하고 곧바로 다음 판으로 나간다 — 결과와 출구가 한 화면에 있다.
+ *
+ * 적는 것은 셋이다.
+ *   ① 이번 판 — 도달 레벨 · 처치 수 · 생존 시간 (DESIGN 7번)
+ *   ② 최고 기록 — 브라우저에 남는 값. 견줄 것이 없으면 숫자는 그냥 숫자다
+ *   ③ 무엇으로 강해졌는가 — 고른 카드. 판마다 다른 유일한 자리다
  *
  * 나가는 길은 둘이고, **둘의 차이는 "지금까지 쌓은 것을 들고 가는가"** 하나다.
  * 그 차이가 버튼 글자만으로 읽혀야 한다 — 죽은 직후에 설명을 읽는 사람은 없다.
@@ -24,10 +41,15 @@ export interface DefeatActions {
  */
 export class Defeat {
   private readonly root: HTMLElement;
-  private readonly summary: HTMLElement;
+  private readonly runValue: HTMLElement;
+  private readonly bestValue: HTMLElement;
+  private readonly note: HTMLElement;
+  private readonly taken: HTMLElement;
+  private readonly submit: SubmitRun;
   private shown = false;
 
-  constructor(host: HTMLElement, actions: DefeatActions) {
+  constructor(host: HTMLElement, actions: DefeatActions, submit: SubmitRun = submitRun) {
+    this.submit = submit;
     this.root = document.createElement('div');
     this.root.id = 'defeat';
 
@@ -36,9 +58,20 @@ export class Defeat {
     title.textContent = '쓰러졌다';
     this.root.appendChild(title);
 
-    this.summary = document.createElement('div');
-    this.summary.id = 'defeat-summary';
-    this.root.appendChild(this.summary);
+    const summary = document.createElement('div');
+    summary.id = 'defeat-summary';
+    this.runValue = this.createRow(summary, '이번 판', 'defeat-run', 'run');
+    this.bestValue = this.createRow(summary, '최고 기록', 'defeat-best', 'best');
+    this.root.appendChild(summary);
+
+    // 기록에 얽힌 사정이 있을 때만 한 줄 뜬다(신기록 / 이어한 판 / 저장이 막힌 브라우저).
+    this.note = document.createElement('div');
+    this.note.id = 'defeat-record-note';
+    this.root.appendChild(this.note);
+
+    this.taken = document.createElement('div');
+    this.taken.id = 'defeat-taken';
+    this.root.appendChild(this.taken);
 
     const choices = document.createElement('div');
     choices.id = 'defeat-choices';
@@ -69,6 +102,9 @@ export class Defeat {
    * 매 프레임 호출된다. 쓰러진 순간 화면을 채우고, 다시 일어서면 내린다.
    *
    * 상태가 바뀔 때만 DOM을 만진다 — 여기는 초당 60번 불린다.
+   * **기록 제출도 이 전환에서 딱 한 번 일어난다.** 매 프레임 제출하면
+   * localStorage에 초당 60번 쓰게 되고, 이어하기로 다시 죽으면 그 판은 또 한 번
+   * (이번에는 이어한 판으로) 제출된다 — 그게 맞다. 한 판의 끝이 그때마다 새로 온다.
    */
   sync(world: World): void {
     if (world.defeated === this.shown) return;
@@ -79,15 +115,51 @@ export class Defeat {
       return;
     }
 
-    const mm = Math.floor(world.elapsed / 60);
-    const ss = Math.floor(world.elapsed % 60);
-    // 이어하기로 버틴 판은 그 사실까지 적는다. 안 적으면 다음 판의 기록과 나란히 놓았을 때
-    // 무엇이 다른 판인지 알 수 없다(결과 화면 — DESIGN 7번 — 이 이 값을 그대로 쓴다).
-    const revived = world.revives > 0 ? ` · 이어하기 ${world.revives}회` : '';
-    this.summary.textContent =
-      `레벨 ${world.progress.level} · 처치 ${world.kills} · ` +
-      `${mm}:${ss.toString().padStart(2, '0')} 생존${revived}`;
+    const run: RunResult = {
+      level: world.progress.level,
+      kills: world.kills,
+      time: world.elapsed,
+      revives: world.revives,
+    };
+    this.paint(run, this.submit(run), world.takenUpgrades);
     this.root.dataset['show'] = '1';
+  }
+
+  /** 화면에 값을 채운다. 기록 규칙의 판단은 이미 끝나 있고 여기서는 옮겨 적기만 한다. */
+  private paint(run: RunResult, outcome: RecordOutcome, taken: readonly string[]): void {
+    this.runValue.textContent = formatRecord(run);
+    this.bestValue.textContent = outcome.best ? formatRecord(outcome.best) : '아직 없다';
+    // 이번 판이 그대로 최고 기록이면 두 줄이 같은 값이 된다. 그때는 아래 줄을 강조해서
+    // "같은 숫자가 두 번 적힌 것"이 아니라 "방금 세운 기록"으로 읽히게 한다.
+    this.bestValue.dataset['fresh'] = outcome.isNew ? '1' : '0';
+
+    const { text, kind } = recordNote(run, outcome);
+    this.note.textContent = text;
+    this.note.dataset['kind'] = kind;
+
+    const summary = formatUpgrades(taken);
+    this.taken.textContent = summary;
+    // 카드를 한 장도 못 고르고 죽은 판(1레벨 사망)에서는 빈 줄을 남기지 않는다.
+    this.taken.dataset['show'] = summary ? '1' : '0';
+  }
+
+  private createRow(host: HTMLElement, label: string, id: string, kind: string): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'defeat-row';
+    row.dataset['kind'] = kind;
+
+    const name = document.createElement('span');
+    name.className = 'defeat-row-label';
+    name.textContent = label;
+    row.appendChild(name);
+
+    const value = document.createElement('span');
+    value.className = 'defeat-row-value';
+    value.id = id;
+    row.appendChild(value);
+
+    host.appendChild(row);
+    return value;
   }
 
   private createChoice(spec: {
@@ -118,4 +190,47 @@ export class Defeat {
 
     return wrap;
   }
+}
+
+/**
+ * 기록 줄 밑에 붙는 한 줄. 할 말이 없으면 빈 문자열이다.
+ *
+ * 순서가 곧 우선순위다: 이어한 판이라는 사실이 가장 먼저다. 그걸 안 적으면
+ * "왜 내 기록이 안 올라갔지"가 되고, 그건 저장이 고장 난 것과 구별되지 않는다.
+ */
+function recordNote(run: RunResult, outcome: RecordOutcome): { text: string; kind: string } {
+  if (!outcome.ranked) {
+    return { text: `이어하기 ${run.revives}회 — 이어한 판은 최고 기록에 남지 않는다`, kind: 'note' };
+  }
+  if (outcome.isNew && !outcome.saved) {
+    return { text: '새 최고 기록! (이 브라우저에는 저장되지 않는다)', kind: 'warn' };
+  }
+  if (outcome.isNew) return { text: '새 최고 기록!', kind: 'new' };
+  return { text: '', kind: 'none' };
+}
+
+/** `레벨 5 · 처치 21 · 0:39 생존`. 이번 판과 최고 기록이 같은 모양이어야 눈으로 견줄 수 있다. */
+function formatRecord(record: RunRecord): string {
+  const mm = Math.floor(record.time / 60);
+  const ss = Math.floor(record.time % 60);
+  return (
+    `레벨 ${record.level} · 처치 ${record.kills} · ` +
+    `${mm}:${ss.toString().padStart(2, '0')} 생존`
+  );
+}
+
+/**
+ * 고른 카드를 `연사 ×3 · 질주 ×2` 로 줄인다. 고른 순서를 지키되 같은 카드는 한 번만 적는다 —
+ * 여덟 장까지 쌓이는 카드가 있어서 그대로 늘어놓으면 한 줄을 넘긴다.
+ */
+function formatUpgrades(taken: readonly string[]): string {
+  if (taken.length === 0) return '';
+  const counts = new Map<string, number>();
+  for (const id of taken) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const parts: string[] = [];
+  for (const [id, count] of counts) {
+    const title = CARD_TITLES.get(id) ?? id;
+    parts.push(count > 1 ? `${title} ×${count}` : title);
+  }
+  return parts.join(' · ');
 }

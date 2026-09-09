@@ -29,6 +29,12 @@
  *     그대로 서서 끝까지 기다려 쓰러진 화면까지 함께 본다 —
  *     죽은 뒤에 아무 일도 일어나지 않는 화면이 이 기능의 가장 나쁜 고장이다.
  *
+ * (7) 결과 화면과 기록 저장 — DESIGN 7번.
+ *     쓰러진 화면에 이번 판(레벨·처치·생존)과 최고 기록이 같은 모양으로 적히는지,
+ *     그 최고 기록이 **브라우저에 실제로 남는지**(화면 숫자와 저장된 값을 맞춰 본다),
+ *     그리고 **이어한 판은 기록에 오르지 않는지**를 확인한다.
+ *     화면만 보면 기억 속 변수 하나로도 통과한다 — 그건 새로고침에 사라지는 기록이다.
+ *
  * (6) 쓰러진 뒤의 두 갈래 — DESIGN 6번.
  *     이어하기(광고)를 눌러 그 자리에서 레벨을 지킨 채 이어지는지, 다시 쓰러진 뒤
  *     처음부터를 눌러 1레벨의 새 판이 도는지 화면에서 확인한다.
@@ -42,6 +48,11 @@ import { startPreview } from './lib/preview.mjs';
 
 const PORT = 4183;
 const OUT = 'shots';
+
+/** 결과 화면 한 줄의 모양. 이번 판과 최고 기록이 같은 모양이어야 눈으로 견줄 수 있다. */
+const RESULT_LINE = /^레벨 (\d+) · 처치 (\d+) · (\d+:\d\d) 생존$/;
+/** 최고 기록이 저장되는 자리(src/data/records.ts와 같은 값). */
+const RECORD_KEY = 'volley-arena:best:v1';
 
 /**
  * 안전 영역 여백(CSS px). iPhone 13 사파리에서 관측되는 값을 기준으로 잡았다.
@@ -307,12 +318,7 @@ async function checkDefeat(page, name, problems) {
     return;
   }
 
-  const shown = await page.evaluate(() => ({
-    title: document.getElementById('defeat-title')?.textContent ?? '',
-    summary: document.getElementById('defeat-summary')?.textContent ?? '',
-    revive: Boolean(document.getElementById('defeat-revive')),
-    again: Boolean(document.getElementById('defeat-again')),
-  }));
+  const shown = await readResult(page);
   await page.screenshot({ path: `${OUT}/${name}-defeat.png` });
 
   // 판이 끝났으므로 시계도 멈춰 있어야 한다.
@@ -321,21 +327,81 @@ async function checkDefeat(page, name, problems) {
   if ((await readClock(page)) !== stopped) {
     problems.push(`[${name}] 쓰러졌는데 게임이 계속 흐른다 (${stopped})`);
   }
-  // 도달 레벨·처치·생존 시간이 적혀 있어야 한다. 빈 요약은 "무엇을 했는지 모르는 끝"이다.
-  if (!/레벨 \d+ · 처치 \d+ · \d+:\d\d 생존/.test(shown.summary)) {
-    problems.push(`[${name}] 쓰러진 화면의 요약이 이상하다: "${shown.summary}"`);
+  // 도달 레벨·처치·생존 시간이 적혀 있어야 한다. 빈 결과는 "무엇을 했는지 모르는 끝"이다.
+  if (!RESULT_LINE.test(shown.run)) {
+    problems.push(`[${name}] 결과 화면의 "이번 판"이 이상하다: "${shown.run}"`);
   }
+  // 이어하기 없이 끝낸 첫 판이므로 최고 기록에 올라 있어야 한다.
+  if (!RESULT_LINE.test(shown.best)) {
+    problems.push(`[${name}] 결과 화면에 최고 기록이 없다: "${shown.best}"`);
+  }
+  checkStoredRecord(shown, name, problems);
+
   if (!shown.revive || !shown.again) {
     problems.push(
       `[${name}] 쓰러진 화면에 두 갈래가 다 있지 않다 (이어하기 ${shown.revive}, 처음부터 ${shown.again})`,
     );
     return;
   }
-  console.log(`  쓰러진 화면: ${shown.title} — ${shown.summary}`);
+  console.log(`  결과 화면: ${shown.title} — 이번 판 ${shown.run} / 최고 ${shown.best}`);
+  if (shown.taken) console.log(`  고른 카드: ${shown.taken}`);
 
   const levelAtDeath = await readLevel(page);
   await checkRevive(page, name, problems, levelAtDeath);
-  await checkRestart(page, name, problems);
+  await checkRestart(page, name, problems, shown.best);
+}
+
+/** 결과 화면(DESIGN 7번)이 적은 값들. 저장소에 실제로 남았는지까지 함께 읽는다. */
+function readResult(page) {
+  return page.evaluate((key) => {
+    const text = (id) => document.getElementById(id)?.textContent ?? '';
+    let stored;
+    try {
+      stored = localStorage.getItem(key);
+    } catch {
+      // 저장이 막힌 브라우저. 여기서 터지면 QA가 화면 대신 예외를 본다.
+      stored = null;
+    }
+    return {
+      title: text('defeat-title'),
+      run: text('defeat-run'),
+      best: text('defeat-best'),
+      note: text('defeat-record-note'),
+      taken: text('defeat-taken'),
+      stored,
+      revive: Boolean(document.getElementById('defeat-revive')),
+      again: Boolean(document.getElementById('defeat-again')),
+    };
+  }, RECORD_KEY);
+}
+
+/**
+ * 화면에 적힌 최고 기록이 **브라우저에 실제로 남았는지** 확인한다 (DESIGN 7번 "기록 저장").
+ *
+ * 화면만 보면 기억 속 변수 하나로도 통과한다 — 그건 새로고침 한 번에 사라지는 기록이다.
+ * 저장소를 직접 읽어 화면의 숫자와 맞춰 본다.
+ */
+function checkStoredRecord(shown, name, problems) {
+  if (!shown.stored) {
+    problems.push(`[${name}] 최고 기록이 브라우저에 저장되지 않았다 (${RECORD_KEY} 없음)`);
+    return;
+  }
+  let record;
+  try {
+    record = JSON.parse(shown.stored);
+  } catch {
+    problems.push(`[${name}] 저장된 최고 기록을 읽을 수 없다: ${shown.stored}`);
+    return;
+  }
+  const onScreen = shown.best.match(RESULT_LINE);
+  if (!onScreen) return;
+  if (Number(onScreen[1]) !== record.level || Number(onScreen[2]) !== record.kills) {
+    problems.push(
+      `[${name}] 화면의 최고 기록과 저장된 값이 다르다 (화면 "${shown.best}" / 저장 ${shown.stored})`,
+    );
+    return;
+  }
+  console.log(`  기록 저장: ${shown.stored}`);
 }
 
 /** 가만히 서서 쓰러질 때까지 기다린다. 카드가 뜨면 골라서 내린다(안 고르면 멈춘 채로 안 죽는다). */
@@ -402,12 +468,35 @@ async function checkRevive(page, name, problems, levelAtDeath) {
   console.log(`  이어하기: 광고 뒤 그 자리에서 다시 흐른다 (${levelAtDeath} 유지 · ${before} → ${after})`);
 }
 
-/** 처음부터(DESIGN 6번의 리스폰). 다시 쓰러뜨린 뒤 눌러, 1레벨부터 새 판이 도는지 본다. */
-async function checkRestart(page, name, problems) {
+/**
+ * 처음부터(DESIGN 6번의 리스폰). 다시 쓰러뜨린 뒤 눌러, 1레벨부터 새 판이 도는지 본다.
+ *
+ * 두 번째 죽음은 **이어하기로 이어 간 판의 끝**이다. 그래서 여기서 기록 규칙도 함께 잰다:
+ * 이어한 판은 아무리 멀리 가도 최고 기록을 건드리지 않는다(DESIGN 7번의 결정).
+ */
+async function checkRestart(page, name, problems, bestBefore) {
   if (!(await waitForDefeat(page))) {
     problems.push(`[${name}] 이어한 뒤 다시 서 있었는데 두 번째로 쓰러지지 않았다`);
     return;
   }
+
+  const second = await readResult(page);
+  await page.screenshot({ path: `${OUT}/${name}-defeat-revived.png` });
+  if (second.best !== bestBefore) {
+    problems.push(
+      `[${name}] 이어한 판이 최고 기록에 올랐다 ("${bestBefore}" → "${second.best}") — ` +
+        '광고를 볼수록 기록이 자라면 그 숫자는 실력을 뜻하지 않는다',
+    );
+  }
+  if (!/이어하기 \d+회/.test(second.note)) {
+    problems.push(
+      `[${name}] 이어한 판인데 왜 기록에 안 오르는지가 화면에 없다 (안내: "${second.note}") — ` +
+        '저장이 고장 난 것과 구별되지 않는다',
+    );
+  } else {
+    console.log(`  이어한 판: 기록 그대로 (${second.best}) · 안내 "${second.note}"`);
+  }
+
   await page.click('#defeat-again');
   // 새 판의 첫 모습은 곧바로 잰다. 여기서 검사가 오래 기다리면 그사이에 진짜로 맞는다 —
   // 서 있는 사람에게는 새 판에서도 1.3초쯤에 첫 화살이 꽂힌다(그게 이 게임의 규칙이다).
