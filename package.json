@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "qa": "npm run build && node tools/shot.mjs",
+    "latency": "npm run build && node tools/latency.mjs",
     "perf": "vitest run --config vitest.perf.config.ts"
   },
   "dependencies": {

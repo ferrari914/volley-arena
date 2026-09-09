@@ -13,12 +13,11 @@
  *
  * 문제가 하나라도 있으면 0이 아닌 코드로 끝난다.
  */
-import { spawn } from 'node:child_process';
 import { mkdir, rm } from 'node:fs/promises';
 import { chromium, devices } from 'playwright';
+import { startPreview } from './lib/preview.mjs';
 
 const PORT = 4183;
-const URL = `http://127.0.0.1:${PORT}/`;
 const OUT = 'shots';
 
 /**
@@ -92,20 +91,6 @@ const GUARDED = [
   ['세로 안내 문구', '#rotate-notice p'],
 ];
 
-async function waitForServer(url, timeoutMs = 20000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-    } catch {
-      // 아직 안 떴다. 다시 시도한다.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(`서버가 ${timeoutMs}ms 안에 뜨지 않았다: ${url}`);
-}
-
 /** 안전 영역 여백을 :root 인라인 스타일로 주입한다(스타일시트의 env() 값을 덮는다). */
 async function applySafeArea(page, safe) {
   await page.evaluate((inset) => {
@@ -163,16 +148,10 @@ function measureSafeArea(page, safe, guarded) {
   );
 }
 
-const server = spawn(
-  'npx',
-  ['vite', 'preview', '--port', String(PORT), '--strictPort', '--host', '127.0.0.1'],
-  { stdio: 'ignore' },
-);
-
 const problems = [];
+const preview = await startPreview(PORT);
 
 try {
-  await waitForServer(URL);
   await rm(OUT, { recursive: true, force: true });
   await mkdir(OUT, { recursive: true });
 
@@ -188,7 +167,7 @@ try {
     });
     page.on('pageerror', (error) => problems.push(`[${name}] pageerror: ${error.message}`));
 
-    await page.goto(URL, { waitUntil: 'load' });
+    await page.goto(preview.url, { waitUntil: 'load' });
     await applySafeArea(page, safe);
     // 자동 조준이 대상을 잡고 화살이 날아가는 장면을 담는다.
     await page.waitForTimeout(1800);
@@ -217,7 +196,7 @@ try {
 
   await browser.close();
 } finally {
-  server.kill();
+  preview.stop();
 }
 
 if (problems.length > 0) {
