@@ -39,6 +39,12 @@ export interface RunResult extends RunRecord {
 export interface RecordOutcome {
   /** 지금까지의 최고 기록. 한 번도 없으면 null. */
   best: RunRecord | null;
+  /**
+   * 이번 판을 제출하기 **직전의** 최고 기록. 한 번도 없었으면 null.
+   * 기록을 갈아치웠을 때 "무엇을 넘어섰는가"를 보여 주는 데 쓴다 —
+   * 그 줄이 없으면 결과 화면이 같은 숫자를 두 번 적게 된다.
+   */
+  previous: RunRecord | null;
   /** 이번 판이 그 최고 기록을 갈아치웠는가. */
   isNew: boolean;
   /** 이번 판이 기록 경쟁에 낀 판인가(= 이어하기 없이 끝냈는가). */
@@ -115,12 +121,12 @@ export function submitRun(
   const previous = readBest(storage);
   const current: RunRecord = { level: run.level, kills: run.kills, time: run.time };
 
-  if (!ranked) return { best: previous, isNew: false, ranked, saved: false };
+  if (!ranked) return { best: previous, previous, isNew: false, ranked, saved: false };
   if (previous && !isBetter(current, previous)) {
-    return { best: previous, isNew: false, ranked, saved: false };
+    return { best: previous, previous, isNew: false, ranked, saved: false };
   }
 
-  return { best: current, isNew: true, ranked, saved: write(storage, current) };
+  return { best: current, previous, isNew: true, ranked, saved: write(storage, current) };
 }
 
 /** 저장에 성공했으면 true. 프라이빗 모드·용량 초과는 조용히 false. */

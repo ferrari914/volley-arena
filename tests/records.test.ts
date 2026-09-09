@@ -38,6 +38,8 @@ describe('최고 기록 저장 (DESIGN 7번)', () => {
     const outcome = submitRun(run(8, 30, 61), storage);
 
     expect(outcome.isNew).toBe(true);
+    // 무엇을 넘어섰는지도 함께 돌려준다 — 결과 화면이 지난 기록을 나란히 적는다.
+    expect(outcome.previous).toEqual({ level: 5, kills: 21, time: 39 });
     expect(readBest(storage)).toEqual({ level: 8, kills: 30, time: 61 });
   });
 
@@ -106,6 +108,7 @@ describe('최고 기록 저장 (DESIGN 7번)', () => {
     expect(readBest(null)).toBeNull();
     expect(submitRun(run(1, 0, 3), null)).toEqual({
       best: { level: 1, kills: 0, time: 3 },
+      previous: null,
       isNew: true,
       ranked: true,
       saved: false,

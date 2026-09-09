@@ -625,9 +625,14 @@ body[data-input='touch'] .up-card__key {
   color: var(--ink);
 }
 
-/* 방금 세운 기록은 이번 판과 같은 숫자다. 색으로 "복사된 줄"이 아니라고 말한다. */
-.defeat-row-value[data-fresh='1'] {
+/* 기록을 갈아치운 판은 그 줄 자체가 새 기록이다. 색으로 그렇게 말한다. */
+.defeat-row[data-kind='run'] .defeat-row-value[data-fresh='1'] {
   color: #ffd479;
+}
+
+/* 넘어설 지난 기록이 없던 첫 판에서는 둘째 줄을 내린다(적을 것이 없다). */
+.defeat-row[data-show='0'] {
+  display: none;
 }
 
 #defeat-record-note {

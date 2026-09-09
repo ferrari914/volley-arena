@@ -53,6 +53,16 @@ const OUT = 'shots';
 const RESULT_LINE = /^레벨 (\d+) · 처치 (\d+) · (\d+:\d\d) 생존$/;
 /** 최고 기록이 저장되는 자리(src/data/records.ts와 같은 값). */
 const RECORD_KEY = 'volley-arena:best:v1';
+/**
+ * 전투를 보는 화면에 미리 심어 두는 "지난 기록".
+ *
+ * 심는 이유는 둘이다. (1) 처음 여는 브라우저에는 기록이 없어서, 아무것도 안 심으면
+ * **기록을 갈아치우는 장면 — 두 번째 판부터 늘 보게 되는 그 화면 — 을 한 번도 보지 못한다.**
+ * (2) 심은 값이 화면에 그대로 나오면 저장한 값을 도로 읽어 오는 길까지 확인된다.
+ * 이 판은 5레벨쯤에서 끝나므로 반드시 이 기록을 넘어선다.
+ */
+const SEEDED_RECORD = { level: 2, kills: 3, time: 11 };
+const SEEDED_LINE = '레벨 2 · 처치 3 · 0:11 생존';
 
 /**
  * 안전 영역 여백(CSS px). iPhone 13 사파리에서 관측되는 값을 기준으로 잡았다.
@@ -331,9 +341,18 @@ async function checkDefeat(page, name, problems) {
   if (!RESULT_LINE.test(shown.run)) {
     problems.push(`[${name}] 결과 화면의 "이번 판"이 이상하다: "${shown.run}"`);
   }
-  // 이어하기 없이 끝낸 첫 판이므로 최고 기록에 올라 있어야 한다.
-  if (!RESULT_LINE.test(shown.best)) {
-    problems.push(`[${name}] 결과 화면에 최고 기록이 없다: "${shown.best}"`);
+  // 이어하기 없이 끝낸 판이고 심어 둔 지난 기록(2레벨)보다 멀리 갔으므로 기록을 세워야 한다.
+  if (shown.noteKind !== 'new') {
+    problems.push(
+      `[${name}] 지난 기록(${SEEDED_LINE})을 넘어섰는데 새 기록으로 치지 않았다 (안내 "${shown.note}")`,
+    );
+  }
+  // 그 지난 기록이 화면에 그대로 나와야 한다 — 저장한 값을 도로 읽어 오는 길의 확인이다.
+  if (shown.best !== SEEDED_LINE) {
+    problems.push(
+      `[${name}] 심어 둔 지난 기록이 화면에 나오지 않는다 (기대 "${SEEDED_LINE}" / 화면 "${shown.best}") — ` +
+        '저장은 되는데 다시 읽어 오지 못한다면 기록은 새로고침마다 사라진다',
+    );
   }
   checkStoredRecord(shown, name, problems);
 
@@ -343,12 +362,12 @@ async function checkDefeat(page, name, problems) {
     );
     return;
   }
-  console.log(`  결과 화면: ${shown.title} — 이번 판 ${shown.run} / 최고 ${shown.best}`);
+  console.log(`  결과 화면: ${shown.title} — 이번 판 ${shown.run} · "${shown.note}"`);
   if (shown.taken) console.log(`  고른 카드: ${shown.taken}`);
 
   const levelAtDeath = await readLevel(page);
   await checkRevive(page, name, problems, levelAtDeath);
-  await checkRestart(page, name, problems, shown.best);
+  await checkRestart(page, name, problems, shown.stored);
 }
 
 /** 결과 화면(DESIGN 7번)이 적은 값들. 저장소에 실제로 남았는지까지 함께 읽는다. */
@@ -367,6 +386,7 @@ function readResult(page) {
       run: text('defeat-run'),
       best: text('defeat-best'),
       note: text('defeat-record-note'),
+      noteKind: document.getElementById('defeat-record-note')?.dataset.kind ?? '',
       taken: text('defeat-taken'),
       stored,
       revive: Boolean(document.getElementById('defeat-revive')),
@@ -393,11 +413,13 @@ function checkStoredRecord(shown, name, problems) {
     problems.push(`[${name}] 저장된 최고 기록을 읽을 수 없다: ${shown.stored}`);
     return;
   }
-  const onScreen = shown.best.match(RESULT_LINE);
+  // 기록을 세운 판에서는 "이번 판" 줄이 곧 최고 기록이다(둘째 줄은 넘어선 지난 기록).
+  const line = shown.noteKind === 'new' ? shown.run : shown.best;
+  const onScreen = line.match(RESULT_LINE);
   if (!onScreen) return;
   if (Number(onScreen[1]) !== record.level || Number(onScreen[2]) !== record.kills) {
     problems.push(
-      `[${name}] 화면의 최고 기록과 저장된 값이 다르다 (화면 "${shown.best}" / 저장 ${shown.stored})`,
+      `[${name}] 화면의 기록과 저장된 값이 다르다 (화면 "${line}" / 저장 ${shown.stored})`,
     );
     return;
   }
@@ -474,7 +496,7 @@ async function checkRevive(page, name, problems, levelAtDeath) {
  * 두 번째 죽음은 **이어하기로 이어 간 판의 끝**이다. 그래서 여기서 기록 규칙도 함께 잰다:
  * 이어한 판은 아무리 멀리 가도 최고 기록을 건드리지 않는다(DESIGN 7번의 결정).
  */
-async function checkRestart(page, name, problems, bestBefore) {
+async function checkRestart(page, name, problems, storedBefore) {
   if (!(await waitForDefeat(page))) {
     problems.push(`[${name}] 이어한 뒤 다시 서 있었는데 두 번째로 쓰러지지 않았다`);
     return;
@@ -482,11 +504,15 @@ async function checkRestart(page, name, problems, bestBefore) {
 
   const second = await readResult(page);
   await page.screenshot({ path: `${OUT}/${name}-defeat-revived.png` });
-  if (second.best !== bestBefore) {
+  // 이어한 판은 더 멀리 갔지만(레벨도 처치도 늘었다) 저장된 기록은 그대로여야 한다.
+  if (second.stored !== storedBefore) {
     problems.push(
-      `[${name}] 이어한 판이 최고 기록에 올랐다 ("${bestBefore}" → "${second.best}") — ` +
+      `[${name}] 이어한 판이 최고 기록에 올랐다 (${storedBefore} → ${second.stored}) — ` +
         '광고를 볼수록 기록이 자라면 그 숫자는 실력을 뜻하지 않는다',
     );
+  }
+  if (!RESULT_LINE.test(second.best)) {
+    problems.push(`[${name}] 이어한 판의 결과 화면에 최고 기록이 없다: "${second.best}"`);
   }
   if (!/이어하기 \d+회/.test(second.note)) {
     problems.push(
@@ -668,6 +694,14 @@ try {
     page.on('pageerror', (error) => problems.push(`[${name}] pageerror: ${error.message}`));
 
     await page.goto(preview.url, { waitUntil: 'load' });
+    if (view.pressure) {
+      // 지난 기록을 하나 심고 다시 연다. 이 화면에서만 쓰러질 때까지 가므로 여기서만 심는다.
+      await page.evaluate(
+        ([key, value]) => localStorage.setItem(key, value),
+        [RECORD_KEY, JSON.stringify(SEEDED_RECORD)],
+      );
+      await page.reload({ waitUntil: 'load' });
+    }
     await applySafeArea(page, safe);
     // 자동 조준이 대상을 잡고 화살이 날아가는 장면을 담는다.
     await page.waitForTimeout(1800);

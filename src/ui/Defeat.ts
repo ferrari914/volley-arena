@@ -42,6 +42,8 @@ const CARD_TITLES = new Map(UPGRADE_CARDS.map((card) => [card.id, card.title]));
 export class Defeat {
   private readonly root: HTMLElement;
   private readonly runValue: HTMLElement;
+  private readonly bestRow: HTMLElement;
+  private readonly bestLabel: HTMLElement;
   private readonly bestValue: HTMLElement;
   private readonly note: HTMLElement;
   private readonly taken: HTMLElement;
@@ -60,8 +62,11 @@ export class Defeat {
 
     const summary = document.createElement('div');
     summary.id = 'defeat-summary';
-    this.runValue = this.createRow(summary, '이번 판', 'defeat-run', 'run');
-    this.bestValue = this.createRow(summary, '최고 기록', 'defeat-best', 'best');
+    this.runValue = this.createRow(summary, '이번 판', 'defeat-run', 'run').value;
+    const best = this.createRow(summary, '최고 기록', 'defeat-best', 'best');
+    this.bestRow = best.row;
+    this.bestLabel = best.label;
+    this.bestValue = best.value;
     this.root.appendChild(summary);
 
     // 기록에 얽힌 사정이 있을 때만 한 줄 뜬다(신기록 / 이어한 판 / 저장이 막힌 브라우저).
@@ -125,13 +130,22 @@ export class Defeat {
     this.root.dataset['show'] = '1';
   }
 
-  /** 화면에 값을 채운다. 기록 규칙의 판단은 이미 끝나 있고 여기서는 옮겨 적기만 한다. */
+  /**
+   * 화면에 값을 채운다. 기록 규칙의 판단은 이미 끝나 있고 여기서는 옮겨 적기만 한다.
+   *
+   * 둘째 줄은 경우에 따라 다른 것을 가리킨다. **기록을 갈아치웠으면 이번 판이 곧 최고
+   * 기록이므로, 같은 숫자를 두 번 적는 대신 방금 넘어선 "지난 기록"을 보여 준다** —
+   * 얼마나 나아졌는지가 그 자리에서 읽혀야 기록이 다음 판을 부른다.
+   * 넘어설 기록이 없었던 첫 판에서는 그 줄을 아예 내린다(적을 것이 없다).
+   */
   private paint(run: RunResult, outcome: RecordOutcome, taken: readonly string[]): void {
     this.runValue.textContent = formatRecord(run);
-    this.bestValue.textContent = outcome.best ? formatRecord(outcome.best) : '아직 없다';
-    // 이번 판이 그대로 최고 기록이면 두 줄이 같은 값이 된다. 그때는 아래 줄을 강조해서
-    // "같은 숫자가 두 번 적힌 것"이 아니라 "방금 세운 기록"으로 읽히게 한다.
-    this.bestValue.dataset['fresh'] = outcome.isNew ? '1' : '0';
+    this.runValue.dataset['fresh'] = outcome.isNew ? '1' : '0';
+
+    const previous = outcome.isNew ? outcome.previous : outcome.best;
+    this.bestLabel.textContent = outcome.isNew ? '지난 기록' : '최고 기록';
+    this.bestValue.textContent = previous ? formatRecord(previous) : '아직 없다';
+    this.bestRow.dataset['show'] = outcome.isNew && !previous ? '0' : '1';
 
     const { text, kind } = recordNote(run, outcome);
     this.note.textContent = text;
@@ -143,10 +157,16 @@ export class Defeat {
     this.taken.dataset['show'] = summary ? '1' : '0';
   }
 
-  private createRow(host: HTMLElement, label: string, id: string, kind: string): HTMLElement {
+  private createRow(
+    host: HTMLElement,
+    label: string,
+    id: string,
+    kind: string,
+  ): { row: HTMLElement; label: HTMLElement; value: HTMLElement } {
     const row = document.createElement('div');
     row.className = 'defeat-row';
     row.dataset['kind'] = kind;
+    row.dataset['show'] = '1';
 
     const name = document.createElement('span');
     name.className = 'defeat-row-label';
@@ -159,7 +179,7 @@ export class Defeat {
     row.appendChild(value);
 
     host.appendChild(row);
-    return value;
+    return { row, label: name, value };
   }
 
   private createChoice(spec: {
@@ -203,10 +223,15 @@ function recordNote(run: RunResult, outcome: RecordOutcome): { text: string; kin
     return { text: `이어하기 ${run.revives}회 — 이어한 판은 최고 기록에 남지 않는다`, kind: 'note' };
   }
   if (outcome.isNew && !outcome.saved) {
-    return { text: '새 최고 기록! (이 브라우저에는 저장되지 않는다)', kind: 'warn' };
+    return { text: `${newRecordLabel(outcome)} (이 브라우저에는 저장되지 않는다)`, kind: 'warn' };
   }
-  if (outcome.isNew) return { text: '새 최고 기록!', kind: 'new' };
+  if (outcome.isNew) return { text: newRecordLabel(outcome), kind: 'new' };
   return { text: '', kind: 'none' };
+}
+
+/** 넘어설 기록이 없던 첫 판에 "새 최고 기록"은 어색하다. 그 판은 기록의 시작이다. */
+function newRecordLabel(outcome: RecordOutcome): string {
+  return outcome.previous ? '새 최고 기록!' : '첫 기록을 남겼다';
 }
 
 /** `레벨 5 · 처치 21 · 0:39 생존`. 이번 판과 최고 기록이 같은 모양이어야 눈으로 견줄 수 있다. */
