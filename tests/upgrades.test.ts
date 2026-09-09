@@ -26,6 +26,7 @@ const baseStats = (): PlayerStats => ({
   xpMultiplier: 1,
   arrowCount: 1,
   pierce: 0,
+  bounce: 0,
 });
 
 const card = (id: string, maxStacks = 3): UpgradeCard => ({
@@ -390,5 +391,99 @@ describe('관통', () => {
     // 8m까지 벌어지면 가운데 한 발만 남는다. 3 + 1 = 4.
     expect(volleyHits({ multishot: 2, pierce: 0 })).toBe(3);
     expect(volleyHits({ multishot: 2, pierce: 1 })).toBe(4);
+  });
+});
+
+/**
+ * DESIGN 8번 세 번째 카드 — 튕김.
+ *
+ * 관통과 같은 세 자리를 본다(능력치에 더해지는가 · 태어나는 화살이 들고 나가는가 ·
+ * 실제 판에서 몇 번을 더 맞히는가). 다른 것은 마지막 하나다 — 관통은 **줄 뒤에 선 놈**을
+ * 맞히지만, 튕김은 **옆에 선 놈**을 맞힌다. 그래서 재는 장면도 앞뒤가 아니라 좌우로 세운다.
+ */
+describe('튕김', () => {
+  const bounceCard = UPGRADE_CARDS.find((c) => c.id === 'bounce');
+  if (!bounceCard) throw new Error('튕김 카드가 없다');
+
+  it('한 장에 1번씩 더 튕긴다 (0 → 1 → 2)', () => {
+    let stats = baseStats();
+    expect(stats.bounce).toBe(0);
+    stats = applyUpgrade(stats, bounceCard);
+    expect(stats.bounce).toBe(1);
+    stats = applyUpgrade(stats, bounceCard);
+    expect(stats.bounce).toBe(2);
+  });
+
+  it('플레이어의 화살만 튕김을 들고 나간다', () => {
+    // 적의 화살이 노리는 것은 한 사람뿐이라 꺾어 갈 다음 상대가 없다.
+    const world = new World({ enemies: [] });
+    world.stats = applyUpgrade(world.stats, bounceCard);
+    world.addArrow({ x: 0, y: 0 }, { x: 1, y: 0 }, 'player');
+    world.addArrow({ x: 0, y: 0 }, { x: 1, y: 0 }, 'enemy');
+    expect(world.arrows.find((a) => a.owner === 'player')?.bounce).toBe(1);
+    expect(world.arrows.find((a) => a.owner === 'enemy')?.bounce).toBe(0);
+  });
+
+  /**
+   * 나란히 선 두 놈에게 한 발이 몇 번 꽂히는가. 다중 발사·관통 쪽과 같은 방식으로
+   * 적을 그 자리에 못 박고 죽지 않게 둔다 — 재는 것은 전투 결과가 아니라 꺾이는 횟수다.
+   */
+  function volleyHits(stacks: number): number {
+    const world = new World({
+      enemies: [
+        { x: 6, y: 0 },
+        { x: 6, y: 5 },
+      ],
+    });
+    for (let i = 0; i < stacks; i += 1) world.stats = applyUpgrade(world.stats, bounceCard!);
+    world.step(IDLE, DT);
+    world.player.fireCooldown = 999; // 두 번째 뭉치가 섞이면 무엇을 세는지 알 수 없다.
+    const pinned = world.enemies.map((e) => ({ enemy: e, at: { ...e.pos } }));
+    for (let i = 0; i < 60; i += 1) {
+      for (const { enemy, at } of pinned) {
+        enemy.pos = { x: at.x, y: at.y };
+        enemy.hp = enemy.maxHp;
+      }
+      world.player.hp = world.player.maxHp;
+      world.step(IDLE, DT);
+    }
+    return world.hits;
+  }
+
+  it('한 발이 옆에 선 놈까지 꺾여 간다 (1 → 2 → 3)', () => {
+    expect(volleyHits(0)).toBe(1);
+    expect(volleyHits(1)).toBe(2);
+    expect(volleyHits(2)).toBe(3);
+  });
+});
+
+/**
+ * 카드 색은 화면에서 서로 구별돼야 한다 — 세 장이 나란히 뜨므로, 두 장이 비슷한 색이면
+ * "무엇을 골랐는지"가 기억에 남지 않는다. 카드를 넣을 때마다 눈으로 보고 판단해 왔는데
+ * (세션 10·11·12) 같은 판단이 세 번 반복됐으므로 기계가 재게 한다.
+ */
+describe('카드 색', () => {
+  const rgb = (hex: string): [number, number, number] => {
+    const v = parseInt(hex.replace('#', ''), 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  };
+
+  it('어느 두 장도 비슷한 색이 아니다', () => {
+    // 지금 가장 가까운 짝은 연사(노랑)와 다중 발사(주황)로 54쯤이다.
+    // 새 카드가 이보다 가까워지면 화면에서 두 장이 한 색으로 읽힌다.
+    const limit = 50;
+    const tooClose: string[] = [];
+    for (let i = 0; i < UPGRADE_CARDS.length; i += 1) {
+      for (let j = i + 1; j < UPGRADE_CARDS.length; j += 1) {
+        const a = UPGRADE_CARDS[i]!;
+        const b = UPGRADE_CARDS[j]!;
+        const [ar, ag, ab] = rgb(a.accent);
+        const [br, bg, bb] = rgb(b.accent);
+        const distance = Math.hypot(ar - br, ag - bg, ab - bb);
+        // 어긋난 짝을 이름으로 모아 둔다 — 실패했을 때 어느 두 장인지 바로 보여야 한다.
+        if (distance < limit) tooClose.push(`${a.id}↔${b.id}(${distance.toFixed(0)})`);
+      }
+    }
+    expect(tooClose).toEqual([]);
   });
 });

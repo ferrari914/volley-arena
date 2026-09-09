@@ -1,5 +1,6 @@
 import { clamp, length, type Vec2 } from '../core/math';
 import type { Arrow, Enemy, Player } from '../entities/types';
+import { findNearestEnemy } from './autoAim';
 
 /**
  * 선분 a→b 위에서 점 c까지의 최단 거리의 제곱.
@@ -26,6 +27,8 @@ export interface ArrowStepOptions {
   invulnerable: number;
   /** 적이 쓰러진 뒤 다시 서기까지의 시간(s). */
   respawnDelay: number;
+  /** 튕긴 화살이 다음 상대를 찾는 거리(m). 이 안에 아무도 없으면 튕기지 못하고 사라진다. */
+  bounceRange: number;
   /** 적의 화살이 노리는 사람. */
   player: Player;
   /** 플레이어의 화살이 노리는 것들. */
@@ -56,8 +59,14 @@ export interface ArrowStepResult {
  * 죽은 화살은 배열에서 지우지 않고 alive=false 로 두고, 호출한 쪽이 정리한다
  * (렌더러가 같은 프레임에 메시를 회수해야 하기 때문).
  *
- * 관통(`arrow.pierce`)이 남아 있는 화살은 맞히고도 사라지지 않고 계속 날아간다.
- * 대신 맞힌 적을 `arrow.hitIds`에 적어 두고 다시 맞히지 않는다.
+ * 화살이 적을 맞히고도 살아남는 길은 둘이다(DESIGN 8번). **순서가 있다.**
+ * 1. 관통(`arrow.pierce`)이 남았으면 **가던 방향 그대로** 뚫고 지나간다.
+ * 2. 관통을 다 썼고 튕김(`arrow.bounce`)이 남았으면 **다음 적 쪽으로 꺾어** 다시 난다.
+ *
+ * 관통을 먼저 쓰는 이유: 두 카드를 함께 가진 화살이 첫 적에게서 곧바로 꺾이면
+ * "뚫고 지나간다"는 관통의 그림이 화면에서 사라진다. 뚫을 만큼 뚫고, 더 못 갈 때 꺾는다.
+ *
+ * 두 경우 모두 맞힌 적을 `arrow.hitIds`에 적어 두고 다시 맞히지 않는다.
  */
 export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowStepResult {
   const { dt, arenaRadius, arrowRadius, enemyRadius, playerRadius, player, enemies } = options;
@@ -92,14 +101,18 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
           result.killPoints.push({ x: enemy.pos.x, y: enemy.pos.y });
         }
 
-        if (arrow.pierce <= 0) {
-          arrow.alive = false;
-          break;
+        if (arrow.pierce > 0) {
+          // 뚫고 나간다. 남은 적들도 계속 본다 — 적 둘이 한 프레임 안에 겹쳐 있는
+          // 드문 경우(막 되살아난 자리)에도 화살이 사라지지 않고 제 몫을 해야 한다.
+          arrow.pierce -= 1;
+          (arrow.hitIds ??= []).push(enemy.id);
+          continue;
         }
-        // 뚫고 나간다. 남은 적들도 계속 본다 — 적 둘이 한 프레임 안에 겹쳐 있는
-        // 드문 경우(막 되살아난 자리)에도 화살이 사라지지 않고 제 몫을 해야 한다.
-        arrow.pierce -= 1;
-        (arrow.hitIds ??= []).push(enemy.id);
+
+        // 뚫을 몫은 끝났다. 튕길 몫이 남았으면 방향을 꺾고, 아니면 여기서 끝난다.
+        // 꺾은 뒤에는 이번 프레임의 나머지 적을 보지 않는다 — 갈 길이 이미 달라졌다.
+        if (!bounceArrow(arrow, enemy, enemies, options.bounceRange)) arrow.alive = false;
+        break;
       }
     } else if (
       // 무적인 동안에는 화살이 그냥 지나간다. 여기서 막지 않으면 동시에 날아온
@@ -122,6 +135,39 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
   }
 
   return result;
+}
+
+/**
+ * 화살을 다음 상대 쪽으로 꺾는다(DESIGN 8번 · 튕김). 갈 곳이 없으면 false.
+ *
+ * 세 가지를 함께 되돌린다 — 하나라도 빠지면 카드가 뜻대로 동작하지 않는다.
+ * - **방향**: 속력은 그대로 두고 방향만 바꾼다. 튕겼다고 느려지면 피할 수 있게 된다.
+ * - **수명**: 다시 0부터 센다. 튕김은 새 비행이라, 남은 수명으로 재면 멀리 있는
+ *   다음 상대에게 닿기도 전에 사라져 카드가 아무 일도 하지 않은 것처럼 보인다.
+ * - **기억**: 방금 맞힌 놈만 남기고 지운다. 지나온 모두를 계속 기억하면 둘 사이를
+ *   오갈 수 없고, 아무도 기억하지 않으면 빠져나가는 몇 프레임 동안 같은 놈에게 도로 꽂힌다.
+ */
+function bounceArrow(
+  arrow: Arrow,
+  from: Enemy,
+  enemies: readonly Enemy[],
+  range: number,
+): boolean {
+  if (arrow.bounce <= 0) return false;
+  const next = findNearestEnemy(arrow.pos, enemies, range, from.id);
+  if (!next) return false;
+
+  const dx = next.pos.x - arrow.pos.x;
+  const dy = next.pos.y - arrow.pos.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-6) return false;
+
+  const speed = length(arrow.vel);
+  arrow.vel = { x: (dx / dist) * speed, y: (dy / dist) * speed };
+  arrow.bounce -= 1;
+  arrow.age = 0;
+  arrow.hitIds = [from.id];
+  return true;
 }
 
 /** 무적 시간과 피격 연출을 흘려보낸다. */

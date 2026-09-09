@@ -194,6 +194,7 @@ describe('World', () => {
       xpMultiplier: 1,
       arrowCount: 1,
       pierce: 0,
+      bounce: 0,
     });
   });
 

@@ -3,7 +3,7 @@ import { movePlayer } from '../src/systems/movement';
 import { findNearestEnemy } from '../src/systems/autoAim';
 import { segmentPointDistanceSq, stepArrows } from '../src/systems/combat';
 import { createEnemy, createPlayer, type Arrow, type ArrowOwner } from '../src/entities/types';
-import { ENEMY, PLAYER } from '../src/data/config';
+import { ARROW, ENEMY, PLAYER } from '../src/data/config';
 
 let nextId = 1;
 const enemyAt = (x: number, y: number): ReturnType<typeof createEnemy> =>
@@ -17,6 +17,7 @@ const arrow = (
   owner: ArrowOwner = 'player',
   damage = 1,
   pierce = 0,
+  bounce = 0,
 ): Arrow => ({
   id: 1,
   owner,
@@ -26,6 +27,7 @@ const arrow = (
   age: 0,
   lifetime: 1.6,
   pierce,
+  bounce,
   alive: true,
 });
 
@@ -39,6 +41,7 @@ function options(overrides: Partial<Parameters<typeof stepArrows>[1]> = {}) {
     playerRadius: PLAYER.radius,
     invulnerable: PLAYER.invulnerable,
     respawnDelay: ENEMY.respawnDelay,
+    bounceRange: ARROW.bounceRange,
     player: createPlayer(PLAYER.maxHp),
     enemies: [],
     ...overrides,
@@ -211,5 +214,88 @@ describe('stepArrows — 관통', () => {
     expect(fly(flying, line, 30)).toBe(2);
     expect(front.alive).toBe(false);
     expect(line[1]?.hp).toBe(ENEMY.maxHp - 1);
+  });
+});
+
+/**
+ * DESIGN 8번 세 번째 카드 — 튕김.
+ *
+ * 관통이 깔아 둔 자리(`Arrow.pierce`·`Arrow.hitIds`)를 그대로 쓰되, 하는 일이 다르다.
+ * 관통은 **가던 대로 더 가고**, 튕김은 **방향을 꺾어 더 간다**.
+ * 그래서 여기서 지키는 것은 셋이다: 꺾여서 다음 놈에게 닿는가, 갈 곳이 없으면
+ * 깨끗이 사라지는가, 그리고 **관통과 겹쳤을 때 뚫는 몫을 먼저 쓰는가.**
+ */
+describe('stepArrows — 튕김', () => {
+  /** 화살 하나를 여러 스텝 날리고 그동안의 명중을 합친다. */
+  function fly(flying: Arrow, enemies: ReturnType<typeof enemyAt>[], steps: number): number {
+    let hits = 0;
+    for (let i = 0; i < steps; i += 1) hits += stepArrows([flying], options({ enemies })).hits;
+    return hits;
+  }
+
+  it('맞히면 옆에 선 다음 놈에게 꺾여 간다', () => {
+    const front = enemyAt(3, 0);
+    const side = enemyAt(3, 5);
+    const flying = arrow(0, 0, 34, 0, 'player', 1, 0, 1);
+    expect(fly(flying, [front, side], 60)).toBe(2);
+    expect(front.hp).toBe(ENEMY.maxHp - 1);
+    expect(side.hp).toBe(ENEMY.maxHp - 1);
+    // 튕김을 다 썼으므로 두 번째 놈에게서는 사라진다.
+    expect(flying.alive).toBe(false);
+  });
+
+  it('튕김이 남아 있으면 두 놈 사이를 오간다 (직전에 맞힌 놈만 건너뛴다)', () => {
+    // 지나온 모두를 계속 기억하면 여기서 갈 곳이 없어져 카드가 한 번밖에 일하지 못한다.
+    const first = enemyAt(3, 0);
+    const second = enemyAt(3, 5);
+    const flying = arrow(0, 0, 34, 0, 'player', 1, 0, 2);
+    expect(fly(flying, [first, second], 60)).toBe(3);
+    expect(first.hp).toBe(ENEMY.maxHp - 2);
+    expect(second.hp).toBe(ENEMY.maxHp - 1);
+  });
+
+  it('튕겨 갈 상대가 없으면 그 자리에서 사라진다', () => {
+    const alone = enemyAt(3, 0);
+    const flying = arrow(0, 0, 34, 0, 'player', 1, 0, 2);
+    expect(fly(flying, [alone], 60)).toBe(1);
+    expect(flying.alive).toBe(false);
+    // 갈 곳이 없었으므로 튕김은 한 번도 쓰이지 않았다.
+    expect(flying.bounce).toBe(2);
+  });
+
+  it('사거리 밖의 적에게는 튕기지 않는다 (유도탄이 되지 않는다)', () => {
+    const front = enemyAt(3, 0);
+    const far = enemyAt(3, ARROW.bounceRange + 1);
+    const flying = arrow(0, 0, 34, 0, 'player', 1, 0, 1);
+    expect(fly(flying, [front, far], 60)).toBe(1);
+    expect(far.hp).toBe(ENEMY.maxHp);
+    expect(flying.alive).toBe(false);
+  });
+
+  it('꺾여도 속력은 그대로고 수명은 처음부터 다시 센다', () => {
+    const front = enemyAt(3, 0);
+    const side = enemyAt(3, 5);
+    const flying = arrow(0, 0, 34, 0, 'player', 1, 0, 1);
+    for (let i = 0; i < 60 && flying.bounce > 0; i += 1) {
+      stepArrows([flying], options({ enemies: [front, side] }));
+    }
+    expect(flying.bounce).toBe(0);
+    // 느려지면 피할 수 있게 되고, 수명을 이어 세면 멀리 있는 다음 상대에게 닿지 못한다.
+    expect(Math.hypot(flying.vel.x, flying.vel.y)).toBeCloseTo(34, 6);
+    expect(flying.age).toBe(0);
+  });
+
+  it('관통이 남아 있는 동안에는 더 가까운 적이 옆에 있어도 꺾지 않는다', () => {
+    // 한 줄로 선 셋과, 곁길로 빠진 하나. 뚫는 몫을 먼저 쓰지 않으면 첫 놈에게서
+    // 곧바로 곁길로 꺾여 줄 끝까지 가지 못한다.
+    const line = [enemyAt(3, 0), enemyAt(6, 0), enemyAt(9, 0)];
+    const aside = enemyAt(3, 3);
+    const flying = arrow(0, 0, 34, 0, 'player', 1, 2, 1);
+    fly(flying, [...line, aside], 60);
+    for (const enemy of line) expect(enemy.hp).toBeLessThan(ENEMY.maxHp);
+    expect(aside.hp).toBe(ENEMY.maxHp);
+    // 줄 끝에서 관통이 바닥나고, 거기서 한 번 꺾였다.
+    expect(flying.pierce).toBe(0);
+    expect(flying.bounce).toBe(0);
   });
 });
