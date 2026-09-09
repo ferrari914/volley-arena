@@ -95,14 +95,18 @@ export class UpgradeCards {
     detail.textContent = card.detail;
     button.appendChild(detail);
 
-    const pips = document.createElement('span');
-    pips.className = 'up-card__pips';
-    for (let i = 0; i < card.maxStacks; i += 1) {
-      const pip = document.createElement('i');
-      if (i < stacks) pip.dataset['on'] = '1';
-      pips.appendChild(pip);
+    // 한 번이라도 고른 카드에만 눈금을 붙인다. 처음 보는 카드에 빈 눈금 여덟 칸을 그려 두면
+    // 그냥 장식처럼 읽혀 카드가 시끄러워지기만 한다(스크린샷에서 확인했다).
+    if (stacks > 0) {
+      const pips = document.createElement('span');
+      pips.className = 'up-card__pips';
+      for (let i = 0; i < card.maxStacks; i += 1) {
+        const pip = document.createElement('i');
+        if (i < stacks) pip.dataset['on'] = '1';
+        pips.appendChild(pip);
+      }
+      button.appendChild(pips);
     }
-    button.appendChild(pips);
 
     // 손가락이 카드에 닿은 것을 가상 스틱이 가져가지 않게 한다(스틱은 #app에서 듣는다).
     button.addEventListener('pointerdown', (event) => event.stopPropagation());

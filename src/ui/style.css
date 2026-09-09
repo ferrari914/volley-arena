@@ -308,7 +308,8 @@ body[data-paused='1'] .stick {
   gap: 14px;
   padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 10px)
     calc(var(--safe-l) + 12px);
-  background: radial-gradient(circle at 50% 45%, rgba(11, 16, 32, 0.62), rgba(6, 9, 20, 0.86));
+  /* 뒤의 아레나가 비쳐 보일 만큼만 덮는다. 방금 무슨 일이 있었는지 보이는 편이 낫다. */
+  background: radial-gradient(circle at 50% 45%, rgba(11, 16, 32, 0.5), rgba(6, 9, 20, 0.78));
   pointer-events: auto;
   z-index: 5;
 }
@@ -435,6 +436,36 @@ body[data-input='touch'] .up-card__key {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* 화면이 넓으면 카드도 키운다. 폰 기준 크기 그대로 두면 데스크톱에서 우표만 하게 보인다. */
+@media (min-width: 900px) {
+  #upgrade {
+    gap: 18px;
+  }
+
+  #upgrade-head {
+    font-size: 17px;
+  }
+
+  .up-card {
+    width: 248px;
+    padding: 18px 18px 16px;
+    gap: 9px;
+  }
+
+  .up-card__title {
+    font-size: 23px;
+  }
+
+  .up-card__detail {
+    font-size: 14px;
+  }
+
+  .up-card__mark {
+    width: 24px;
+    height: 24px;
   }
 }
 

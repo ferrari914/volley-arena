@@ -88,6 +88,9 @@ const VIEWS = [
   {
     name: 'desktop',
     safe: SAFE.none,
+    // 데스크톱에서는 키보드로 걸어가 코어를 줍고, 카드를 숫자키로 고른다.
+    // 터치와 키보드는 서로 다른 경로다 — 한쪽만 보면 다른 쪽이 끊겨도 모른다.
+    pickup: 'keyboard',
     viewport: { width: 1280, height: 720 },
     deviceScaleFactor: 1,
   },
@@ -201,6 +204,11 @@ async function collectCores(page, cdp, viewport) {
   await touch(cdp, 'touchEnd', null);
   await page.waitForTimeout(250);
 
+  return readXpBar(page);
+}
+
+/** 경험치바가 얼마나 찼는지 화면에서 읽는다. */
+function readXpBar(page) {
   return page.evaluate(() => {
     const fill = document.getElementById('hud-xp-fill');
     const level = document.getElementById('hud-level');
@@ -210,6 +218,26 @@ async function collectCores(page, cdp, viewport) {
     const ratio = matrix === 'none' ? 0 : Number(matrix.replace(/^matrix\(|\)$/g, '').split(',')[0]);
     return { ratio, level: level.textContent ?? '' };
   });
+}
+
+/**
+ * 데스크톱: 키보드로 아레나를 돌아다니며 코어를 줍는다(터치 쪽 `collectCores`와 같은 길).
+ *
+ * 한 방향으로만 걸으면 벽에 붙어 선 채로 더 줍지 못하고, 잘게 왔다 갔다 하면
+ * 제자리를 맴돌아 아무것도 못 줍는다(둘 다 해 보고 실패했다). 한 번에 아레나를
+ * 가로지를 만큼(2.4초 ≒ 17m)씩 네 방향으로 걷는다. 카드가 뜨면 곧바로 멈춘다.
+ */
+async function collectCoresWithKeyboard(page) {
+  const keys = ['KeyW', 'KeyS', 'KeyD', 'KeyA'];
+  for (let i = 0; i < 8; i += 1) {
+    const key = keys[i % keys.length];
+    await page.keyboard.down(key);
+    await page.waitForTimeout(2400);
+    await page.keyboard.up(key);
+    if (await page.$('#upgrade[data-show="1"]')) break;
+  }
+  await page.waitForTimeout(250);
+  return readXpBar(page);
 }
 
 /** HUD 위쪽 줄의 시간·처치 문구. 게임이 흐르고 있는지를 화면에서 읽는 유일한 값이다. */
@@ -224,7 +252,7 @@ function readClock(page) {
  * 세 가지를 본다: 카드가 3장 떴는가 · 그동안 게임이 멈추는가 · 누르면 다시 흐르는가.
  * "멈춘다"만 보면 영영 멈춰 버린 화면도 통과하므로 "다시 흐른다"를 반드시 함께 본다.
  */
-async function checkUpgradeCards(page, name, problems) {
+async function checkUpgradeCards(page, name, problems, pickCard) {
   const opened = await page.evaluate(() => {
     const panel = document.querySelector('#upgrade[data-show="1"]');
     if (!panel) return { open: false };
@@ -263,12 +291,10 @@ async function checkUpgradeCards(page, name, problems) {
   // 그래서 "사라졌다"는 남은 선택이 0이 될 때까지 눌러 본 뒤에 판단한다.
   let picks = 0;
   while (picks < 6) {
-    const box = await page.locator('.up-card').first().boundingBox();
-    if (!box) {
+    if (!(await pickCard())) {
       problems.push(`[${name}] 카드의 자리를 찾지 못했다`);
       return;
     }
-    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
     await page.waitForTimeout(300);
     picks += 1;
     const open = await page.evaluate(() => {
@@ -335,8 +361,10 @@ try {
     await page.screenshot({ path: `${OUT}/${name}-input.png` });
 
     if (view.pickup) {
-      const cdp = await context.newCDPSession(page);
-      const result = await collectCores(page, cdp, view.viewport);
+      const keyboard = view.pickup === 'keyboard';
+      const result = keyboard
+        ? await collectCoresWithKeyboard(page)
+        : await collectCores(page, await context.newCDPSession(page), view.viewport);
       if (result.error) {
         problems.push(`[${name}] 코어 줍기: ${result.error}`);
       } else if (!(result.ratio > 0) && result.level === 'Lv 1') {
@@ -353,7 +381,17 @@ try {
       for (const problem of await measureSafeArea(page, safe, GUARDED)) {
         problems.push(`[${name}] 안전 영역(카드): ${problem}`);
       }
-      await checkUpgradeCards(page, name, problems);
+      // 카드를 고르는 방법도 화면마다 다르다: 손가락으로 누르거나, 숫자키 1을 누르거나.
+      await checkUpgradeCards(page, name, problems, async () => {
+        if (keyboard) {
+          await page.keyboard.press('Digit1');
+          return true;
+        }
+        const box = await page.locator('.up-card').first().boundingBox();
+        if (!box) return false;
+        await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+        return true;
+      });
     }
 
     // 스틱이 쉬는 자리로 돌아온 지금이 배치를 재기에 맞는 시점이다.
