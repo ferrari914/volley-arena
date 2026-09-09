@@ -10,6 +10,10 @@
  *     흉내 내고, HUD와 가상 스틱이 그 안쪽에 있는지 좌표로 잰다.
  *     주입 방식이라 `env(safe-area-inset-*)` 자체가 동작하는지는 증명하지 못한다 —
  *     증명하는 것은 "여백이 주어졌을 때 화면 배치가 그 여백을 지키는가"다.
+ * (3) 경험치바가 실제로 차는지 — DESIGN 3번.
+ *     시뮬레이션이 경험치를 올리는 것은 단위 테스트가 보지만, 그 값이 화면까지
+ *     오는지는 아무도 보지 않는다. HUD와 World 사이가 끊겨도 테스트는 전부 통과한다.
+ *     그래서 실제 브라우저에서 코어를 주우러 걸어가 보고 바가 찼는지 잰다.
  *
  * 문제가 하나라도 있으면 0이 아닌 코드로 끝난다.
  */
@@ -37,6 +41,8 @@ const VIEWS = [
   {
     name: 'mobile-landscape',
     safe: SAFE.none,
+    // 이 화면에서만 코어를 주우러 가 본다(같은 검사를 다섯 번 할 이유가 없다).
+    pickup: true,
     viewport: { width: 844, height: 390 },
     deviceScaleFactor: 3,
     isMobile: true,
@@ -153,6 +159,42 @@ function measureSafeArea(page, safe, guarded) {
   );
 }
 
+/** 손가락 하나짜리 터치. Playwright의 tap으로는 "끄는" 동작을 만들 수 없어 CDP로 보낸다. */
+function touch(cdp, type, point) {
+  return cdp.send('Input.dispatchTouchEvent', {
+    type,
+    touchPoints: point ? [{ x: point.x, y: point.y }] : [],
+  });
+}
+
+/**
+ * 코어를 주우러 걸어가 보고, 경험치바가 찼는지 본다.
+ *
+ * 화면 위쪽(-z)에 표적이 있고 자동 조준이 그쪽을 먼저 쏘므로 코어는 거기에 쌓인다.
+ * 이동 스틱을 위로 끌면 그 자리를 지나간다 — 맵에 깔린 코어까지 있으므로
+ * 걸어가는 동안 하나도 못 줍는 일은 없다.
+ */
+async function collectCores(page, cdp, viewport) {
+  const origin = { x: 150, y: viewport.height - 90 };
+  await touch(cdp, 'touchStart', origin);
+  await page.waitForTimeout(80);
+  // 스틱 반지름(56px)보다 크게 끌어 최대 속도로 민다.
+  await touch(cdp, 'touchMove', { x: origin.x, y: origin.y - 90 });
+  await page.waitForTimeout(2600);
+  await touch(cdp, 'touchEnd', null);
+  await page.waitForTimeout(250);
+
+  return page.evaluate(() => {
+    const fill = document.getElementById('hud-xp-fill');
+    const level = document.getElementById('hud-level');
+    if (!fill || !level) return { error: '경험치바를 찾지 못했다' };
+    // transform: scaleX(r) 은 matrix(r, 0, 0, 1, 0, 0) 으로 계산된다.
+    const matrix = getComputedStyle(fill).transform;
+    const ratio = matrix === 'none' ? 0 : Number(matrix.replace(/^matrix\(|\)$/g, '').split(',')[0]);
+    return { ratio, level: level.textContent ?? '' };
+  });
+}
+
 const problems = [];
 const preview = await startPreview(PORT);
 
@@ -190,6 +232,22 @@ try {
     }
     await page.waitForTimeout(600);
     await page.screenshot({ path: `${OUT}/${name}-input.png` });
+
+    if (view.pickup) {
+      const cdp = await context.newCDPSession(page);
+      const result = await collectCores(page, cdp, view.viewport);
+      if (result.error) {
+        problems.push(`[${name}] 코어 줍기: ${result.error}`);
+      } else if (!(result.ratio > 0) && result.level === 'Lv 1') {
+        problems.push(
+          `[${name}] 코어를 주우러 걸어갔는데 경험치바가 그대로다 (바 ${result.ratio}, ${result.level}) — ` +
+            'World와 HUD 사이가 끊겼거나 코어를 못 먹는다',
+        );
+      } else {
+        console.log(`  코어 줍기: 경험치바 ${(result.ratio * 100).toFixed(0)}% · ${result.level}`);
+      }
+      await page.screenshot({ path: `${OUT}/${name}-xp.png` });
+    }
 
     // 스틱이 쉬는 자리로 돌아온 지금이 배치를 재기에 맞는 시점이다.
     for (const problem of await measureSafeArea(page, safe, GUARDED)) {

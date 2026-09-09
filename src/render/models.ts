@@ -194,8 +194,10 @@ export function createLockMarker(): THREE.Mesh {
 export function createCore(drop: boolean): THREE.Mesh {
   const color = drop ? PALETTE.coreDrop : PALETTE.core;
   const mesh = new THREE.Mesh(
-    new THREE.OctahedronGeometry(CORE.radius * (drop ? 1.15 : 0.95)),
-    standard(color, { emissive: color, emissiveIntensity: 0.75, roughness: 0.3 }),
+    new THREE.OctahedronGeometry(CORE.radius * (drop ? 1.25 : 1.0)),
+    // emissive를 세게 주면 모든 면이 같은 밝기가 되어 납작한 사각형으로 보인다.
+    // 빛나되 면의 음영이 남을 만큼만 준다 — 그래야 각진 결정처럼 읽힌다.
+    standard(color, { emissive: color, emissiveIntensity: 0.4, roughness: 0.35 }),
   );
   mesh.castShadow = false;
   return mesh;
