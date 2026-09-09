@@ -324,7 +324,10 @@ async function checkEnemyPressure(page, name, problems) {
  */
 async function checkDefeat(page, name, problems) {
   if (!(await waitForDefeat(page))) {
-    problems.push(`[${name}] 체력이 다 닳도록 서 있었는데 쓰러진 화면이 뜨지 않았다`);
+    problems.push(
+      `[${name}] 서 있는데 게임 시간 150초가 지나도록 쓰러지지 않았다 — ` +
+        `"움직이면 피하고 서 있으면 죽는다"(DESIGN 5번)가 흔들렸다`,
+    );
     return;
   }
 
@@ -426,13 +429,34 @@ function checkStoredRecord(shown, name, problems) {
   console.log(`  기록 저장: ${shown.stored}`);
 }
 
-/** 가만히 서서 쓰러질 때까지 기다린다. 카드가 뜨면 골라서 내린다(안 고르면 멈춘 채로 안 죽는다). */
-async function waitForDefeat(page) {
-  const deadline = Date.now() + 60000;
-  while (Date.now() < deadline) {
+/** HUD 시계("m:ss   처치 n")에서 게임 시간을 초로 읽는다. 못 읽으면 null. */
+function clockSeconds(text) {
+  const match = /(\d+):(\d\d)/.exec(text ?? '');
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+
+/**
+ * 가만히 서서 쓰러질 때까지 기다린다. 카드가 뜨면 곧바로 골라서 내린다 —
+ * 안 고르면 게임이 멈춘 채로 영영 죽지 않는다.
+ *
+ * **기다리는 한도를 게임 시간(HUD 시계)으로 잰다.** 실제 시간으로 재면 두 가지가 섞인다:
+ * 카드가 떠 있는 동안은 게임이 멈춰 있고(그게 맞는 동작이다), 강해질수록 처치가 늘어
+ * 카드가 자주 떠서 그 몫이 커진다. 다중 발사 카드(DESIGN 8번)를 넣은 바퀴에 이 검사가
+ * 실제로 여기서 헛디뎠다 — 게임 안에서는 40초 만에 쓰러지는데 실제 시간은 60초를 넘었다.
+ *
+ * 실제 시간은 화면이 아예 멈춰 버린 경우를 잡는 안전선으로만 쓴다(게임 시간이 안 흐르면
+ * 게임 시간 한도에는 영영 닿지 않으므로, 이쪽이 없으면 검사가 끝나지 않는다).
+ */
+async function waitForDefeat(page, gameLimit = 150) {
+  const wallDeadline = Date.now() + 240000;
+  const started = clockSeconds(await readClock(page)) ?? 0;
+  while (Date.now() < wallDeadline) {
     if (await page.$('#defeat[data-show="1"]')) return true;
     if (await page.$('#upgrade[data-show="1"]')) await page.keyboard.press('Digit1');
-    await page.waitForTimeout(500);
+    const now = clockSeconds(await readClock(page));
+    if (now !== null && now - started > gameLimit) return false;
+    // 카드를 빨리 내릴수록 게임 시간과 실제 시간이 가깝게 흐른다(멈춰 있는 몫이 줄어든다).
+    await page.waitForTimeout(150);
   }
   return false;
 }
