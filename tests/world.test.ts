@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { World } from '../src/core/World';
-import { AIM, ARROW, CHARGER, CORE, ENEMY, PLAYER, REVIVE } from '../src/data/config';
+import { AIM, ARENA, ARROW, CHARGER, CORE, ENEMY, PLAYER, REINFORCE, REVIVE } from '../src/data/config';
 import type { FrameInput } from '../src/core/World';
 
 const DT = 1 / 60;
@@ -243,5 +243,102 @@ describe('World', () => {
       expect(Number.isFinite(world.player.pos.x)).toBe(true);
       expect(Math.hypot(world.player.pos.x, world.player.pos.y)).toBeLessThanOrEqual(26);
     }
+  });
+});
+
+/**
+ * DESIGN 품질 기준의 "한 판이 3~5분 안에 끝날 것"을 붙잡아 두는 장치(`REINFORCE`).
+ * 판 길이가 화력의 함수가 되지 않도록, 시간이 갈수록 아레나가 무거워진다.
+ *
+ * 여기서는 "언제 · 몇 마리 · 어디에"만 본다. 그것이 한 판 길이에 실제로 하는 일은
+ * `tests/progression.test.ts`가 씨앗 20개로 잰다.
+ */
+describe('World — 증원', () => {
+  /** 체력을 계속 되돌리며 오래 돌린다. 증원은 분 단위라 그냥 돌리면 먼저 쓰러진다. */
+  function survive(world: World, seconds: number): void {
+    const steps = Math.round(seconds / DT);
+    for (let i = 0; i < steps; i += 1) {
+      world.player.hp = world.player.maxHp;
+      if (world.offer) {
+        world.chooseUpgrade(world.offer.choices[0]!.card.id);
+        continue;
+      }
+      world.step(idle, DT);
+    }
+  }
+
+  const layout = 5;
+
+  it('첫 증원 전까지는 처음 배치 그대로다', () => {
+    const world = new World();
+    survive(world, REINFORCE.firstDelay - 5);
+    expect(world.enemies).toHaveLength(layout);
+  });
+
+  it('시간이 지나면 한 마리씩 들어온다', () => {
+    const world = new World();
+    survive(world, REINFORCE.firstDelay + 1);
+    expect(world.enemies).toHaveLength(layout + 1);
+    survive(world, REINFORCE.interval);
+    expect(world.enemies).toHaveLength(layout + 2);
+  });
+
+  it('무한정 늘지는 않는다 — 상한에서 멈춘다', () => {
+    // 상한에 닿고도 한참 더 돌린다. 여기가 뚫리면 오래 버틴 사람의 화면에서만
+    // 프레임이 무너진다(부하 측정이 잡아 둔 선은 적 20마리다).
+    const world = new World();
+    survive(world, REINFORCE.firstDelay + REINFORCE.interval * (REINFORCE.maxExtra + 3));
+    expect(world.enemies).toHaveLength(layout + REINFORCE.maxExtra);
+  });
+
+  it('증원은 플레이어 코앞이 아니라 벽 가까이에서 걸어 들어온다', () => {
+    // **플레이어를 벽에 붙여 세우고 잰다.** 가운데 서 있으면 벽 쪽 어디에 나타나도
+    // 멀어서, 코앞에 나타나는 고장을 잡지 못한다. 벽에 붙으면 증원이 설 자리의
+    // 5분의 1이 코앞이라, 자리를 고르는 규칙이 없으면 여기서 걸린다.
+    const world = new World();
+    const steps = Math.round((REINFORCE.firstDelay + REINFORCE.interval * 4) / DT);
+    let seen = layout;
+    for (let i = 0; i < steps; i += 1) {
+      world.player.hp = world.player.maxHp;
+      if (world.offer) {
+        world.chooseUpgrade(world.offer.choices[0]!.card.id);
+        continue;
+      }
+      world.step({ move: { x: 1, y: 0 }, aim: null }, DT);
+      while (seen < world.enemies.length) {
+        const joined = world.enemies[seen]!;
+        seen += 1;
+        expect(Math.hypot(joined.home.x, joined.home.y)).toBeCloseTo(REINFORCE.spawnRadius, 6);
+        expect(
+          Math.hypot(joined.home.x - world.player.pos.x, joined.home.y - world.player.pos.y),
+        ).toBeGreaterThanOrEqual(REINFORCE.minPlayerDistance);
+      }
+    }
+    expect(seen).toBeGreaterThan(layout);
+    // 벽 밖에 서지 않는다(몸 반지름까지 넣어서).
+    expect(REINFORCE.spawnRadius).toBeLessThanOrEqual(ARENA.radius - ENEMY.radius);
+  });
+
+  it('돌진형도 섞여 들어온다 — 활잡이만 늘면 물러설 곳만 좁아진다', () => {
+    const world = new World();
+    survive(world, REINFORCE.firstDelay + REINFORCE.interval * REINFORCE.maxExtra);
+    const joined = world.enemies.slice(layout);
+    expect(joined.filter((e) => e.kind === 'charger').length).toBe(
+      Math.floor(REINFORCE.maxExtra / REINFORCE.chargerEvery),
+    );
+    expect(joined.filter((e) => e.kind === 'archer').length).toBeGreaterThan(0);
+  });
+
+  it('이어하기로 살아나도 증원은 되돌아가지 않는다', () => {
+    // 부활은 몸만 되돌린다(DESIGN 6번). 시계가 이어지므로 아레나도 이어져야 한다 —
+    // 광고를 본 사람에게 쉬운 판을 새로 깔아 주면 이어하기가 판을 되감는 버튼이 된다.
+    const world = new World();
+    survive(world, REINFORCE.firstDelay + 1);
+    const before = world.enemies.length;
+    world.player.hp = 0;
+    world.step(idle, DT);
+    world.revive();
+    survive(world, 1);
+    expect(world.enemies.length).toBe(before);
   });
 });

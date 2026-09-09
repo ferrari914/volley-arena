@@ -7,6 +7,7 @@ import {
   ENEMY,
   LEVEL,
   PLAYER,
+  REINFORCE,
   REVIVE,
   UPGRADE,
 } from '../data/config';
@@ -171,6 +172,8 @@ export class World {
   private manualAimHold = 0;
   private nextArrowId = 1;
   private nextEnemyId = 1;
+  /** 지금까지 들어온 증원의 수. 다음 증원 시각과 상한을 여기 하나로 센다. */
+  private joinedEnemies = 0;
   private nextCoreId = 1;
   private ambientTimer = CORE.ambient.spawnInterval;
   private readonly random: () => number;
@@ -218,6 +221,8 @@ export class World {
 
     // 적이 먼저 쏘고 그 화살까지 이번 스텝에 함께 움직인다.
     // 순서를 뒤집으면 적이 쏜 화살이 한 프레임 동안 총구에 붙어 있다.
+    this.updateReinforcements();
+
     const acted = this.updateEnemies(dt);
     for (const shot of acted.shots) this.addArrow(shot.pos, shot.dir, 'enemy');
     // 돌진형이 몸으로 닿힌 몫(DESIGN 9번). 화살과 같은 무적 규칙을 지나므로,
@@ -250,6 +255,48 @@ export class World {
     // 레벨이 올랐으면 카드를 띄운다. 스텝의 마지막이어야 이번 스텝의 이동·명중이
     // 모두 반영된 뒤에 멈춘다(카드가 뜬 프레임에 화살이 허공에서 멈추지 않는다).
     if (!this.offer && this.pendingLevelUps > 0) this.openOffer();
+  }
+
+  /**
+   * 시간이 지나면 적이 하나씩 더 들어온다(`REINFORCE`).
+   *
+   * **이것이 한 판의 길이를 붙잡아 두는 유일한 장치다.** 없으면 아레나가 판 내내
+   * 그대로여서, 화력이 센 사람은 덜 맞고 끝없이 오래 산다(실측 514초).
+   * 늘어난 적은 쓰러져도 들어온 자리에 다시 선다 — 배치에 처음부터 있던 적과 같다.
+   *
+   * 판이 끝난 뒤에는 부르지 않는다(`step()`이 이미 멈춰 있다). 부활로 이어 간 판에서는
+   * 시계를 되돌리지 않으므로 증원도 이어진다 — 이어하기가 판을 쉽게 만들면 안 된다.
+   */
+  private updateReinforcements(): void {
+    if (this.joinedEnemies >= REINFORCE.maxExtra) return;
+    const due = REINFORCE.firstDelay + this.joinedEnemies * REINFORCE.interval;
+    if (this.elapsed < due) return;
+
+    this.joinedEnemies += 1;
+    const kind: EnemyKind =
+      this.joinedEnemies % REINFORCE.chargerEvery === 0 ? 'charger' : 'archer';
+    const at = this.pickReinforceSpawn();
+    this.enemies.push(createEnemy(this.nextEnemyId++, at.x, at.y, maxHpOf(kind), kind));
+  }
+
+  /**
+   * 증원이 걸어 들어올 자리. 벽 가까이에서, 플레이어와 충분히 떨어진 곳을 고른다.
+   * 못 찾으면 마지막에 뽑힌 자리를 그냥 쓴다 — 자리 하나 때문에 프레임을 멈추지 않는다
+   * (맵 코어의 `pickAmbientSpawn`과 같은 규칙이다).
+   */
+  private pickReinforceSpawn(): Vec2 {
+    let candidate: Vec2 = { x: 0, y: 0 };
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const angle = this.random() * Math.PI * 2;
+      candidate = {
+        x: Math.cos(angle) * REINFORCE.spawnRadius,
+        y: Math.sin(angle) * REINFORCE.spawnRadius,
+      };
+      const dx = candidate.x - this.player.pos.x;
+      const dy = candidate.y - this.player.pos.y;
+      if (Math.hypot(dx, dy) >= REINFORCE.minPlayerDistance) break;
+    }
+    return candidate;
   }
 
   /**
