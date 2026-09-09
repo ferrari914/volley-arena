@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { World } from '../src/core/World';
-import { AIM, ARROW, CORE, ENEMY, PLAYER, REVIVE } from '../src/data/config';
+import { AIM, ARROW, CHARGER, CORE, ENEMY, PLAYER, REVIVE } from '../src/data/config';
 import type { FrameInput } from '../src/core/World';
 
 const DT = 1 / 60;
@@ -94,9 +94,33 @@ describe('World', () => {
     expect(world.player.hp).toBe(PLAYER.maxHp - ENEMY.arrow.damage);
   });
 
+  it('돌진형의 몸통도 화살과 같은 무적 규칙을 지난다 (DESIGN 9번)', () => {
+    // 돌진형 하나만 세운다. 5m면 곧바로 웅크리고, 그 뒤에 몸이 날아온다.
+    const world = new World({ enemies: [{ x: 5, y: 0, kind: 'charger' }] });
+    for (let i = 0; i < 60 * 3 && world.player.hp === PLAYER.maxHp; i += 1) world.step(idle, DT);
+
+    // 한 번의 돌진은 딱 한 번 깎는다. 몸이 겹쳐 있는 여러 프레임 동안 계속 깎이면
+    // 예고 한 번에 판이 끝난다.
+    expect(world.player.hp).toBe(PLAYER.maxHp - CHARGER.damage);
+    expect(world.player.invulnerable).toBeGreaterThan(0);
+    expect(world.player.hitFlash).toBe(1);
+
+    const hp = world.player.hp;
+    run(world, PLAYER.invulnerable - DT);
+    expect(world.player.hp).toBe(hp);
+  });
+
   it('체력이 다하면 판이 끝나고 시간이 멈춘다', () => {
     const world = new World();
-    for (let i = 0; i < 60 * 120 && !world.defeated; i += 1) world.step(idle, DT);
+    for (let i = 0; i < 60 * 120 && !world.defeated; i += 1) {
+      // 카드가 뜨면 골라서 내린다. 서 있어도 코어는 쌓이므로(돌진형이 발밑까지 와서
+      // 쓰러진다 — DESIGN 9번) 고르지 않으면 멈춘 채로 영영 죽지 않는다.
+      if (world.offer) {
+        world.chooseUpgrade(world.offer.choices[0]!.card.id);
+        continue;
+      }
+      world.step(idle, DT);
+    }
     expect(world.defeated).toBe(true);
     expect(world.isPaused).toBe(true);
 

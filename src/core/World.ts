@@ -1,4 +1,15 @@
-import { AIM, ARENA, ARROW, CORE, ENEMY, LEVEL, PLAYER, REVIVE, UPGRADE } from '../data/config';
+import {
+  AIM,
+  ARENA,
+  ARROW,
+  CHARGER,
+  CORE,
+  ENEMY,
+  LEVEL,
+  PLAYER,
+  REVIVE,
+  UPGRADE,
+} from '../data/config';
 import { UPGRADE_CARDS } from '../data/upgrades';
 import {
   createEnemy,
@@ -7,6 +18,7 @@ import {
   type Arrow,
   type ArrowOwner,
   type Enemy,
+  type EnemyKind,
   type Player,
   type PlayerStats,
   type Progress,
@@ -15,7 +27,7 @@ import {
 } from '../entities/types';
 import { normalize, rotateToward, type Vec2 } from './math';
 import { findNearestEnemy } from '../systems/autoAim';
-import { stepArrows, stepPlayerRecovery } from '../systems/combat';
+import { damagePlayer, stepArrows, stepPlayerRecovery } from '../systems/combat';
 import { stepEnemies } from '../systems/enemyAi';
 import {
   createDropCores,
@@ -34,21 +46,43 @@ export interface FrameInput {
   aim: Vec2 | null;
 }
 
+/** 적이 설 자리 하나. 종류를 적지 않으면 활잡이다(DESIGN 5번의 그 적). */
+export interface EnemySpawn extends Vec2 {
+  kind?: EnemyKind;
+}
+
 /**
  * 표준 적 배치. 자동 조준이 "가장 가까운" 것을 고르는지 눈으로 보이게 흩어 둔다.
  * 적은 쓰러지면 이 자리로 돌아와 다시 선다 — 플레이어에게서 먼 자리라 숨 돌릴 틈이 생긴다.
+ *
+ * **다섯 중 하나가 돌진형이다**(DESIGN 9번). 활잡이만 있으면 거리를 벌리는 것 하나로
+ * 모든 위협이 풀린다 — 섞어야 "물러날 곳"과 "버틸 곳"이 동시에 사라진다.
+ *
+ * **하나인 이유는 재서 정했다.** 둘로 두면 한 판이 105초로 짧아져 3~5분 선(150~330초,
+ * `tests/progression.test.ts`) 밑으로 떨어졌다. 돌진형은 화살과 달리 예고를 보고도
+ * 발이 묶여 있으면 반드시 맞기 때문에, 한 마리가 활잡이 넷보다 무겁다.
+ * 실측: 하나면 한 판 213초 · 서 있기 33초(활잡이만 있을 때의 42초보다 짧다 —
+ * 한자리에 서 있는 사람에게 가장 아픈 적이다). 이 수를 늘리려면 그 두 검사부터 다시 볼 것.
+ *
+ * 자리는 좌우 중간 거리에 둔다 — 시작하자마자 코앞에서 튀어나오면 무슨 일인지 못 본다.
  */
-const ENEMY_LAYOUT: readonly Vec2[] = [
+const ENEMY_LAYOUT: readonly EnemySpawn[] = [
   { x: 0, y: -13 },
-  { x: 12, y: 6 },
+  { x: 12, y: 6, kind: 'charger' },
   { x: -12, y: 6 },
   { x: 18, y: -9 },
   { x: -18, y: -9 },
 ];
 
+/** 종류별 최대 체력. 적을 세우는 자리가 여기 하나뿐이라 표도 하나면 된다. */
+const ENEMY_MAX_HP: Record<EnemyKind, number> = {
+  archer: ENEMY.maxHp,
+  charger: CHARGER.maxHp,
+};
+
 export interface WorldOptions {
   /** 적이 설 자리. 생략하면 표준 배치. 부하 측정 장면이 여기로 20마리를 세운다. */
-  enemies?: readonly Vec2[];
+  enemies?: readonly EnemySpawn[];
   /**
    * 난수 씨앗. 코어가 생기는 자리에만 쓴다.
    * 씨앗을 고정해 두는 이유: 성능 측정(`npm run perf`)과 테스트가 바퀴마다
@@ -143,9 +177,10 @@ export class World {
   private readonly random: () => number;
 
   constructor(options: WorldOptions = {}) {
-    this.enemies = (options.enemies ?? ENEMY_LAYOUT).map((p) =>
-      createEnemy(this.nextEnemyId++, p.x, p.y, ENEMY.maxHp),
-    );
+    this.enemies = (options.enemies ?? ENEMY_LAYOUT).map((p) => {
+      const kind = p.kind ?? 'archer';
+      return createEnemy(this.nextEnemyId++, p.x, p.y, ENEMY_MAX_HP[kind], kind);
+    });
     this.random = makeRandom(options.seed ?? 20260909);
     for (let i = 0; i < CORE.ambient.initial; i += 1) this.spawnAmbientCore();
   }
@@ -184,7 +219,11 @@ export class World {
 
     // 적이 먼저 쏘고 그 화살까지 이번 스텝에 함께 움직인다.
     // 순서를 뒤집으면 적이 쏜 화살이 한 프레임 동안 총구에 붙어 있다.
-    for (const shot of this.updateEnemies(dt)) this.addArrow(shot.pos, shot.dir, 'enemy');
+    const acted = this.updateEnemies(dt);
+    for (const shot of acted.shots) this.addArrow(shot.pos, shot.dir, 'enemy');
+    // 돌진형이 몸으로 닿힌 몫(DESIGN 9번). 화살과 같은 무적 규칙을 지나므로,
+    // 몸통과 화살이 같은 순간에 닿아도 두 대를 한꺼번에 맞지는 않는다.
+    for (const damage of acted.contacts) damagePlayer(this.player, damage, PLAYER.invulnerable);
 
     const result = stepArrows(this.arrows, {
       dt,
@@ -244,6 +283,9 @@ export class World {
     // 발밑에서 화살이 나가고, 무적이 끝나는 즉시 같은 자리에서 또 쓰러진다.
     for (const enemy of this.enemies) {
       enemy.aimTimer = 0;
+      // 몸을 던지고 있던 돌진형도 멈춘다. 일어서는 그 프레임에 몸통이 닿아 있으면
+      // 무적이 끝나기도 전에 다시 쓰러질 자리가 만들어진다(DESIGN 6번의 그 이유).
+      enemy.dashTimer = 0;
       enemy.fireCooldown = Math.max(enemy.fireCooldown, REVIVE.enemyDelay);
     }
     return true;
@@ -269,6 +311,8 @@ export class World {
       fireCooldown: ENEMY.fireCooldown,
       spread: ENEMY.spread,
       muzzleOffset: ENEMY.arrow.muzzleOffset,
+      contactRadius: ENEMY.radius + PLAYER.radius,
+      charger: CHARGER,
       random: this.random,
     });
   }

@@ -121,9 +121,7 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
       player.hp > 0 &&
       segmentPointDistanceSq(from, to, player.pos) <= playerHitSq
     ) {
-      player.hp = Math.max(0, player.hp - arrow.damage);
-      player.invulnerable = options.invulnerable;
-      player.hitFlash = 1;
+      damagePlayer(player, arrow.damage, options.invulnerable);
       arrow.alive = false;
       result.damageTaken += arrow.damage;
     }
@@ -167,6 +165,22 @@ function bounceArrow(
   arrow.bounce -= 1;
   arrow.age = 0;
   arrow.hitIds = [from.id];
+  return true;
+}
+
+/**
+ * 플레이어가 한 대 맞는다. **아프게 하는 길은 전부 이 함수를 지난다** —
+ * 적의 화살(`stepArrows`)도, 돌진형의 몸통(DESIGN 9번)도.
+ * 무적 시간을 여기 한 곳에 두지 않으면, 새로 생긴 공격이 무적을 무시하는 고장이
+ * 종류마다 따로 생긴다.
+ *
+ * 무적이거나 이미 쓰러졌으면 아무 일도 없이 false.
+ */
+export function damagePlayer(player: Player, amount: number, invulnerable: number): boolean {
+  if (player.invulnerable > 0 || player.hp <= 0) return false;
+  player.hp = Math.max(0, player.hp - amount);
+  player.invulnerable = invulnerable;
+  player.hitFlash = 1;
   return true;
 }
 

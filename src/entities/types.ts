@@ -57,8 +57,19 @@ export interface Arrow {
   alive: boolean;
 }
 
+/**
+ * 적의 종류 (DESIGN 9번).
+ * - `archer` — 거리를 지키며 화살을 쏜다(DESIGN 5번의 그 적).
+ * - `charger` — 거리를 지우며 몸으로 부딪는다. 화살을 쏘지 않는다.
+ *
+ * 종류마다 다른 수치는 `data/config.ts`의 `ENEMY`·`CHARGER`에 있고,
+ * 행동이 갈리는 곳은 `systems/enemyAi.ts` 한 곳뿐이다.
+ */
+export type EnemyKind = 'archer' | 'charger';
+
 /** 적 봇 (DESIGN 5번). 플레이어를 쫓아와 겨누고 쏜다. */
 export interface Enemy {
+  kind: EnemyKind;
   /** 렌더러가 메시를 짝지을 때 쓰는 고유 번호. 옆으로 도는 방향도 여기서 갈린다. */
   id: number;
   /** 쓰러진 뒤 같은 자리에 다시 세우기 위해 기억해 둔다. */
@@ -72,10 +83,21 @@ export interface Enemy {
   respawnTimer: number;
   /** 피격 연출용. 1에서 0으로 줄어든다. */
   hitFlash: number;
-  /** 겨누는 중이면 남은 시간(s). 0보다 크면 멈춰 서 있고, 0이 되는 순간 쏜다. */
+  /**
+   * 겨누는(돌진형은 웅크리는) 중이면 남은 시간(s). 0보다 크면 멈춰 서 있고,
+   * 0이 되는 순간 저지른다 — 활잡이는 화살을 놓고, 돌진형은 몸을 던진다.
+   * 두 종류가 이 타이머 하나를 함께 쓰는 덕분에 "멈춰 선 적은 곧 무언가 한다"는
+   * 예고의 규칙이 종류를 가리지 않고 같다.
+   */
   aimTimer: number;
-  /** 다음으로 겨눌 수 있을 때까지 남은 시간(s). */
+  /** 다음으로 겨눌(웅크릴) 수 있을 때까지 남은 시간(s). */
   fireCooldown: number;
+  /**
+   * 돌진이 남은 시간(s). **돌진형만 쓴다**(활잡이는 늘 0).
+   * 0보다 큰 동안에는 방향을 바꾸지 않고 `facing` 쪽으로만 달린다 —
+   * 그래서 옆으로 비킨 플레이어를 따라 꺾지 못한다. 이것이 피할 여지다.
+   */
+  dashTimer: number;
 }
 
 export function createPlayer(maxHp: number): Player {
@@ -90,9 +112,16 @@ export function createPlayer(maxHp: number): Player {
   };
 }
 
-export function createEnemy(id: number, x: number, y: number, maxHp: number): Enemy {
+export function createEnemy(
+  id: number,
+  x: number,
+  y: number,
+  maxHp: number,
+  kind: EnemyKind = 'archer',
+): Enemy {
   return {
     id,
+    kind,
     home: { x, y },
     pos: { x, y },
     // 처음부터 아레나 가운데(플레이어의 시작 자리)를 본다.
@@ -104,6 +133,7 @@ export function createEnemy(id: number, x: number, y: number, maxHp: number): En
     hitFlash: 0,
     aimTimer: 0,
     fireCooldown: 0,
+    dashTimer: 0,
   };
 }
 

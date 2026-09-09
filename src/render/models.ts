@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ArrowOwner } from '../entities/types';
+import type { ArrowOwner, EnemyKind } from '../entities/types';
 import { ARENA, ARROW, CORE, ENEMY, PLAYER } from '../data/config';
 
 /**
@@ -21,6 +21,13 @@ export const PALETTE = {
   enemy: 0xff6b6b,
   enemyDark: 0xc1354a,
   enemyHit: 0xfff1b8,
+  /**
+   * 돌진형(DESIGN 9번). 활잡이의 붉은색과 멀리서도 갈려야 한다 —
+   * 둘이 섞인 화면에서 "어느 쪽이 달려오는가"를 색 하나로 읽을 수 있어야 하기 때문이다.
+   * 아레나(남색)·플레이어(하늘)·코어(민트)·화살(크림/주황) 어느 것과도 겹치지 않는 자리다.
+   */
+  charger: 0xa678ff,
+  chargerDark: 0x5f37c9,
   accent: 0xffd479,
   core: 0x7bffcf,
   coreDrop: 0xa6ff5e,
@@ -219,41 +226,68 @@ export interface EnemyView {
   aimRing: THREE.Mesh;
 }
 
-/** 적 봇. 앞(-Z)에 활을 든 팔이 있어서 어느 쪽을 겨누는지 보인다. */
-export function createEnemy(): EnemyView {
+/**
+ * 적 봇. 종류에 따라 몸이 다르다(DESIGN 9번).
+ *
+ * **몸 반지름은 종류가 같다**(`ENEMY.radius`) — 화살 판정이 하나의 반지름을 쓰므로,
+ * 화면에서만 굵어 보이면 "맞았는데 안 맞았다"가 된다. 그래서 갈라 두는 것은
+ * 색·높이·모양뿐이다:
+ *   활잡이  — 길쭉한 붉은 기둥에 겨누는 팔. 멀리서 쏜다.
+ *   돌진형  — 낮고 넓은 보라 덩어리에 앞으로 뻗은 뿔. 부딪으러 온다.
+ * 낮고 넓게 만든 이유: 같은 반지름이라도 무게가 실려 보여야 "저건 달려온다"로 읽힌다.
+ */
+export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
   const group = new THREE.Group();
-  group.name = 'enemy';
+  group.name = kind;
   const pivot = new THREE.Group();
   group.add(pivot);
 
-  const bodyMaterial = standard(PALETTE.enemy, { roughness: 0.5 });
+  const charger = kind === 'charger';
+  const height = charger ? ENEMY.height * 0.62 : ENEMY.height;
+  const bodyMaterial = standard(charger ? PALETTE.charger : PALETTE.enemy, {
+    roughness: charger ? 0.35 : 0.5,
+  });
   const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(ENEMY.radius, ENEMY.radius * 0.85, ENEMY.height, 6),
+    charger
+      ? new THREE.BoxGeometry(ENEMY.radius * 1.7, height, ENEMY.radius * 1.5)
+      : new THREE.CylinderGeometry(ENEMY.radius, ENEMY.radius * 0.85, height, 6),
     bodyMaterial,
   );
-  body.position.y = ENEMY.height / 2;
+  body.position.y = height / 2;
   body.castShadow = true;
   pivot.add(body);
 
   const cap = new THREE.Mesh(
     new THREE.SphereGeometry(ENEMY.radius * 0.55, 10, 6),
-    standard(PALETTE.enemyHit, { roughness: 0.35 }),
+    standard(charger ? PALETTE.chargerDark : PALETTE.enemyHit, { roughness: 0.35 }),
   );
-  cap.position.y = ENEMY.height + ENEMY.radius * 0.25;
+  cap.position.y = height + ENEMY.radius * 0.25;
   pivot.add(cap);
 
-  // 겨누는 쪽을 가리키는 짧은 팔. 플레이어의 코와 같은 역할이다.
-  const arm = new THREE.Mesh(
-    new THREE.BoxGeometry(0.18, 0.18, 0.7),
-    standard(PALETTE.enemyDark, { roughness: 0.4 }),
-  );
-  arm.position.set(0, ENEMY.height * 0.62, -ENEMY.radius - 0.28);
-  pivot.add(arm);
+  if (charger) {
+    // 앞으로 뻗은 뿔. 돌진 방향이 몸의 정면이라는 것을 화면에 적어 준다
+    // (활잡이의 팔·플레이어의 코와 같은 역할이다).
+    const horn = new THREE.Mesh(
+      new THREE.ConeGeometry(ENEMY.radius * 0.42, 0.9, 5),
+      standard(PALETTE.chargerDark, { roughness: 0.3 }),
+    );
+    horn.rotation.x = -Math.PI / 2;
+    horn.position.set(0, height * 0.55, -ENEMY.radius - 0.35);
+    pivot.add(horn);
+  } else {
+    // 겨누는 쪽을 가리키는 짧은 팔. 플레이어의 코와 같은 역할이다.
+    const arm = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.18, 0.7),
+      standard(PALETTE.enemyDark, { roughness: 0.4 }),
+    );
+    arm.position.set(0, height * 0.62, -ENEMY.radius - 0.28);
+    pivot.add(arm);
+  }
 
   const aimRing = new THREE.Mesh(
     new THREE.RingGeometry(ENEMY.radius * 1.1, ENEMY.radius * 1.35, 24),
     new THREE.MeshBasicMaterial({
-      color: PALETTE.enemyArrow,
+      color: charger ? PALETTE.charger : PALETTE.enemyArrow,
       transparent: true,
       opacity: 0.9,
       side: THREE.DoubleSide,
@@ -265,7 +299,7 @@ export function createEnemy(): EnemyView {
   group.add(aimRing);
 
   const { bar, fill } = createHealthBar();
-  bar.position.y = ENEMY.height + ENEMY.radius * 0.9;
+  bar.position.y = height + ENEMY.radius * 0.9;
   group.add(bar);
 
   return { group, pivot, bodyMaterial, hpFill: fill, hpBar: bar, aimRing };

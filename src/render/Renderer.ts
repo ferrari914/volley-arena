@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '../core/World';
-import { ARENA, ARROW, CORE, ENEMY } from '../data/config';
+import { ARENA, ARROW, CHARGER, CORE, ENEMY } from '../data/config';
 import type { Vec2 } from '../core/math';
 import type { ArrowOwner, CoreOrigin } from '../entities/types';
 import {
@@ -127,7 +127,9 @@ export class Renderer {
    */
   private syncEnemies(world: World): void {
     while (this.enemyViews.length < world.enemies.length) {
-      const view = createEnemy();
+      // 모델은 종류마다 다르다(DESIGN 9번). 자리로 짝지으므로 그 자리의 적을 보고 만든다 —
+      // 적의 종류는 판이 끝날 때까지 바뀌지 않는다.
+      const view = createEnemy(world.enemies[this.enemyViews.length]?.kind);
       this.enemyViews.push(view);
       this.scene.add(view.group);
     }
@@ -151,15 +153,23 @@ export class Renderer {
       view.hpBar.visible = ratio < 1;
       view.hpFill.scale.x = ratio;
 
-      // 겨누는 동안: 몸이 달아오르고 발밑 고리가 좁혀진다.
+      // 겨누는(돌진형은 웅크리는) 동안: 몸이 달아오르고 발밑 고리가 좁혀진다.
       // 여기가 이 게임에서 유일한 "지금 나를 노리고 있다"는 예고다.
+      // 두 종류가 같은 예고를 쓰므로 처음 하는 사람이 한 번만 배우면 된다.
+      const charger = enemy.kind === 'charger';
       const aiming = enemy.aimTimer > 0;
+      const dashing = enemy.dashTimer > 0;
       view.aimRing.visible = aiming;
       if (aiming) {
-        const charge = 1 - enemy.aimTimer / ENEMY.aimTime;
+        const charge = 1 - enemy.aimTimer / (charger ? CHARGER.windup : ENEMY.aimTime);
         view.aimRing.scale.setScalar(2.1 - charge * 1.1);
-        view.bodyMaterial.emissive.setHex(PALETTE.enemyArrow);
+        view.bodyMaterial.emissive.setHex(charger ? PALETTE.charger : PALETTE.enemyArrow);
         view.bodyMaterial.emissiveIntensity = 0.15 + charge * 0.5;
+      } else if (dashing) {
+        // 몸을 던지는 동안에는 계속 밝다. 여기서 꺼 두면 가장 위험한 순간에
+        // 화면에서 가장 조용한 적이 된다.
+        view.bodyMaterial.emissive.setHex(PALETTE.charger);
+        view.bodyMaterial.emissiveIntensity = 0.85;
       } else if (enemy.hitFlash > 0) {
         // 세게 주면 몸 전체가 하얗게 떠서 다른 종류의 적처럼 보인다(스크린샷에서 잡았다).
         // 크기가 함께 튀므로 밝기는 거들기만 하면 된다.

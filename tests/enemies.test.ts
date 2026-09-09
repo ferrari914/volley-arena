@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA, ENEMY } from '../src/data/config';
+import { ARENA, CHARGER, ENEMY, PLAYER } from '../src/data/config';
 import { createEnemy, type Enemy } from '../src/entities/types';
 import { stepEnemies, type EnemyStepOptions } from '../src/systems/enemyAi';
 
@@ -7,6 +7,9 @@ const DT = 1 / 60;
 
 let nextId = 1;
 const enemyAt = (x: number, y: number): Enemy => createEnemy(nextId++, x, y, ENEMY.maxHp);
+/** 돌진형 한 마리(DESIGN 9번). 활잡이와 같은 자리에 세워 두고 행동만 비교한다. */
+const chargerAt = (x: number, y: number): Enemy =>
+  createEnemy(nextId++, x, y, CHARGER.maxHp, 'charger');
 
 function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
   return {
@@ -27,6 +30,8 @@ function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
     fireCooldown: ENEMY.fireCooldown,
     spread: ENEMY.spread,
     muzzleOffset: ENEMY.arrow.muzzleOffset,
+    contactRadius: ENEMY.radius + PLAYER.radius,
+    charger: CHARGER,
     // 흔들림 없이 곧장 겨눈다. 판정을 볼 때 난수가 끼면 무엇을 보고 있는지 흐려진다.
     random: () => 0.5,
     ...overrides,
@@ -37,9 +42,18 @@ function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
 function run(enemies: Enemy[], seconds: number, overrides: Partial<EnemyStepOptions> = {}) {
   const shots = [];
   for (let i = 0; i < Math.round(seconds / DT); i += 1) {
-    shots.push(...stepEnemies(enemies, options(overrides)));
+    shots.push(...stepEnemies(enemies, options(overrides)).shots);
   }
   return shots;
+}
+
+/** seconds초 동안 돌리고 돌진형이 몸으로 닿힌 피해를 모아 돌려준다(DESIGN 9번). */
+function runContacts(enemies: Enemy[], seconds: number, overrides: Partial<EnemyStepOptions> = {}) {
+  const contacts: number[] = [];
+  for (let i = 0; i < Math.round(seconds / DT); i += 1) {
+    contacts.push(...stepEnemies(enemies, options(overrides)).contacts);
+  }
+  return contacts;
 }
 
 /**
@@ -57,7 +71,7 @@ const MOVE_ONLY: Partial<EnemyStepOptions> = { fireRange: 0 };
 function runUntilShot(enemy: Enemy, maxSeconds: number) {
   for (let i = 0; i < Math.round(maxSeconds / DT); i += 1) {
     const before = { ...enemy.pos };
-    const shots = stepEnemies([enemy], options());
+    const { shots } = stepEnemies([enemy], options());
     if (shots.length > 0) return { shots, before };
   }
   return { shots: [], before: { ...enemy.pos } };
@@ -166,6 +180,147 @@ describe('적 봇 — 겨누고 쏘기', () => {
       ENEMY.arrow.muzzleOffset,
       6,
     );
+  });
+});
+
+/**
+ * DESIGN 9번 첫 종류 — 돌진형.
+ *
+ * 활잡이와 같은 문법(예고 → 저지름 → 물러남)을 쓰되 저지르는 것이 다르다.
+ * 여기서 지키는 것은 셋이다:
+ * 1. **화살을 쏘지 않는다** — 다른 종류가 아니라 같은 적의 다른 색이 되면 안 된다.
+ * 2. **예고가 있다** — 웅크리는 동안 멈춰 서고, 그 뒤에야 몸이 날아온다.
+ * 3. **직선으로만 간다** — 옆으로 비킨 사람을 따라 꺾지 않는다. 이것이 피할 여지다.
+ */
+describe('돌진형', () => {
+  /** 웅크림이 끝나고 막 튀어나가는 순간까지 돌린다. */
+  function runUntilDash(enemy: Enemy, overrides: Partial<EnemyStepOptions> = {}): number {
+    for (let i = 0; i < Math.round(20 / DT); i += 1) {
+      stepEnemies([enemy], options(overrides));
+      if (enemy.dashTimer > 0) return i * DT;
+    }
+    return -1;
+  }
+
+  it('화살을 쏘지 않는다 (몸이 무기다)', () => {
+    const enemy = chargerAt(6, 0);
+    expect(run([enemy], 10)).toHaveLength(0);
+  });
+
+  it('물러나지도 옆으로 돌지도 않고 곧장 다가온다', () => {
+    // 활잡이라면 물러날 거리(keepDistance 안쪽)에 세워 둔다.
+    // 숨 고르는 중으로 두어 웅크리지 않게 한다 — 웅크리면 멈춰 서므로
+    // 무엇을 보고 있는지 흐려진다(돌진을 막 끝낸 적이 실제로 이 상태다).
+    const enemy = chargerAt(ENEMY.keepDistance - 2, 0);
+    enemy.fireCooldown = 1;
+    const before = enemy.pos.x;
+    run([enemy], 0.5);
+    expect(enemy.pos.x).toBeLessThan(before - 0.5);
+    expect(Math.abs(enemy.pos.y)).toBeLessThan(0.01);
+  });
+
+  it('사거리 안에 들면 멈춰 웅크린다 (예고 없이 날아오지 않는다)', () => {
+    const enemy = chargerAt(CHARGER.triggerRange - 0.5, 0);
+    stepEnemies([enemy], options());
+    expect(enemy.aimTimer).toBeGreaterThan(0);
+    expect(enemy.dashTimer).toBe(0);
+
+    // 웅크리는 동안에는 발이 멎는다.
+    const frozen = { ...enemy.pos };
+    for (let i = 0; i < Math.round((CHARGER.windup - 2 * DT) / DT); i += 1) {
+      stepEnemies([enemy], options());
+    }
+    expect(enemy.pos.x).toBeCloseTo(frozen.x, 9);
+    expect(enemy.dashTimer).toBe(0);
+  });
+
+  it('웅크림이 끝나면 추격보다 훨씬 빠르게 튀어나간다', () => {
+    const enemy = chargerAt(CHARGER.triggerRange - 0.5, 0);
+    expect(runUntilDash(enemy)).toBeGreaterThanOrEqual(0);
+
+    const before = { ...enemy.pos };
+    stepEnemies([enemy], options());
+    const moved = Math.hypot(enemy.pos.x - before.x, enemy.pos.y - before.y);
+    expect(moved).toBeCloseTo(CHARGER.dashSpeed * DT, 5);
+    expect(moved).toBeGreaterThan(CHARGER.speed * DT * 2);
+  });
+
+  it('돌진 중에는 방향을 바꾸지 않는다 (옆으로 비키면 빗나간다)', () => {
+    const enemy = chargerAt(CHARGER.triggerRange - 0.5, 0);
+    runUntilDash(enemy);
+    const facing = enemy.facing;
+    // 돌진이 시작된 뒤 플레이어가 옆으로 크게 움직여도 따라 꺾지 않는다.
+    const dodging = { playerPos: { x: 0, y: 12 } };
+    const contacts = runContacts([enemy], CHARGER.dashTime, dodging);
+    expect(enemy.facing).toBeCloseTo(facing, 9);
+    expect(contacts).toHaveLength(0);
+    // 지나간 자리는 원래 겨누던 직선 위다(y는 그대로 0에 가깝다).
+    expect(Math.abs(enemy.pos.y)).toBeLessThan(0.01);
+  });
+
+  it('굳어 있으면 몸에 닿아 아프다', () => {
+    const enemy = chargerAt(CHARGER.triggerRange - 0.5, 0);
+    const contacts = runContacts([enemy], CHARGER.windup + CHARGER.dashTime + 0.2);
+    expect(contacts).toEqual([CHARGER.damage]);
+  });
+
+  it('한 번의 돌진은 한 번만 아프다 (몸을 뚫고 지나가며 두 번 때리지 않는다)', () => {
+    const enemy = chargerAt(CHARGER.triggerRange - 0.5, 0);
+    // 두 번째 돌진이 시작되기 전까지 돌린다.
+    const contacts = runContacts([enemy], CHARGER.windup + CHARGER.dashTime + CHARGER.dashCooldown);
+    expect(contacts).toHaveLength(1);
+    expect(enemy.dashTimer).toBe(0);
+  });
+
+  it('돌진이 끝나면 숨을 고른 뒤에야 다시 웅크린다', () => {
+    const enemy = chargerAt(CHARGER.triggerRange - 0.5, 0);
+    runUntilDash(enemy);
+    // 빗나가게 두고(플레이어를 멀리 옮긴다) 돌진이 끝나기를 기다린다.
+    const aside = { playerPos: { x: 0, y: 12 } };
+    runContacts([enemy], CHARGER.dashTime + DT, aside);
+    expect(enemy.dashTimer).toBe(0);
+    expect(enemy.fireCooldown).toBeGreaterThan(0);
+
+    // 쉬는 동안에는 사거리 안이어도 웅크리지 않는다.
+    for (let i = 0; i < Math.round((CHARGER.dashCooldown - 0.1) / DT); i += 1) {
+      stepEnemies([enemy], options());
+    }
+    expect(enemy.aimTimer).toBe(0);
+    expect(runUntilDash(enemy)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('쓰러진 플레이어에게는 돌진하지 않는다', () => {
+    const enemy = chargerAt(CHARGER.triggerRange - 0.5, 0);
+    for (let i = 0; i < Math.round(6 / DT); i += 1) {
+      stepEnemies([enemy], options({ playerAlive: false }));
+    }
+    expect(enemy.aimTimer).toBe(0);
+    expect(enemy.dashTimer).toBe(0);
+  });
+
+  it('돌진 중에 쓰러지면 그 돌진도 끝난다 (되살아나 예고 없이 튀어나가지 않는다)', () => {
+    const enemy = chargerAt(CHARGER.triggerRange - 0.5, 0);
+    runUntilDash(enemy);
+    expect(enemy.dashTimer).toBeGreaterThan(0);
+
+    enemy.alive = false;
+    enemy.hp = 0;
+    enemy.respawnTimer = ENEMY.respawnDelay;
+    for (let i = 0; i < Math.round((ENEMY.respawnDelay + 0.1) / DT) && !enemy.alive; i += 1) {
+      stepEnemies([enemy], options());
+    }
+    expect(enemy.alive).toBe(true);
+    expect(enemy.dashTimer).toBe(0);
+    expect(enemy.hp).toBe(CHARGER.maxHp);
+  });
+
+  it('벽을 넘지 않는다 (돌진 중에도)', () => {
+    // 벽을 등지고 밖을 향해 돌진하게 만든다 — 가장 나쁜 경우다.
+    const enemy = chargerAt(ARENA.radius - 2, 0);
+    for (let i = 0; i < Math.round(20 / DT); i += 1) {
+      stepEnemies([enemy], options({ playerPos: { x: 200, y: 0 } }));
+      expect(Math.hypot(enemy.pos.x, enemy.pos.y)).toBeLessThanOrEqual(ARENA.radius - ENEMY.radius);
+    }
   });
 });
 
