@@ -3,6 +3,7 @@ import { World } from '../src/core/World';
 import type { FrameInput } from '../src/core/World';
 import { ARENA, CORE, LEVEL, PLAYER } from '../src/data/config';
 import { createXpCore, type XpCore } from '../src/entities/types';
+import { DT, IDLE, median, play, playMatch, walkToNearestCore } from './support/match';
 import {
   createDropCores,
   createProgress,
@@ -13,7 +14,6 @@ import {
   xpRatio,
 } from '../src/systems/experience';
 
-const DT = 1 / 60;
 const curve = LEVEL;
 
 const coreAt = (x: number, y: number, value = 1, ttl = 10): XpCore =>
@@ -34,24 +34,6 @@ function makeRandom(seed: number): () => number {
     state = (state * 1664525 + 1013904223) >>> 0;
     return state / 4294967296;
   };
-}
-
-const IDLE: FrameInput = { move: { x: 0, y: 0 }, aim: null };
-
-/**
- * 한 판을 돌린다. 카드가 떠 있으면 첫 장을 고른다 —
- * 실제로 하는 사람도 골라야 게임이 다시 흐른다. 고르지 않으면 World는 멈춘 채로 남고,
- * 그 뒤의 측정은 "아무 일도 일어나지 않은 판"을 재게 된다.
- *
- * 쓰러지면 거기서 판이 끝난다(5번). 더 돌려도 step()이 빈 함수라 시간만 버린다.
- */
-function play(world: World, steps: number, input: (w: World) => FrameInput): void {
-  for (let i = 0; i < steps; i += 1) {
-    if (world.defeated) return;
-    const first = world.offer?.choices[0];
-    if (first) world.chooseUpgrade(first.card.id);
-    world.step(input(world), DT);
-  }
 }
 
 /**
@@ -181,28 +163,6 @@ describe('코어가 생기는 자리', () => {
   });
 });
 
-/** 가장 가까운 코어로 걸어가는 사람. 실제로 하는 사람이 하는 행동이다. */
-function walkToNearestCore(world: World): FrameInput {
-  let best: XpCore | null = null;
-  let bestDist = Infinity;
-  for (const core of world.cores) {
-    if (!core.alive) continue;
-    const d = Math.hypot(core.pos.x - world.player.pos.x, core.pos.y - world.player.pos.y);
-    if (d < bestDist) {
-      bestDist = d;
-      best = core;
-    }
-  }
-  if (!best || bestDist < 1e-6) return { move: { x: 0, y: 0 }, aim: null };
-  return {
-    move: {
-      x: (best.pos.x - world.player.pos.x) / bestDist,
-      y: (best.pos.y - world.player.pos.y) / bestDist,
-    },
-    aim: null,
-  };
-}
-
 describe('World — 경험치 코어', () => {
   it('시작하자마자 맵에 코어가 깔려 있다', () => {
     const world = new World();
@@ -291,7 +251,7 @@ describe('밸런스 — 전투가 채집보다 빠르다', () => {
     expect(dropRate).toBeGreaterThan(ambientCeiling * 3);
   });
 
-  it('한 판이 3~5분 안에 끝나고 그 안에 레벨이 충분히 오른다', () => {
+  it('한 판이 끝나고 오른 레벨이 남김없이 카드가 된다', () => {
     const world = new World();
     // 10분까지 돌려 본다. 그 전에 쓰러지면 거기서 판이 끝난 것이다.
     play(world, 60 * 600, walkToNearestCore);
@@ -302,14 +262,74 @@ describe('밸런스 — 전투가 채집보다 빠르다', () => {
     );
 
     expect(world.defeated).toBe(true);
-    // DESIGN 품질 기준의 "한 판 3~5분". 여기 오는 사람은 일부러 피하지 않고
-    // 코어만 보고 걷는 사람이라 실제 플레이보다 짧게 끝난다 — 그래서 아래쪽을 조금 넉넉히 잡았다.
-    // 이 선을 벗어나면 밸런스를 되돌릴 것이지, 선을 옮기지 말 것.
-    expect(world.elapsed).toBeGreaterThan(150);
-    expect(world.elapsed).toBeLessThan(330);
     // 레벨업 한 번이 카드 한 장이다(4번). 한 판에 10장 밑이면 심심하다.
     expect(world.progress.level).toBeGreaterThanOrEqual(10);
     expect(world.takenUpgrades.length).toBe(world.progress.level - 1);
+    // **"한 판 3~5분"은 여기서 재지 않는다.** 씨앗 하나는 그 선을 증명하지 못한다 —
+    // 아래 '한 판 길이' 묶음이 씨앗 20개로 잰다.
+  });
+});
+
+/**
+ * DESIGN 품질 기준의 "한 판이 3~5분 안에 끝날 것".
+ *
+ * **씨앗 하나로는 이 선을 잴 수 없다.** World의 난수 하나가 코어 자리·드롭·뽑히는 카드를
+ * 모두 굴려서, 씨앗이 바뀌면 고른 카드의 순서가 통째로 갈린다. 세션 14가 회복 카드를
+ * 넣었을 때 기본 씨앗의 한 판이 253초 → 176초로 "줄어든" 것이 그 증거다 —
+ * 회복이 판을 줄일 리 없고, 실제로는 씨앗 20개의 중앙값이 215초 → 228초로 늘었다.
+ * 그때까지 검사는 기본 씨앗 하나만 보고 있었고, 그래서 이 선은
+ * "늘 지켜지는 선"이 아니라 "그 씨앗에서 지켜지는 선"이었다.
+ *
+ * 그래서 판을 스무 개 돌려 **중앙값**에 선을 건다. 꼬리는 따로 센다(아래 두 번째 검사).
+ * 스무 판을 다 돌려도 0.4초라 `npm test`에 두고 매 바퀴 돌린다 —
+ * 세션 14는 "20배 오래 도는 검사"로 보고 `npm run perf` 쪽을 제안했지만, 재 보니 아니었다.
+ *
+ * **이 선을 벗어나면 밸런스를 되돌릴 것이지, 선을 옮기지 말 것.**
+ */
+describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
+  /** DESIGN "3~5분". 코어만 보고 걷는 사람이라 실제 플레이보다 짧게 끝나므로 아래쪽을 넉넉히 잡았다. */
+  const SHORTEST = 150;
+  const LONGEST = 330;
+  /** 씨앗은 고정한다. 바퀴마다 다른 판을 재면 수치를 비교할 수 없다. */
+  const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
+
+  const results = SEEDS.map((seed) => playMatch(seed));
+  const lengths = results.map((r) => r.elapsed);
+  const inRange = lengths.filter((s) => s >= SHORTEST && s <= LONGEST).length;
+
+  it('스무 판의 중앙값이 3~5분 안에 든다', () => {
+    const sorted = [...lengths].sort((a, b) => a - b);
+    console.log(
+      [
+        '',
+        `  씨앗 ${SEEDS[0]}..${SEEDS[SEEDS.length - 1]} · ${SEEDS.length}판`,
+        `  한 판(초): ${sorted.map((s) => s.toFixed(0)).join(', ')}`,
+        `  중앙값 ${median(lengths).toFixed(0)}초 · 가장 짧은 판 ${(sorted[0] ?? 0).toFixed(0)}초 · ` +
+          `가장 긴 판 ${(sorted[sorted.length - 1] ?? 0).toFixed(0)}초`,
+        `  ${SHORTEST}~${LONGEST}초 안에 든 판: ${inRange}/${SEEDS.length}`,
+        `  레벨 중앙값 Lv${median(results.map((r) => r.level)).toFixed(0)} · ` +
+          `처치 중앙값 ${median(results.map((r) => r.kills)).toFixed(0)}`,
+        '',
+      ].join('\n'),
+    );
+
+    expect(median(lengths)).toBeGreaterThan(SHORTEST);
+    expect(median(lengths)).toBeLessThan(LONGEST);
+  });
+
+  it('꼬리가 중앙값을 가리지 않는다 — 스무 판 중 열넷 이상이 그 안에 든다', () => {
+    // 중앙값만 보면 "100초 아니면 500초"인 판도 통과한다. 중앙값이 대표하는 값인지를
+    // 여기서 따로 센다. 실측 16/20(세션 15) — 선은 둘의 여유를 두고 14에 건다.
+    expect(inRange).toBeGreaterThanOrEqual(14);
+  });
+
+  it('어떤 씨앗에서도 판이 10분 안에 끝나고 레벨이 충분히 오른다', () => {
+    for (const r of results) {
+      // 끝나지 않는 판은 길이를 재는 것 자체가 뜻이 없다(회복 카드가 실제로 낼 뻔한 고장이다).
+      expect(r.defeated, `씨앗 ${r.seed}의 판이 끝나지 않았다`).toBe(true);
+      expect(r.level, `씨앗 ${r.seed}의 레벨`).toBeGreaterThanOrEqual(10);
+      expect(r.cards.length, `씨앗 ${r.seed}의 카드 수`).toBe(r.level - 1);
+    }
   });
 });
 
