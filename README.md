@@ -40,6 +40,25 @@ npm run qa           # 빌드 → 실제 브라우저로 실행 → shots/ 에 �
 
 스크린샷은 `shots/` 에 남고 git 에는 올리지 않는다.
 
+게임 규칙(`src/core` · `src/systems`)을 건드렸으면 하나 더 돌린다.
+
+```bash
+npm run perf         # 부하 장면에서 World.step() 한 번의 처리 시간을 잰다
+```
+
+DESIGN 품질 기준의 부하 상황(**적 20마리 · 투사체 60개**)을 세우고
+시뮬레이션 한 스텝이 몇 ms 걸리는지 2000번 재서 중앙값·p95·최악값을 찍는다.
+합격선은 두 개다 — 60fps 프레임 예산의 1/8(2.08ms)과, 실측값의 20배쯤에
+둔 회귀 감시선(0.30ms). 앞의 것은 "예산 안에 드는가", 뒤의 것은
+"구조가 나빠졌는가"를 본다.
+
+> **이 수치는 fps가 아니다.** 렌더(GPU)는 포함하지 않고, 개발용 맥에서 잰 값이다.
+> 중급 스마트폰의 실제 프레임은 실기기에서만 확인된다 (DESIGN 12번 배포 때).
+
+`npm test` 와 분리한 이유는 시간을 재는 검사가 기계 사정에 흔들리기 때문이다.
+대신 이 측정이 **빈 장면을 재고 통과하는 일**이 없도록,
+부하가 실제로 서는지는 `tests/loadScene.test.ts` 가 `npm test` 에서 매번 확인한다.
+
 ---
 
 ## 실행 환경 확인
@@ -69,6 +88,8 @@ which claude && claude --version && node --version
 | `src/` | 게임 소스 (core · entities · systems · render · input · ui · data) |
 | `tests/` | vitest 테스트 |
 | `tools/shot.mjs` | 화면 QA. 실제 브라우저로 띄워 스크린샷 + 콘솔 에러·안전 영역 검사 |
+| `tests/support/loadScene.ts` | 부하 장면(적 20·투사체 60). 성능 측정이 쓰는 장면 |
+| `tests/perf/` | `npm run perf` 가 도는 측정. `npm test` 에는 포함되지 않는다 |
 | `shots/` | QA 스크린샷 (git 제외) |
 
 ---
