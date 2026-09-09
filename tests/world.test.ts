@@ -192,6 +192,7 @@ describe('World', () => {
       moveSpeed: PLAYER.speed,
       magnetRadius: CORE.magnetRadius,
       xpMultiplier: 1,
+      arrowCount: 1,
     });
   });
 

@@ -141,6 +141,11 @@ export interface PlayerStats {
   magnetRadius: number;
   /** 코어에서 얻는 경험치 배율. */
   xpMultiplier: number;
+  /**
+   * 한 번 쏠 때 나가는 화살 수(DESIGN 8번 · 다중 발사).
+   * **개수라서 이것만은 곱셈이 아니라 덧셈으로 는다** — 1.5발은 없다.
+   */
+  arrowCount: number;
 }
 
 /**
@@ -158,7 +163,13 @@ export interface UpgradeCard {
   /** 카드 색. 화면에서 서로 구별되게 한다. */
   accent: string;
   /** 고를 때마다 곱해지는 값. 적히지 않은 값은 그대로 둔다. */
-  multiply: Partial<Record<keyof PlayerStats, number>>;
+  multiply?: Partial<Record<keyof PlayerStats, number>>;
+  /**
+   * 고를 때마다 더해지는 값. **개수처럼 곱셈이 뜻을 잃는 값에만 쓴다**(화살 수).
+   * 비율(속도·간격·배율)에는 쓰지 않는다 — 덧셈은 여러 장 겹쳤을 때 값이 0 밑으로
+   * 내려가거나 밸런스가 한 번에 무너진다. 그 이유는 `data/upgrades.ts`에 적어 두었다.
+   */
+  add?: Partial<Record<keyof PlayerStats, number>>;
 }
 
 /** 카드 한 장과, 그 카드를 지금까지 몇 번 골랐는지. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { World, type FrameInput } from '../src/core/World';
-import { LEVEL, UPGRADE } from '../src/data/config';
+import { ARROW, LEVEL, UPGRADE } from '../src/data/config';
 import { UPGRADE_CARDS } from '../src/data/upgrades';
 import { createXpCore, type UpgradeCard } from '../src/entities/types';
 import { applyUpgrade, rollUpgradeChoices } from '../src/systems/upgrades';
@@ -84,15 +84,31 @@ describe('업그레이드 카드 뽑기', () => {
 
 describe('업그레이드 적용', () => {
   it('적힌 값에만 곱하고 원래 값은 건드리지 않는다', () => {
-    const stats = { fireCooldown: 0.4, moveSpeed: 7, magnetRadius: 4, xpMultiplier: 1 };
+    const stats = { fireCooldown: 0.4, moveSpeed: 7, magnetRadius: 4, xpMultiplier: 1, arrowCount: 1 };
     const next = applyUpgrade(stats, card('swift'));
     expect(next.moveSpeed).toBeCloseTo(7.7, 6);
     expect(next.fireCooldown).toBe(0.4);
     expect(stats.moveSpeed).toBe(7);
   });
 
+  it('개수 카드는 곱하지 않고 더한다 (화살 1.5발은 없다)', () => {
+    const stats = { fireCooldown: 0.4, moveSpeed: 7, magnetRadius: 4, xpMultiplier: 1, arrowCount: 1 };
+    const plus: UpgradeCard = {
+      id: 'volley',
+      title: 'volley',
+      detail: '',
+      maxStacks: 2,
+      accent: '#fff',
+      add: { arrowCount: 2 },
+    };
+    expect(applyUpgrade(stats, plus).arrowCount).toBe(3);
+    expect(applyUpgrade(applyUpgrade(stats, plus), plus).arrowCount).toBe(5);
+    // 적히지 않은 값은 그대로다.
+    expect(applyUpgrade(stats, plus).moveSpeed).toBe(7);
+  });
+
   it('여러 장을 겹치면 곱해서 쌓인다', () => {
-    let stats = { fireCooldown: 0.4, moveSpeed: 7, magnetRadius: 4, xpMultiplier: 1 };
+    let stats = { fireCooldown: 0.4, moveSpeed: 7, magnetRadius: 4, xpMultiplier: 1, arrowCount: 1 };
     stats = applyUpgrade(stats, card('swift'));
     stats = applyUpgrade(stats, card('swift'));
     expect(stats.moveSpeed).toBeCloseTo(7 * 1.1 * 1.1, 6);
@@ -100,7 +116,8 @@ describe('업그레이드 적용', () => {
 
   it('목록의 카드는 전부 무언가를 바꾼다', () => {
     for (const c of UPGRADE_CARDS) {
-      expect(Object.keys(c.multiply).length).toBeGreaterThan(0);
+      const changes = Object.keys(c.multiply ?? {}).length + Object.keys(c.add ?? {}).length;
+      expect(changes).toBeGreaterThan(0);
       expect(c.maxStacks).toBeGreaterThan(0);
       expect(c.detail.length).toBeGreaterThan(0);
     }
@@ -224,5 +241,75 @@ describe('World — 3중 1택', () => {
     const elapsed = world.elapsed;
     world.step(IDLE, DT);
     expect(world.elapsed).toBeGreaterThan(elapsed);
+  });
+});
+
+/**
+ * DESIGN 8번 첫 카드 — 다중 발사.
+ *
+ * 여기서 지키는 것은 두 가지다: 실제로 여러 발이 나가는가, 그리고 **부채꼴이 벌어지는가**.
+ * 퍼지는 폭(`ARROW.spread`)이 이 카드의 성격 전부다 — 0에 가까우면 그냥 공격력 3배가 되고,
+ * 너무 벌리면 붙어도 한 발밖에 안 맞아 카드가 없는 것과 같아진다.
+ */
+describe('다중 발사', () => {
+  const multishot = UPGRADE_CARDS.find((c) => c.id === 'multishot');
+  if (!multishot) throw new Error('다중 발사 카드가 없다');
+
+  /** 카드를 stacks장 고른 채로 첫 발사를 한 번만 시킨 뒤, 그때 나간 화살들. */
+  function firstVolley(stacks: number, enemies?: { x: number; y: number }[]) {
+    const world = new World(enemies ? { enemies } : {});
+    for (let i = 0; i < stacks; i += 1) world.stats = applyUpgrade(world.stats, multishot!);
+    world.step(IDLE, DT);
+    return { world, arrows: world.arrows.filter((a) => a.owner === 'player') };
+  }
+
+  it('한 장에 2발씩 는다 (1 → 3 → 5)', () => {
+    expect(firstVolley(0).arrows).toHaveLength(1);
+    expect(firstVolley(1).arrows).toHaveLength(3);
+    expect(firstVolley(2).arrows).toHaveLength(5);
+  });
+
+  it('가운데 한 발은 겨눈 방향 그대로 나가고 나머지는 좌우로 고르게 벌어진다', () => {
+    const { world, arrows } = firstVolley(2);
+    const angles = arrows.map((a) => Math.atan2(a.vel.y, a.vel.x)).sort((a, b) => a - b);
+    expect(angles).toHaveLength(5);
+    // 겨눈 방향이 한가운데다. 짝수로 늘리면 이 자리가 비어 조준이 어긋나 보인다.
+    expect(angles[2]).toBeCloseTo(world.player.facing, 6);
+    for (let i = 1; i < angles.length; i += 1) {
+      expect((angles[i] ?? 0) - (angles[i - 1] ?? 0)).toBeCloseTo(ARROW.spread, 6);
+    }
+    // 화살은 저마다 제 방향으로 총구 거리만큼 앞에서 생긴다(한 점에서 뿌리지 않는다).
+    // 태어난 그 스텝에 이미 한 번 날았으므로 그만큼(speed*dt) 더 나가 있다.
+    const flown = ARROW.muzzleOffset + ARROW.speed * DT;
+    for (const arrow of arrows) {
+      const ahead = Math.atan2(arrow.vel.y, arrow.vel.x);
+      expect(arrow.pos.x).toBeCloseTo(Math.cos(ahead) * flown, 6);
+      expect(arrow.pos.y).toBeCloseTo(Math.sin(ahead) * flown, 6);
+    }
+  });
+
+  /**
+   * 한 뭉치가 한 적에게 몇 발이나 꽂히는가. 적을 그 자리에 못 박고 죽지도 않게 둔다 —
+   * 여기서 재는 것은 전투 결과가 아니라 부채꼴이 벌어지는 폭뿐이다.
+   */
+  function volleyHits(distance: number, stacks: number): number {
+    const { world } = firstVolley(stacks, [{ x: distance, y: 0 }]);
+    const enemy = world.enemies[0];
+    if (!enemy) throw new Error('적이 없다');
+    // 두 번째 뭉치가 섞이면 무엇을 세는지 알 수 없다. 첫 뭉치만 남긴다.
+    world.player.fireCooldown = 999;
+    const steps = Math.ceil((distance / ARROW.speed) * 60) + 20;
+    for (let i = 0; i < steps; i += 1) {
+      enemy.pos = { x: distance, y: 0 };
+      enemy.hp = enemy.maxHp;
+      world.player.hp = world.player.maxHp;
+      world.step(IDLE, DT);
+    }
+    return world.hits;
+  }
+
+  it('붙으면 한 놈에게 다 꽂히고, 멀면 가운데 한 발만 맞는다', () => {
+    expect(volleyHits(5, 1)).toBe(3);
+    expect(volleyHits(14, 1)).toBe(1);
   });
 });

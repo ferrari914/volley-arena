@@ -6,11 +6,20 @@ export type UpgradeStacks = Readonly<Record<string, number>>;
 /**
  * 카드 하나를 능력치에 반영한 새 묶음을 돌려준다. 원래 값은 건드리지 않는다 —
  * 순수 함수라야 테스트가 "이 카드가 무엇을 바꾸는가"만 따로 볼 수 있다.
+ *
+ * 곱셈을 먼저, 덧셈을 나중에 한다. 한 카드가 둘을 함께 쓰는 일은 아직 없지만,
+ * 순서를 정해 두지 않으면 나중에 그런 카드가 생겼을 때 결과가 조용히 달라진다.
  */
 export function applyUpgrade(stats: PlayerStats, card: UpgradeCard): PlayerStats {
   const next: PlayerStats = { ...stats };
-  for (const [key, factor] of Object.entries(card.multiply) as [keyof PlayerStats, number][]) {
-    next[key] = stats[key] * factor;
+  for (const [key, factor] of Object.entries(card.multiply ?? {}) as [
+    keyof PlayerStats,
+    number,
+  ][]) {
+    next[key] = next[key] * factor;
+  }
+  for (const [key, amount] of Object.entries(card.add ?? {}) as [keyof PlayerStats, number][]) {
+    next[key] = next[key] + amount;
   }
   return next;
 }

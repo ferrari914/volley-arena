@@ -112,6 +112,7 @@ export class World {
     moveSpeed: PLAYER.speed,
     magnetRadius: CORE.magnetRadius,
     xpMultiplier: 1,
+    arrowCount: 1,
   };
 
   /** 카드별로 몇 번 골랐는지. 다음 제시에서 최대치에 닿은 카드를 빼는 데 쓴다. */
@@ -445,15 +446,29 @@ export class World {
     });
   }
 
+  /**
+   * 한 번의 발사. 화살 수가 늘면(다중 발사, DESIGN 8번) 조준 방향을 가운데 두고
+   * 좌우로 고르게 벌린 부채꼴로 나간다.
+   *
+   * 개수는 홀수만 나온다(1 → 3 → 5). 그래서 가운데 한 발은 늘 조준한 방향 그대로다 —
+   * 짝수로 늘리면 정면이 비어 "겨눈 곳에 안 나간다"로 보인다.
+   * 각 화살은 **자기 방향으로** 총구 거리만큼 나가서 생긴다. 한 점에서 뿌리면
+   * 바로 앞의 적에게는 부채꼴이 채 벌어지기도 전에 전부 꽂혀 거리감이 사라진다.
+   */
   private spawnArrow(): void {
-    const dir = { x: Math.cos(this.player.facing), y: Math.sin(this.player.facing) };
-    this.addArrow(
-      {
-        x: this.player.pos.x + dir.x * ARROW.muzzleOffset,
-        y: this.player.pos.y + dir.y * ARROW.muzzleOffset,
-      },
-      dir,
-    );
+    const count = Math.max(1, Math.round(this.stats.arrowCount));
+    const base = this.player.facing - ((count - 1) / 2) * ARROW.spread;
+    for (let i = 0; i < count; i += 1) {
+      const angle = base + i * ARROW.spread;
+      const dir = { x: Math.cos(angle), y: Math.sin(angle) };
+      this.addArrow(
+        {
+          x: this.player.pos.x + dir.x * ARROW.muzzleOffset,
+          y: this.player.pos.y + dir.y * ARROW.muzzleOffset,
+        },
+        dir,
+      );
+    }
   }
 
   private removeDeadArrows(): void {
