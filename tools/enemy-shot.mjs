@@ -32,6 +32,8 @@ const OUT = 'shots';
 const STATES = ['live', 'calm', 'aim', 'worn', 'flash'];
 /** 무리 화면의 기본 목표 수. `REINFORCE`의 상한(5 + maxExtra)과 같은 값이다. */
 const CROWD_DEFAULT = 15;
+/** 창을 열고 찍기까지의 시간(ms). 목표 수가 달라도 이 나이는 같게 둔다(아래 주석). */
+const SETTLE_MS = 15000;
 
 const argv = process.argv.slice(2);
 const crowd = argv.includes('crowd');
@@ -164,6 +166,7 @@ try {
   await mkdir(OUT, { recursive: true });
   if (crowd) {
     const label = `crowd-${crowdCount}`;
+    const openedAt = Date.now();
     const page = await openPage(label, crowdProbe.toString(), { count: crowdCount }, countDrawCalls);
     // 다 서기까지: 4초씩 미니 열 마리에 100프레임 남짓이다.
     await page.waitForFunction(
@@ -181,11 +184,12 @@ try {
         { timeout: 20000 },
       )
       .catch(() => console.warn('  (다 모이기 전에 찍는다 — 아래 수를 보고 판단할 것)'));
-    // fps 표시는 지수 이동 평균이라(`Ticker`의 0.1) 0에서 올라오는 데 서른 프레임쯤 걸린다.
-    // 이 시간을 안 주면 **적이 적은 화면일수록 fps가 낮게 찍힌다** — 일찍 찍히기 때문이다
-    // (적 5마리를 2초에 찍으니 14fps, 열다섯 마리를 7초에 찍으니 24fps였다).
-    // 두 장을 나란히 놓고 견주려면 둘 다 평균이 자리를 잡은 뒤여야 한다.
-    await page.waitForTimeout(3000);
+    // **어느 장이든 창을 연 지 같은 시간 뒤에 찍는다.** fps 표시는 지수 이동 평균이라
+    // (`Ticker`의 0.1) 0에서 올라오는 데 시간이 걸리고, 무리를 채우는 데 걸리는 시간은
+    // 목표 수마다 다르다. 그냥 찍으면 **적이 적은 화면일수록 fps가 낮게 찍힌다** —
+    // 일찍 찍히기 때문이다(적 5마리를 2초에 찍으니 14fps, 열다섯을 7초에 찍으니 24fps였다).
+    // 두 장을 나란히 놓고 견주려면 나이가 같아야 한다.
+    await page.waitForTimeout(Math.max(0, openedAt + SETTLE_MS - Date.now()));
     const path = `${OUT}/${label}.png`;
     await page.screenshot({ path });
     const seen = await page.evaluate(() => window.__crowd);
