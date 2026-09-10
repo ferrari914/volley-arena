@@ -3,7 +3,16 @@ import { World } from '../src/core/World';
 import type { FrameInput } from '../src/core/World';
 import { ARENA, CORE, ENEMY, LEVEL, PLAYER } from '../src/data/config';
 import { createXpCore, type XpCore } from '../src/entities/types';
-import { DT, IDLE, dodgeCharger, median, play, playMatch, walkToNearestCore } from './support/match';
+import {
+  DT,
+  IDLE,
+  circleShield,
+  dodgeCharger,
+  median,
+  play,
+  playMatch,
+  walkToNearestCore,
+} from './support/match';
 import {
   createDropCores,
   createProgress,
@@ -295,6 +304,8 @@ const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
 const results = SEEDS.map((seed) => playMatch(seed));
 /** 예고를 보고 비키는 사람의 같은 스무 판(세션 18). 두 번째 자다 — 한 사람만 재면 버릇을 게임으로 오해한다. */
 const dodged = SEEDS.map((seed) => playMatch(seed, 600, dodgeCharger));
+/** 방패병을 옆구리로 도는 사람의 같은 스무 판(세션 24). 세 번째 자다. */
+const circled = SEEDS.map((seed) => playMatch(seed, 600, circleShield));
 
 describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
   const lengths = results.map((r) => r.elapsed);
@@ -438,6 +449,70 @@ describe('밸런스 — 예고를 보고 비키면 몸에 닿지 않는다 (DESI
     expect(smart, '비켜도 가장 짧은 판이 길어지지 않는다').toBeGreaterThan(plain);
     // 위쪽에는 선을 걸지 않는다 — 비키는 사람은 원래 조금 더 오래 산다(실측 333초).
     // 그 천장을 지키는 것은 증원이고, 위 묶음이 안 비키는 사람으로 재고 있다.
+    expect(median(lengths)).toBeGreaterThan(SHORTEST);
+    expect(median(lengths)).toBeLessThan(LONGEST);
+  });
+});
+
+/**
+ * DESIGN 9번이 방패병에게 요구하는 단 하나의 대응: **옆구리로 돌면 뚫린다.**
+ *
+ * 한 프레임짜리 검사는 `tests/enemies.test.ts`에 있다(`blocksArrow`의 세 조건).
+ * 여기서 재는 것은 그것이 **한 판 내내 실제로 통하는가**다 — 판이 도는 속도가
+ * `SHIELD.turnRate`(0.8rad/s)라, 규칙이 맞더라도 **돌아가는 데 드는 시간**이 정면으로
+ * 부수는 시간보다 길면 이 적의 규칙은 화면에서 거짓말이 된다.
+ *
+ * **세션 24가 이 묶음을 만든 이유는 세션 18과 같다.** 세션 23이 "방패병이 판 길이를
+ * 양쪽으로 벌렸다"고 적었는데(선 안 141 → 124/180), 그 표를 잰 사람이 돌 줄 모르는
+ * 사람이었다. 도는 사람으로 다시 재니 아래쪽 끝은 66 → 101초로 닫혔다
+ * (`npm run perf`의 둘째 표). **아래쪽은 게임이 아니라 버릇이었다.**
+ * (위쪽은 아니다 — 도는 사람의 잘 고르는 판이 451초까지 간다. STATUS '다음 할 일'.)
+ *
+ * 그래서 이 묶음이 지키는 것은 둘이다.
+ * (1) 정면으로만 쏘면 실제로 막힌다. (2) 그런데 돌면 뚫린다.
+ * 하나가 무너지면 방패병은 "그냥 체력 8인 적"이거나 "돌 수 없는 벽"이 된다.
+ */
+describe('밸런스 — 옆구리로 돌면 판이 뚫린다 (DESIGN 9번)', () => {
+  /**
+   * 방패병 하나만 세운 60초. 스무 판으로 재면 활잡이·돌진형이 함께 뒤섞여
+   * "막힌 화살"이 방패병 하나당 몇 발인지가 흐려진다 — 여기서는 그 하나만 본다.
+   */
+  function duel(input: (w: World) => FrameInput): World {
+    const world = new World({ seed: SEEDS[0] ?? 0, enemies: [{ x: 10, y: 0, kind: 'shield' }] });
+    play(world, 60 * 60, input);
+    return world;
+  }
+
+  it('정면으로만 쏘면 막히고, 돌면 그 2/3도 막히지 않는다', () => {
+    const plain = duel(walkToNearestCore);
+    const smart = duel(circleShield);
+    console.log(
+      `방패병 하나와 60초 — 안 도는 사람 막힘 ${plain.blockedShots}발/${plain.kills}처치 · ` +
+        `도는 사람 막힘 ${smart.blockedShots}발/${smart.kills}처치`,
+    );
+    // 막히는 사람이 없으면 비교가 뜻이 없다. 방패가 순해진 것도 여기서 걸린다.
+    expect(plain.blockedShots, '정면으로 쏘는데도 막히지 않는다').toBeGreaterThanOrEqual(20);
+    // 실측 35발 → 20발. 도는 데 드는 시간(붙는 거리 3m에서 약 1초)이 길어지면 여기가 먼저 운다.
+    expect(smart.blockedShots * 1.5, `도는 사람 ${smart.blockedShots}발`).toBeLessThanOrEqual(
+      plain.blockedShots,
+    );
+    // 돌다가 못 잡으면 그것은 대응이 아니다. 실측 10처치 → 11처치.
+    expect(smart.kills).toBeGreaterThanOrEqual(plain.kills);
+  });
+
+  it('아래쪽 꼬리는 게임의 성질이 아니라 돌 줄 모르는 버릇이다', () => {
+    const plain = Math.min(...results.map((r) => r.elapsed));
+    const smart = Math.min(...circled.map((r) => r.elapsed));
+    const lengths = circled.map((r) => r.elapsed);
+    console.log(
+      `도는 사람의 스무 판: 중앙값 ${median(lengths).toFixed(0)}초 · ` +
+        `가장 짧은 판 ${smart.toFixed(0)}초(안 돌면 ${plain.toFixed(0)}초) · ` +
+        `막힘 ${circled.reduce((a, r) => a + r.blocked, 0)}발` +
+        `(안 돌면 ${results.reduce((a, r) => a + r.blocked, 0)}발)`,
+    );
+    // 실측 94초 → 182초. 같은 씨앗·같은 카드인데 아래쪽 꼬리만 사라진다(세션 18의 비키기와 같다).
+    expect(smart, '돌아도 가장 짧은 판이 길어지지 않는다').toBeGreaterThan(plain);
+    // 중앙값은 제자리다 — 돌기는 아래쪽만 들어 올린다(실측 256 → 266초).
     expect(median(lengths)).toBeGreaterThan(SHORTEST);
     expect(median(lengths)).toBeLessThan(LONGEST);
   });

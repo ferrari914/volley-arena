@@ -134,6 +134,15 @@ export class World {
    * 한 대가 12점이라(화살 2.4발) 한 판 길이를 가장 크게 흔드는 것이 이 값이다.
    */
   bodyHits = 0;
+  /**
+   * 방패가 받아 낸 내 화살의 수(DESIGN 9번). `bodyHits`와 같은 자리에 있는 값이다 —
+   * 화면에는 쓰지 않고 밸런스를 재는 쪽만 본다.
+   *
+   * **이 값 하나가 "돌았는가"를 말한다.** 방패병에게 정면으로만 쏘면 여기가 쌓이고,
+   * 옆구리로 돌아 쏘면 같은 화살이 몸에 꽂혀 여기가 늘지 않는다. 판 길이나 처치 수로는
+   * 그 차이를 볼 수 없다 — 어느 쪽이든 적은 결국 쓰러지고, 다른 것은 걸린 시간뿐이다.
+   */
+  blockedShots = 0;
   /** 지금 자동 조준이 잡고 있는 적. 없으면 null. */
   lockedEnemy: Enemy | null = null;
 
@@ -269,6 +278,7 @@ export class World {
     });
     this.hits += result.hits;
     this.kills += result.kills;
+    this.blockedShots += result.blocked;
     for (const point of result.killPoints) this.dropCores(point);
 
     this.updateCores(dt);

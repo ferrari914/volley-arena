@@ -1,6 +1,7 @@
 import { World } from '../../src/core/World';
 import type { FrameInput } from '../../src/core/World';
-import { ENEMY, PLAYER } from '../../src/data/config';
+import { clamp, wrapAngle } from '../../src/core/math';
+import { ENEMY, PLAYER, SHIELD } from '../../src/data/config';
 import type { UpgradeChoice, XpCore } from '../../src/entities/types';
 
 /** 한 스텝의 길이(s). 게임 루프와 같은 60fps. */
@@ -118,6 +119,66 @@ export function dodgeCharger(world: World): FrameInput {
   return walkToNearestCore(world);
 }
 
+/**
+ * 방패병을 옆구리로 도는 사람. 그것 말고는 `walkToNearestCore`와 같다.
+ *
+ * **DESIGN 9번이 방패병에게 요구하는 단 하나의 대응이 이것이다** —
+ * "정면 8발 대신 옆구리 3발로 도는 것이 답이다"(세션 21).
+ * `walkToNearestCore`도 `dodgeCharger`도 이 한 가지를 하지 않는다. 그 두 사람이 재는
+ * 방패병은 **돌 줄 모르는 사람이 본 방패병**이고, 그것은 그냥 체력이 8인 적이다.
+ *
+ * **보는 것은 화면에 있는 것뿐이다**(`dodgeCharger`와 같은 규칙). 자동 조준이 잡은 적
+ * (`lockedEnemy` — 화면에 표적 고리가 돈다), 판이 남아 있는지(`shieldHp` — 성한 청록 ·
+ * 닳은 잿빛 · 떨어져 나감), 어디를 두르고 있는지(`facing` — 판이 선 쪽).
+ * 셋 다 세션 22가 화면에 세워 둔 것들이라(`shots/enemy-shield-*.png`) 사람이 할 수 없는
+ * 일을 하지 않는다.
+ *
+ * 세 가지를 정해야 이 사람이 선다. 셋 다 실측으로 골랐다(듀얼 60초 · 방패병 하나):
+ *
+ * 1. **언제까지 도는가 — 판이 붙어 있는 동안 내내.** 열린 자리에 서서 쏘기만 하면
+ *    적이 `SHIELD.turnRate`로 따라 돌아 곧 다시 막히고, 그러면 이 사람은 돌기와
+ *    코어 줍기 사이를 오간다(세션 13이 밟은 그 떨림이다). 그래서 각도에 문턱을 두지 않는다.
+ *    판이 떨어지면(`shieldHp` 0) 그냥 느린 활잡이라 돌 이유가 없다.
+ * 2. **어느 쪽으로 — 지금 서 있는 쪽으로.** 반대로 돌면 정면을 한 번 더 지나가고
+ *    그동안의 화살을 전부 판에 먹인다.
+ * 3. **얼마나 붙어서 — 3m.** 이 값이 이 사람의 전부다. 거리 d에서 도는 각속도가
+ *    `PLAYER.speed / d`이고 판이 따라 도는 속도가 0.8rad/s라, **9m 밖에서는 도는 것이
+ *    손해고 붙을수록 빨라진다**(config의 `turnRate` 주석). 그래서 9m 밖에서는 도는 몫을
+ *    0으로 두고 곧장 파고든다. 4.5m로 두면 판을 벗기는 데 3초가 걸려 정면으로 부수는 것과
+ *    같아지고(실측 듀얼 막힘 27), 3m면 1초다(막힘 20 · 안 도는 사람 35).
+ *    더 붙여도(2.4m) 나아지지 않는다 — 적이 물러나느라 오히려 멀어진다(막힘 24).
+ */
+/** 돌면서 유지하려는 거리(m). 적이 물러나는 선(`SHIELD.keepDistance` 6)보다 안쪽이다. */
+const ORBIT = 3.0;
+/** 이보다 멀면 도는 것이 손해다(m). `PLAYER.speed / d`가 `SHIELD.turnRate`와 같아지는 거리 9m. */
+const TURN_PARITY = PLAYER.speed / SHIELD.turnRate;
+
+export function circleShield(world: World): FrameInput {
+  const target = world.lockedEnemy;
+  if (!target || !target.alive || target.kind !== 'shield' || target.shieldHp <= 0)
+    return walkToNearestCore(world);
+
+  const dx = world.player.pos.x - target.pos.x;
+  const dy = world.player.pos.y - target.pos.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-6) return walkToNearestCore(world);
+
+  // 적이 보는 방향에서 내가 몇 도나 비켜 서 있는가. `blocksArrow`가 재는 것과 같은 각이다.
+  const offset = wrapAngle(Math.atan2(dy, dx) - target.facing);
+  const sign = offset >= 0 ? 1 : -1;
+  // 도는 몫과 붙는 몫을 더해 정규화한다. 멀리서 도는 것은 손해라 `TURN_PARITY` 밖에서는
+  // 도는 몫이 0이 되어 곧장 파고들고, 붙고 나면 도는 몫만 남는다.
+  const turn = clamp((TURN_PARITY - dist) / 2, 0, 1);
+  const pull = clamp((dist - ORBIT) / 2, -1, 1);
+  const move = {
+    x: (-dy / dist) * sign * turn - (dx / dist) * pull,
+    y: (dx / dist) * sign * turn - (dy / dist) * pull,
+  };
+  const len = Math.hypot(move.x, move.y);
+  if (len < 1e-6) return walkToNearestCore(world);
+  return { move: { x: move.x / len, y: move.y / len }, aim: null };
+}
+
 /** 한 판을 끝까지 돌리고 남은 것. 씨앗 하나에 판 하나다. */
 export interface MatchResult {
   seed: number;
@@ -131,6 +192,8 @@ export interface MatchResult {
   cards: readonly string[];
   /** 돌진형의 몸에 닿힌 횟수. 한 대가 12점이라 판 길이를 가장 크게 흔든다. */
   bodyHits: number;
+  /** 방패병의 판에 막힌 내 화살의 수. **도는 사람과 안 도는 사람을 가르는 값이다**(`circleShield`). */
+  blocked: number;
   /**
    * 체력이 처음 줄어든 시각(s). 한 번도 안 맞았으면 Infinity.
    * **판의 첫머리를 재는 값이다** — 손을 대기도 전에 맞으면 무엇에 맞았는지 알 수 없다
@@ -153,7 +216,7 @@ export function playMatch(
   /**
    * 어떻게 움직이는 사람인가. 기본값은 코어만 보고 걷는 사람이다 —
    * **이 자를 바꾸면 지금까지 잰 수치와 견줄 수 없게 되므로 기본값은 옮기지 않는다.**
-   * 다른 사람을 재고 싶으면 여기에 넣어 나란히 재라(`dodgeCharger`).
+   * 다른 사람을 재고 싶으면 여기에 넣어 나란히 재라(`dodgeCharger` · `circleShield`).
    */
   input: (world: World) => FrameInput = walkToNearestCore,
   /** 어떻게 고르는 사람인가. 기본값은 아무거나 고르는 사람이다 — 위와 같은 이유로 옮기지 않는다. */
@@ -177,6 +240,7 @@ export function playMatch(
     kills: world.kills,
     cards: [...world.takenUpgrades],
     bodyHits: world.bodyHits,
+    blocked: world.blockedShots,
     firstHit,
   };
 }

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { ENEMY, UPGRADE } from '../../src/data/config';
 import { World } from '../../src/core/World';
+import type { FrameInput } from '../../src/core/World';
 import {
   IDLE,
+  circleShield,
   median,
   play,
   playMatch,
@@ -37,9 +39,9 @@ const SHORTEST = 150;
 const LONGEST = 330;
 
 /**
- * 세 사람. **셋 다 같은 발로 걷는다**(`walkToNearestCore`) — 여기서 가르는 것은 오직 고르기다.
- * 어떻게 움직이는가를 가르는 자는 `tests/progression.test.ts`에 따로 있다(`dodgeCharger`).
- * 한 표에서 두 축을 함께 흔들면 수치가 달라졌을 때 무엇 때문인지 알 수 없다.
+ * 세 사람. **한 표 안에서는 셋 다 같은 발로 걷는다** — 표 하나가 가르는 것은 오직 고르기다.
+ * 발을 가르는 것은 표와 표 사이다(아래 `walking` · `circling`). 한 표에서 두 축을 함께
+ * 흔들면 수치가 달라졌을 때 무엇 때문인지 알 수 없다.
  *
  * 세션 17은 셋째 자리에 '무작위로 고르는 사람'을 뒀지만, 카드가 서는 자리를 섞은 뒤로는
  * 그 사람이 `takeAny`와 같은 사람이다. 그래서 **반대쪽 끝**을 세웠다 —
@@ -64,7 +66,8 @@ function line(name: string, rows: readonly MatchResult[]): string {
     `선 안 ${String(inRange(rows)).padStart(3, ' ')}/${rows.length}판 · ` +
     `Lv${median(rows.map((r) => r.level)).toFixed(0)} · ` +
     `${median(rows.map((r) => r.kills)).toFixed(0)}처치 · ` +
-    `몸통 ${rows.reduce((s, r) => s + r.bodyHits, 0)}대`
+    `몸통 ${rows.reduce((s, r) => s + r.bodyHits, 0)}대 · ` +
+    `막힘 ${rows.reduce((s, r) => s + r.blocked, 0)}발`
   );
 }
 
@@ -75,12 +78,21 @@ function standing(): number {
   return world.elapsed;
 }
 
+/** 세 사람을 한 벌 돌린다. 발이 바뀌면 사람 셋이 통째로 다른 판을 산다. */
+const table = (input: (world: World) => FrameInput): { name: string; rows: MatchResult[] }[] =>
+  PEOPLE.map((p) => ({
+    name: p.name,
+    rows: SEEDS.map((seed) => playMatch(seed, 600, input, p.choose)),
+  }));
+
+/** 코어만 보고 걷는 사람들. 세션 15부터 이 표로 밸런스를 재 왔다. */
+const walking = table(walkToNearestCore);
+/** 방패병을 도는 사람들(세션 24). 같은 씨앗·같은 고르기, 발만 다르다. */
+const circling = table(circleShield);
+
 describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
   it('180판이 밸런스 선 안에 든다', () => {
-    const byPerson = PEOPLE.map((p) => ({
-      ...p,
-      rows: SEEDS.map((seed) => playMatch(seed, 600, walkToNearestCore, p.choose)),
-    }));
+    const byPerson = walking;
     const all = byPerson.flatMap((p) => p.rows);
 
     console.log(
@@ -130,5 +142,63 @@ describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
       expect(r.defeated, `씨앗 ${r.seed}의 판이 끝나지 않았다`).toBe(true);
       expect(r.firstHit, `씨앗 ${r.seed}의 첫 피격`).toBeGreaterThan(ENEMY.startDelay);
     }
+  });
+
+  /**
+   * **같은 180판을 도는 발로 다시 재는 표**(세션 24 · `circleShield`).
+   *
+   * 세션 23이 방패병을 넣기 전후를 재고 "판 길이가 양쪽으로 벌어졌다"고 적었다
+   * (선 안 141 → 124/180 · 최단 125 → 94초). 그 표를 잰 사람은 **돌 줄 모르는 사람**이다 —
+   * `walkToNearestCore`는 코어만 보고 걸어서, 방패병이 요구하는 단 하나의 대응을 하지 않는다.
+   * 세션 18이 아래쪽 꼬리에 대해 같은 질문을 하고 "재는 사람이 안 비켰을 뿐"이라는 답을 냈다.
+   *
+   * 그래서 여기서 재는 것은 게임이 아니라 **그 판정이 옳았는가**다.
+   * 도는 것이 아래쪽 끝을 들어 올리면 벌어짐은 게임의 성질이 아니라 그 사람의 버릇이고,
+   * 도는 사람에게도 그대로 남으면 그때는 방패병의 값을 고칠 자리가 있다는 뜻이다.
+   */
+  it('도는 사람의 180판 — 아래쪽 끝이 버릇인지 게임인지', () => {
+    const all = circling.flatMap((p) => p.rows);
+    const plain = walking.flatMap((p) => p.rows);
+    const blocked = (rows: readonly MatchResult[]): number =>
+      rows.reduce((s, r) => s + r.blocked, 0);
+    const shortest = (rows: readonly MatchResult[]): number =>
+      Math.min(...rows.map((r) => r.elapsed));
+
+    console.log(
+      [
+        '',
+        `  같은 씨앗 ${SEEDS.length}개 · 같은 세 사람 · 발만 다르다(circleShield · 붙는 거리 3m)`,
+        '',
+        ...circling.map((p) => line(p.name, p.rows)),
+        '',
+        line('모두', all),
+        `  안 도는 사람과 견주어: 선 안 ${inRange(plain)} → ${inRange(all)}/${all.length}판 · ` +
+          `가장 짧은 판 ${shortest(plain).toFixed(0)} → ${shortest(all).toFixed(0)}초 · ` +
+          `막힘 ${blocked(plain)} → ${blocked(all)}발`,
+        '',
+      ].join('\n'),
+    );
+
+    // ① 도는 사람은 실제로 돌았다. 이 선이 깨지면 표가 아니라 자가 고장 난 것이다 —
+    // 판에 막힌 화살이 줄지 않았다면 `circleShield`는 그냥 다르게 걷는 사람일 뿐이다.
+    // 실측 2만 발 언저리에서 한 자릿수 퍼센트가 아니라 눈에 보이게 줄어야 한다.
+    expect(blocked(all), `막힘 ${blocked(plain)} → ${blocked(all)}발`).toBeLessThan(
+      blocked(plain) * 0.9,
+    );
+
+    // ② 그리고 아래쪽 끝이 올라간다. 세션 23이 "방패병이 벌렸다"고 적은 그 끝이다.
+    expect(
+      shortest(all),
+      `가장 짧은 판 ${shortest(plain).toFixed(0)} → ${shortest(all).toFixed(0)}초`,
+    ).toBeGreaterThan(shortest(plain));
+
+    // ③ **그런데 위쪽은 반대로 갔다 — 이것이 세션 24가 새로 안 것이다.**
+    // 도는 사람은 방패병을 빨리 지우고(처치 269 → 310) 그만큼 빨리 자라서, 잘 고르는 사람의
+    // 판이 385 → **451초**까지 늘어난다(p95 360 → 398). 안 도는 사람의 표가 지키는 420선을
+    // 도는 사람은 넘는다. **선을 여기서 옮겨 덮지 않는다** — 위쪽 천장은 증원(`REINFORCE`)이
+    // 지는 몫이고, 그것을 고치는 것이 다음 일이다(STATUS '다음 할 일').
+    // 여기 남기는 선은 그 일을 대신하지 않고 **영영 안 끝나는 판만** 잡는다.
+    expect(Math.max(...all.map((r) => r.elapsed))).toBeLessThan(540);
+    for (const r of all) expect(r.defeated, `씨앗 ${r.seed}의 판이 끝나지 않았다`).toBe(true);
   });
 });
