@@ -278,7 +278,7 @@ async function capture(page, label, path) {
   await page.screenshot({ path });
   if (covered) {
     failed = true;
-    console.error(`  [덮인 화면] ${label}: ${covered}가 아레나를 가린 채로 찍혔다 (${path})`);
+    console.error(`  [덮인 화면] ${label}: 아레나가 ${covered}에 덮인 채로 찍혔다 (${path})`);
   }
 }
 
@@ -403,6 +403,7 @@ try {
 }
 
 if (failed) {
-  console.error('콘솔에 에러가 찍혔다.');
+  // 이유는 둘이다 — 콘솔 에러이거나, 아레나가 덮인 채로 찍혔거나(위 `capture`).
+  console.error('찍은 화면에 문제가 있다. 위에 찍힌 [ ] 표시를 보라.');
   process.exit(1);
 }
