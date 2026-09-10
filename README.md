@@ -45,6 +45,8 @@ npm run qa           # 빌드 → 실제 브라우저로 실행 → shots/ 에 �
 ```bash
 npm run shot:enemy                                  # 세 종류를 있는 그대로
 npm run shot:enemy -- shield calm worn flash aim    # 방패병의 네 상태
+npm run shot:enemy -- crowd                         # 적이 상한(15마리)까지 찬 화면
+npm run shot:enemy -- crowd 5                       # 견줄 화면(판의 첫머리)
 ```
 
 `npm run qa` 는 판을 처음부터 돌려 **화면 흐름**을 잰다. 그 판에서 특정 적이
@@ -53,6 +55,13 @@ npm run shot:enemy -- shield calm worn flash aim    # 방패병의 네 상태
 `shot:enemy` 는 판을 흔들지 않고 플레이어를 그 적 앞 5.5m에 붙들어 둔 뒤
 상태를 지정해 찍는다. 검사가 아니라 **눈으로 보는 도구**다
 (콘솔 에러가 찍히면 실패하는 것은 같다).
+
+`crowd` 는 적을 만들어 세우지 않고 **판의 시계만 앞으로 민다** — 증원을 부르는 것은
+게임이므로(`REINFORCE`), 증원 표를 고치면 이 화면도 따라 바뀐다. 목표 수와 상관없이
+**창을 연 지 15초에** 찍고, 찍은 프레임의 드로우콜과 화면의 적 수를 함께 출력한다.
+두 장을 견주려면 나이가 같아야 하기 때문이다(fps 표시는 지수 이동 평균이라 일찍 찍으면
+낮게 나온다). **다만 이 기계의 fps 숫자는 적 수를 따라 움직이지 않는다** — 적 5마리와
+14마리가 똑같이 13fps다(드로우콜은 62 → 105). 프레임은 실기기에서 볼 것.
 
 게임 규칙(`src/core` · `src/systems`)을 건드렸으면 하나 더 돌린다.
 
@@ -127,7 +136,7 @@ which claude && claude --version && node --version
 | `tests/` | vitest 테스트 |
 | `tools/shot.mjs` | 화면 QA. 실제 브라우저로 띄워 스크린샷 + 콘솔 에러·안전 영역 검사 |
 | `tools/latency.mjs` | 입력 지연 측정(`npm run latency`). 터치 → 화면 반영까지 |
-| `tools/enemy-shot.mjs` | 적 한 종류를 가까이서 찍는다(`npm run shot:enemy`). 종류·상태를 지정 |
+| `tools/enemy-shot.mjs` | 적을 눈으로 본다(`npm run shot:enemy`). 한 종류를 가까이서, 또는 `crowd` 로 무리 전체 |
 | `tools/lib/preview.mjs` | 두 도구가 함께 쓰는 미리보기 서버 띄우기 |
 | `tests/support/loadScene.ts` | 부하 장면(적 20·투사체 60). 성능 측정이 쓰는 장면 |
 | `tests/perf/` | `npm run perf` 가 도는 측정. `npm test` 에는 포함되지 않는다 |
