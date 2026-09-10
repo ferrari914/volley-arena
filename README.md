@@ -40,6 +40,20 @@ npm run qa           # 빌드 → 실제 브라우저로 실행 → shots/ 에 �
 
 스크린샷은 `shots/` 에 남고 git 에는 올리지 않는다.
 
+적 하나의 생김새만 보고 싶으면 카메라를 들이대는 도구가 따로 있다.
+
+```bash
+npm run shot:enemy                                  # 세 종류를 있는 그대로
+npm run shot:enemy -- shield calm worn flash aim    # 방패병의 네 상태
+```
+
+`npm run qa` 는 판을 처음부터 돌려 **화면 흐름**을 잰다. 그 판에서 특정 적이
+화면에 잡히는지는 운이고(방패병은 22m 밖에 서 있다), "방패가 닳았을 때"·
+"받아 낸 순간"처럼 잠깐 스치는 상태는 사실상 못 찍는다.
+`shot:enemy` 는 판을 흔들지 않고 플레이어를 그 적 앞 5.5m에 붙들어 둔 뒤
+상태를 지정해 찍는다. 검사가 아니라 **눈으로 보는 도구**다
+(콘솔 에러가 찍히면 실패하는 것은 같다).
+
 게임 규칙(`src/core` · `src/systems`)을 건드렸으면 하나 더 돌린다.
 
 ```bash
@@ -113,6 +127,7 @@ which claude && claude --version && node --version
 | `tests/` | vitest 테스트 |
 | `tools/shot.mjs` | 화면 QA. 실제 브라우저로 띄워 스크린샷 + 콘솔 에러·안전 영역 검사 |
 | `tools/latency.mjs` | 입력 지연 측정(`npm run latency`). 터치 → 화면 반영까지 |
+| `tools/enemy-shot.mjs` | 적 한 종류를 가까이서 찍는다(`npm run shot:enemy`). 종류·상태를 지정 |
 | `tools/lib/preview.mjs` | 두 도구가 함께 쓰는 미리보기 서버 띄우기 |
 | `tests/support/loadScene.ts` | 부하 장면(적 20·투사체 60). 성능 측정이 쓰는 장면 |
 | `tests/perf/` | `npm run perf` 가 도는 측정. `npm test` 에는 포함되지 않는다 |
