@@ -13,6 +13,7 @@ import {
   SHIELD,
 } from '../src/data/config';
 import type { FrameInput } from '../src/core/World';
+import type { Enemy } from '../src/entities/types';
 
 const DT = 1 / 60;
 const idle: FrameInput = { move: { x: 0, y: 0 }, aim: null };
@@ -327,6 +328,31 @@ describe('World — 증원', () => {
 
   const layout = 5;
 
+  /**
+   * **`interval`과 `maxExtra`는 짝이다. 하나만 옮기면 아무 일도 일어나지 않는다**(세션 25).
+   *
+   * 증원이 다 들어오고 나면 아레나는 그대로 굳고, 그 뒤로는 사람만 계속 자란다
+   * (레벨 상한이 40인데 한 판의 중앙값이 Lv17이라 자랄 자리가 남아 있다).
+   * **위쪽 꼬리는 바로 그 굳은 구간에 산다.** 그래서 마지막 증원은
+   * 한 판 합격선(6분)보다 늦게 와야 한다 — 그래야 판이 끝날 때까지 천장이 계속 내려온다.
+   *
+   * 세션 25가 이 자리를 두 번 헛디뎠다. `interval`만 45 → 32로 줄이자 증원이 빨리 오는
+   * 대신 여덟 자리를 빨리 다 써서 마지막이 435 → 344초로 **당겨졌고**, 꼬리는 그대로였다
+   * (451 → 444초). `maxExtra`만 8 → 12로 늘렸을 때는 아홉째가 480초에 와서
+   * 표가 한 글자도 바뀌지 않았다. 둘을 함께 옮겨야 값이 산다.
+   */
+  it('증원이 다 들어오기 전에는 한 판이 끝나지 않는다 — 두 값은 짝이다', () => {
+    const last = REINFORCE.firstDelay + (REINFORCE.maxExtra - 1) * REINFORCE.interval;
+    // 합격선 360초는 `tests/progression.test.ts`의 '가장 긴 판도 6분을 넘지 않는다'와 같은 선이다.
+    expect(last, `마지막 증원 ${last}초`).toBeGreaterThanOrEqual(360);
+  });
+
+  it('증원 표의 길이가 자리 수와 같다', () => {
+    // 표가 자리 수보다 짧으면 `updateReinforcements`가 나머지 연산으로 앞으로 돌아가,
+    // 표를 세어 본 사람이 무엇이 몇 번 오는지 틀리게 읽는다. 표로 둔 이유가 사라진다.
+    expect(REINFORCE.order).toHaveLength(REINFORCE.maxExtra);
+  });
+
   it('첫 증원 전까지는 처음 배치 그대로다', () => {
     const world = new World();
     survive(world, REINFORCE.firstDelay - 5);
@@ -396,10 +422,23 @@ describe('World — 증원', () => {
     const world = new World();
     const nth = REINFORCE.order.indexOf('shield') + 1;
     expect(nth).toBeGreaterThan(0);
-    // 첫 방패병이 들어오는 시각까지만 돌린다(`survive`가 체력을 되돌려 준다 —
-    // 그냥 돌리면 증원이 오기 전에 쓰러져 시계가 멈춘다).
-    survive(world, REINFORCE.firstDelay + REINFORCE.interval * (nth - 1) + 1);
-    const joined = world.enemies[world.enemies.length - 1];
+    // **들어온 프레임에서 바로 본다.** 전에는 들어오는 시각 + 1초까지 돌리고 봤는데,
+    // 증원 간격이 32초로 줄자(세션 25) 그 1초 안에 내 화살이 판에 한 발 꽂혀
+    // `shieldHp`가 5가 아니라 4로 잡혔다 — 방패를 안 들고 온 것과 구별되지 않는 자리다.
+    // 여유를 늘리는 대신 여유를 없앤다(증원이 선 자리를 재는 위 검사와 같은 방법).
+    const target = world.enemies.length + nth;
+    let joined: Enemy | undefined;
+    const steps = Math.round((REINFORCE.firstDelay + REINFORCE.interval * (nth - 1) + 1) / DT);
+    for (let i = 0; i < steps && !joined; i += 1) {
+      world.player.hp = world.player.maxHp;
+      if (world.offer) {
+        world.chooseUpgrade(world.offer.choices[0]!.card.id);
+        continue;
+      }
+      world.step(idle, DT);
+      if (world.enemies.length >= target) joined = world.enemies[world.enemies.length - 1];
+    }
+    expect(joined, `${nth}번째 증원이 들어오지 않았다`).toBeDefined();
     expect(joined?.kind).toBe('shield');
     expect(joined?.shieldHp).toBe(SHIELD.shieldHp);
   });

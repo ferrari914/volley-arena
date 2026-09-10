@@ -338,14 +338,35 @@ describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
     expect(inRange).toBeGreaterThanOrEqual(15);
   });
 
-  it('가장 긴 판도 6분을 넘지 않는다', () => {
+  it('가장 긴 판도 6분을 넘지 않는다 — 세 사람 모두', () => {
     // **증원(`REINFORCE`)이 사 온 보장이 이것이다.** 증원이 없던 때는 화력이 세게 자란
     // 씨앗의 판이 391초까지, 카드를 잘 고르는 사람은 514초까지 갔다 — 판 길이가
     // 곧 화력의 함수여서 위쪽에 천장이 없었다. 지금은 시간이 갈수록 아레나가 무거워져
-    // 천장이 생긴다(실측 302초 · 잘 고르는 사람 352초).
+    // 천장이 생긴다.
+    //
+    // **세 사람을 다 본다(세션 25).** 세션 24까지 이 검사는 코어만 보고 걷는 사람 하나만
+    // 봤고, 그동안 **비키는 사람의 가장 긴 판은 491초였다** — 검사가 통과하는 내내
+    // 선 밖에 있었다. 잘 하는 사람일수록 위쪽 꼬리가 길어지는데(덜 맞으니 더 오래 산다)
+    // 가장 서툰 자 하나로만 천장을 재고 있었던 것이다. 아래쪽 꼬리에 대해 세션 18·24가
+    // 두 번 내린 답("한 사람만 재면 버릇을 게임으로 오해한다")이 위쪽에도 그대로 적용된다.
+    //
     // 이 선이 깨지면 증원이 약해진 것이다. 선을 옮기지 말고 `REINFORCE`를 되돌릴 것.
-    const longest = Math.max(...lengths);
-    expect(longest, `가장 긴 판 ${longest.toFixed(0)}초`).toBeLessThan(360);
+    const longest = (rows: readonly { elapsed: number }[]): number =>
+      Math.max(...rows.map((r) => r.elapsed));
+    console.log(
+      `가장 긴 판 — 안 비키는 사람 ${longest(results).toFixed(0)}초 · ` +
+        `비키는 사람 ${longest(dodged).toFixed(0)}초 · 도는 사람 ${longest(circled).toFixed(0)}초 ` +
+        `(합격선 360)`,
+    );
+    // 실측(세션 25 · 증원 32초 간격 · 열 자리): 316 · 351 · 331초.
+    // 비키는 사람이 선에 가장 가깝다 — 위쪽 꼬리를 다음에 손볼 때 먼저 볼 자가 그 사람이다.
+    for (const [who, rows] of [
+      ['안 비키는 사람', results],
+      ['비키는 사람', dodged],
+      ['도는 사람', circled],
+    ] as const) {
+      expect(longest(rows), `${who}의 가장 긴 판 ${longest(rows).toFixed(0)}초`).toBeLessThan(360);
+    }
   });
 
   it('어떤 씨앗에서도 판이 10분 안에 끝나고 레벨이 충분히 오른다', () => {
