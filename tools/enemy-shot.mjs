@@ -144,28 +144,42 @@ function crowdProbe({ count, veteran }) {
     return world.enemies.length < count && world.elapsed < 900 && !world.defeated;
   }
 
+  /**
+   * 뜬 카드를 한 장 고른다. 못 고르면 `false`.
+   *
+   * **어느 프레임에서든 부른다 — 다 채운 뒤에도 마찬가지다.** 카드가 떠 있는 동안 판은
+   * 멈추고(`World.isPaused`) 화면은 카드가 덮는다. 다 채운 뒤에 뜬 카드를 아무도 안 고르면
+   * 판은 그대로 멈춘 채 남고, **기다림이 끝난 자리에서 찍히는 것은 아레나가 아니라 카드 화면이다.**
+   * 세션 27의 `shots/crowd-15-veteran.png`가 실제로 그렇게 찍혔다(Lv20 카드 세 장이 한가운데를
+   * 가린 화면). 그때 함께 적힌 fps·드로우콜도 **멈춘 판의 값**이라 다른 장과 견줄 수 없다.
+   *
+   * `veteran`은 **화력만 고르는 사람이다**. 화살 쪽 렌더 비용의 상한을 보려는 화면이므로
+   * 화살이 가장 많아지는 쪽을 세운다 — 다중 발사·관통·튕김이 전부 화력 카드다.
+   * 시계만 미는 쪽은 사람이 자라지 않으니 아무 장이나 골라 판을 계속 굴리기만 한다.
+   */
+  function chooseCard(world) {
+    const offer = world.offer;
+    if (!offer) return true;
+    const pick = veteran
+      ? (offer.choices.find((c) => c.card.role === 'power') ?? offer.choices[0])
+      : offer.choices[0];
+    return Boolean(pick) && world.chooseUpgrade(pick.card.id);
+  }
+
   return (world) => {
+    // 못 고르면 판이 멈춘 채로 남는다. 여기서 접어야 바깥의 기다림·검사가 이유를 보고 끝난다.
+    const picked = chooseCard(world);
     if (veteran) {
-      // **화력만 고르는 사람이다**(`preferPower`). 화살 쪽 렌더 비용의 상한을 보려는 화면이므로,
-      // 화살이 가장 많아지는 쪽을 세운다 — 다중 발사·관통·튕김이 전부 화력 카드다.
       const steps = Math.round(AHEAD / DT);
-      for (let i = 0; i < steps && filling(world); i += 1) {
-        const offer = world.offer;
-        if (offer) {
-          const pick = offer.choices.find((c) => c.card.role === 'power') ?? offer.choices[0];
-          // 못 고르면 판이 멈춘 채로 남는다. 여기서 접어야 바깥의 기다림이 이유를 보고 끝난다.
-          if (!pick || !world.chooseUpgrade(pick.card.id)) break;
-        }
+      for (let i = 0; i < steps && picked && filling(world); i += 1) {
+        if (!chooseCard(world)) break;
         // 미는 동안에는 죽지 않는다(아래와 같은 이유). 스텝 안에서 체력이 다하면 판이 끝나므로
         // 돌리기 **전에** 채운다.
         world.player.hp = world.player.maxHp;
         world.step(walkToNearestCore(world), DT);
       }
-    } else {
-      // 카드가 뜨면 판이 멈춘다(그동안 시계도 안 간다). 첫 장을 골라 계속 굴린다 —
-      // 여기까지 온 사람이 카드를 안 골랐을 리 없다.
-      if (world.offer) world.chooseUpgrade(world.offer.choices[0].card.id);
-      if (filling(world)) world.elapsed += AHEAD;
+    } else if (filling(world)) {
+      world.elapsed += AHEAD;
     }
     // 찍는 동안에는 죽지 않는다. 열다섯을 상대로 이 판의 화력은 몇 초를 못 버틴다 —
     // 쓰러지면 화면이 결과 화면으로 바뀌어 아무것도 못 본다.
@@ -239,6 +253,34 @@ function countDrawCalls() {
 const preview = await startPreview(PORT);
 const browser = await chromium.launch();
 let failed = false;
+
+/**
+ * 찍는다. **단, 화면이 덮여 있으면 찍은 뒤에 판을 실패시킨다.**
+ *
+ * 왜 검사로 두는가: 이 도구가 엉뚱한 프레임을 찍은 것이 이번이 세 번째다 —
+ * 세션 26은 나이를 안 맞춰 찍었고(fps가 거꾸로 읽혔다), 세션 27은 무리가 흩어진 프레임을 찍었고,
+ * 이번엔 **카드 화면을 아레나로 착각해 찍었다**(세션 27의 `crowd-15-veteran.png`).
+ * 앞의 둘은 화면을 열어 보면 티가 나지만, 이건 눈으로 봐야만 알 수 있어서 그대로 STATUS에
+ * 수치까지 적혔다. 사람이 매번 알아채는 대신 기계가 잰다.
+ *
+ * `body[data-paused]`는 카드와 결과 화면이 함께 쓰는 한 곳이다(main.ts `syncPaused`).
+ * 덮인 이유가 무엇이든 그 프레임은 아레나가 아니므로 견줄 값이 안 나온다.
+ */
+async function capture(page, label, path) {
+  const covered = await page
+    .waitForFunction(() => !document.body.dataset['paused'], undefined, { timeout: 3000 })
+    .then(() => null)
+    .catch(() =>
+      page.evaluate(() =>
+        document.querySelector('#upgrade')?.dataset['show'] ? '레벨업 카드' : '결과 화면',
+      ),
+    );
+  await page.screenshot({ path });
+  if (covered) {
+    failed = true;
+    console.error(`  [덮인 화면] ${label}: ${covered}가 아레나를 가린 채로 찍혔다 (${path})`);
+  }
+}
 
 /** 콘솔 에러를 잡아 두는 창 하나. 어느 화면에서 났는지 이름과 함께 남긴다. */
 async function openPage(label, probeSource, arg, before) {
@@ -328,7 +370,7 @@ try {
       .catch(() => console.warn('  (무리가 흩어진 프레임에 찍는다 — 아래 수를 보고 판단할 것)'));
     const path = `${OUT}/${label}.png`;
     const age = Date.now() - openedAt;
-    await page.screenshot({ path });
+    await capture(page, label, path);
     const seen = await page.evaluate(() => window.__crowd);
     console.log(`  ${path} (창을 연 지 ${(age / 1000).toFixed(1)}초)`);
     console.log(
@@ -349,7 +391,7 @@ try {
         // 방패가 오르내리는 데 걸리는 시간(`SHIELD_RAISE_RATE`)보다 넉넉히 기다린다.
         await page.waitForTimeout(2600);
         const path = `${OUT}/enemy-${kind}-${state}.png`;
-        await page.screenshot({ path });
+        await capture(page, `${kind}/${state}`, path);
         console.log(`  ${path}`);
         await page.close();
       }
