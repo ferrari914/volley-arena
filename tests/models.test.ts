@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { SHIELD } from '../src/data/config';
-import { PALETTE, SHIELD_POSE, createEnemy } from '../src/render/models';
+import { PALETTE, SHIELD_GLOW, SHIELD_POSE, applyShieldLook, createEnemy } from '../src/render/models';
 
 /**
  * 화면에 세우는 도형이 규칙과 같은 말을 하는지 본다.
@@ -77,5 +77,57 @@ describe('적 모델', () => {
     );
     expect(new Set(colors).size).toBe(3);
     expect(colors).toEqual([PALETTE.enemy, PALETTE.charger, PALETTE.shield]);
+  });
+});
+
+/**
+ * 방패판이 화면에서 하는 말 둘 — **얼마나 남았는가**와 **방금 받아 냈는가** — 이
+ * 서로를 지우지 않는지 본다. 둘 다 같은 재질 하나의 밝기를 쓰기 때문에,
+ * 한쪽을 세게 주면 다른 쪽이 조용히 사라진다. 실제로 그렇게 됐던 자리다:
+ * 받아 낸 순간의 흰빛이 0.75였을 때 판은 통째로 하얘져 남은 내구도가 지워졌고,
+ * 정면으로 쏘는 내내 매 발 다시 켜지는 빛이라 **그 흰색이 방패의 평소 색**이었다.
+ *
+ * 눈이 아니라 밝기(상대 휘도)로 잰다. 사람이 "밝다/어둡다"로 읽는 값이 그것이고,
+ * 색을 바꾸더라도 관계가 지켜지는지는 이 자만 잴 수 있다.
+ */
+describe('방패판의 빛깔', () => {
+  /** 재질이 화면에 내놓는 밝기. 바탕색에 스스로 내는 빛을 더한다. */
+  function brightness(shieldHp: number, flash: number): number {
+    const material = new THREE.MeshStandardMaterial();
+    applyShieldLook(material, shieldHp, flash);
+    const lum = (color: THREE.Color) => 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+    return lum(material.color) + material.emissiveIntensity * lum(material.emissive);
+  }
+
+  it('방패는 닳을수록 어두워진다', () => {
+    const steps = [5, 4, 3, 2, 1, 0].map((hp) => brightness(hp, 0));
+    for (let i = 1; i < steps.length; i += 1) {
+      expect(steps[i]!).toBeLessThan(steps[i - 1]!);
+    }
+    // 눈에 보일 만큼 갈려야 한다. 성한 판과 마지막 한 대 남은 판이 같아 보이면
+    // 정면으로 쏘는 사람은 진척을 볼 곳이 없다(몸 체력바는 꿈쩍도 하지 않는다).
+    expect(steps[0]! - steps[4]!).toBeGreaterThan(0.1);
+  });
+
+  it('받아 낸 순간이 평소보다 밝다', () => {
+    for (const hp of [5, 3, 1]) {
+      expect(brightness(hp, 1)).toBeGreaterThan(brightness(hp, 0) + 0.1);
+    }
+  });
+
+  it('성한 방패는 받아 내는 순간에도 닳은 방패보다 밝다', () => {
+    // 이것이 깨지면 번쩍임이 남은 내구도를 덮은 것이다 — 정면 사격 중에는
+    // 판이 늘 번쩍이고 있으므로, 그 화면에서 진척이 통째로 안 보이게 된다.
+    // 0.2는 "다르다"가 아니라 **눈에 보이게 다르다**는 선이다. 흰빛이 세던 때의
+    // 두 판도 숫자로는 달랐다(0.09) — 화면에서는 둘 다 그냥 흰 띠였다.
+    expect(brightness(5, 1) - brightness(1, 1)).toBeGreaterThan(0.2);
+    expect(brightness(5, 1) - brightness(0, 1)).toBeGreaterThan(0.2);
+  });
+
+  it('번쩍임은 판을 흰빛으로 덮어 버리지 않는다', () => {
+    // 값 자체에 선을 걸어 둔다. 0.75로 되돌리면 위의 검사들이 아니라 여기가 먼저 걸려,
+    // 다음 세션이 "왜 이 값인가"를 주석과 함께 보게 된다(`SHIELD_GLOW`).
+    expect(SHIELD_GLOW.spark).toBeLessThan(0.5);
+    expect(SHIELD_GLOW.intact).toBeGreaterThan(0.2);
   });
 });

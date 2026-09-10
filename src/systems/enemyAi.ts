@@ -122,7 +122,12 @@ export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyS
 
   for (const enemy of enemies) {
     if (enemy.hitFlash > 0) enemy.hitFlash = Math.max(0, enemy.hitFlash - dt * 2.5);
-    if (enemy.shieldFlash > 0) enemy.shieldFlash = Math.max(0, enemy.shieldFlash - dt * 3.2);
+    // 방패의 번쩍임은 **몸의 피격 번쩍임보다 빨리 꺼진다**(3.2 → 6.0 = 0.17초).
+    // 몸은 한 대 맞고 한동안 조용하지만, 방패는 정면으로 쏘는 내내 매 발 다시 켜진다
+    // (플레이어의 발사 간격은 0.38초, 연사를 다 쌓으면 0.16초다). 천천히 꺼지면
+    // 켜진 채로 이어져 **번쩍임이 사건이 아니라 방패의 평소 색**이 되고,
+    // 그러면 판이 닳아 흐려지는 것(`Renderer.syncShield`)이 그 흰빛에 덮여 보이지 않는다.
+    if (enemy.shieldFlash > 0) enemy.shieldFlash = Math.max(0, enemy.shieldFlash - dt * 6);
 
     if (!enemy.alive) {
       enemy.respawnTimer -= dt;

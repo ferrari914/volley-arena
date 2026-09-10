@@ -34,9 +34,19 @@ export const PALETTE = {
    * "돌아서 서라"는 자리 잡기이고, 무겁고 단단한 색이 그 성격을 먼저 알린다.
    */
   shield: 0x4fd1c5,
-  shieldDark: 0x1f6f6b,
-  /** 방패가 화살을 받아 낸 순간 번쩍이는 색. 몸이 아니라 방패만 밝아진다. */
+  /** 방패판. 몸(밝은 청록)보다 어두워야 판이 몸에서 떨어져 나와 보인다. */
+  shieldDark: 0x2b8079,
+  /**
+   * 화살을 받아 낸 순간 판이 번쩍이는 흰빛. **색이 아니라 밝기로 알린다** —
+   * 판의 색은 남은 내구도가 이미 쓰고 있어서(`shieldDark` ↔ `shieldSpent`),
+   * 번쩍임까지 색을 쓰면 둘이 서로를 지운다(`applyShieldLook`).
+   */
   shieldSpark: 0xe6fffb,
+  /**
+   * 다 닳아 가는 방패판의 색. 청록기가 빠진 잿빛이라 **몸 앞의 검은 띠**로 보인다 —
+   * 성한 판(`shieldDark`)과 한 화면에 있을 때 어느 쪽을 마저 부술지 눈으로 갈린다.
+   */
+  shieldSpent: 0x3a4356,
   accent: 0xffd479,
   core: 0x7bffcf,
   coreDrop: 0xa6ff5e,
@@ -376,6 +386,45 @@ export const SHIELD_POSE = {
   loweredY: SHIELD_BODY_HEIGHT * 0.36,
   loweredTilt: 0.45,
 } as const;
+
+const PLATE_FRESH = new THREE.Color(PALETTE.shieldDark);
+const PLATE_SPENT = new THREE.Color(PALETTE.shieldSpent);
+const PLATE_SPARK = new THREE.Color(PALETTE.shieldSpark);
+
+/**
+ * 방패판이 스스로 내는 빛의 세기. 둘을 더한 것이 판의 밝기다.
+ *
+ * **성한 만큼 빛나는 몫(`intact`)이 필요한 이유**: 판은 선 벽이라 머리 위의 해가
+ * 스치기만 한다. 그래서 색만 바꿔 두면 성한 청록(`shieldDark`)과 닳은 잿빛
+ * (`shieldSpent`)이 화면에서는 둘 다 그냥 어둡다 — 화면에서 재 보고 넣었다.
+ *
+ * **받아 낸 몫(`spark`)이 0.4인 이유**: 처음에 0.75를 흰빛으로 주었더니 판이 통째로
+ * 하얘져 남은 내구도가 지워졌다. 정면으로 쏘는 내내 매 발 다시 켜지는 빛이라
+ * (플레이어의 발사 간격 0.38초, 연사를 다 쌓으면 0.16초) 세게 주면
+ * **번쩍임이 사건이 아니라 방패의 평소 색**이 된다.
+ */
+export const SHIELD_GLOW = { intact: 0.3, spark: 0.4 } as const;
+
+/**
+ * 방패판의 지금 빛깔을 재질에 옮긴다. 판이 하는 말 둘을 한 자리에서 정한다:
+ * **얼마나 남았는가**(색과 밝기)와 **방금 받아 냈는가**(흰빛으로 번지는 밝기).
+ *
+ * 둘을 떼어 놓으면 서로를 지운다 — 그래서 한 함수에 있고, 검사가 그 관계를 지킨다
+ * (`tests/models.test.ts`: 성한 판은 받아 내는 순간에도 닳은 판보다 밝다).
+ *
+ * **새 색을 만들지 않고 넘겨받은 재질을 고쳐 쓴다.** 매 프레임 · 적마다 불린다.
+ */
+export function applyShieldLook(
+  material: THREE.MeshStandardMaterial,
+  shieldHp: number,
+  flash: number,
+): void {
+  const intact = Math.min(Math.max(shieldHp, 0) / SHIELD.shieldHp, 1);
+  const spark = Math.min(Math.max(flash, 0), 1);
+  material.color.copy(PLATE_SPENT).lerp(PLATE_FRESH, intact);
+  material.emissive.copy(PLATE_FRESH).lerp(PLATE_SPARK, spark);
+  material.emissiveIntensity = SHIELD_GLOW.intact * intact + SHIELD_GLOW.spark * spark;
+}
 
 /**
  * 방패병이 앞세우는 판 (DESIGN 9번).

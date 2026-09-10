@@ -4,6 +4,7 @@ import { ARENA, ARROW, CHARGER, CORE, ENEMY, SHIELD } from '../data/config';
 import type { Vec2 } from '../core/math';
 import type { ArrowOwner, CoreOrigin, Enemy } from '../entities/types';
 import {
+  applyShieldLook,
   createArena,
   createArrow,
   createCore,
@@ -38,8 +39,6 @@ const MAX_PIXEL_RATIO = 2;
 const SHIELD_LOWER_RATE = 12;
 const SHIELD_RAISE_RATE = 6;
 /** 성한 방패의 색과 다 닳은 방패의 색. 사이를 남은 내구도로 오간다. */
-const SHIELD_FRESH = new THREE.Color(PALETTE.shieldDark);
-const SHIELD_WORN = new THREE.Color(0x3a4356);
 
 export class Renderer {
   private readonly renderer: THREE.WebGLRenderer;
@@ -236,10 +235,9 @@ export class Renderer {
     plate.position.y += (targetY - plate.position.y) * blend;
     plate.rotation.x += (targetTilt - plate.rotation.x) * blend;
 
-    const worn = Math.max(enemy.shieldHp, 0) / SHIELD.shieldHp;
-    material.color.copy(SHIELD_WORN).lerp(SHIELD_FRESH, worn);
-    material.emissive.setHex(PALETTE.shieldSpark);
-    material.emissiveIntensity = enemy.shieldFlash * 0.75;
+    // 판의 빛깔(남은 내구도 · 방금 받아 냈는가)은 `models.ts`가 정한다 —
+    // 색을 여기서 따로 만들면 모델과 화면이 서로 다른 말을 하게 된다.
+    applyShieldLook(material, enemy.shieldHp, enemy.shieldFlash);
   }
 
   private syncArrows(world: World): void {
