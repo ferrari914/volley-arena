@@ -181,6 +181,11 @@ try {
         { timeout: 20000 },
       )
       .catch(() => console.warn('  (다 모이기 전에 찍는다 — 아래 수를 보고 판단할 것)'));
+    // fps 표시는 지수 이동 평균이라(`Ticker`의 0.1) 0에서 올라오는 데 서른 프레임쯤 걸린다.
+    // 이 시간을 안 주면 **적이 적은 화면일수록 fps가 낮게 찍힌다** — 일찍 찍히기 때문이다
+    // (적 5마리를 2초에 찍으니 14fps, 열다섯 마리를 7초에 찍으니 24fps였다).
+    // 두 장을 나란히 놓고 견주려면 둘 다 평균이 자리를 잡은 뒤여야 한다.
+    await page.waitForTimeout(3000);
     const path = `${OUT}/${label}.png`;
     await page.screenshot({ path });
     const seen = await page.evaluate(() => window.__crowd);
