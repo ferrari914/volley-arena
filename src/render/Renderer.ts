@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import type { World } from '../core/World';
-import { ARENA, ARROW, CHARGER, CORE, ENEMY } from '../data/config';
+import { ARENA, ARROW, CHARGER, CORE, ENEMY, SHIELD } from '../data/config';
 import type { Vec2 } from '../core/math';
-import type { ArrowOwner, CoreOrigin } from '../entities/types';
+import type { ArrowOwner, CoreOrigin, Enemy } from '../entities/types';
 import {
   createArena,
   createArrow,
@@ -12,6 +12,7 @@ import {
   createPlayer,
   CAMERA_OFFSET as CAMERA_OFFSET_SPEC,
   PALETTE,
+  SHIELD_POSE,
   type EnemyView,
 } from './models';
 
@@ -27,6 +28,18 @@ const CAMERA_OFFSET = new THREE.Vector3(
 );
 /** 픽셀 비율 상한. 3배 이상 화면에서 그대로 그리면 중급 기기가 못 버틴다. */
 const MAX_PIXEL_RATIO = 2;
+
+/**
+ * 방패가 내려가고 올라오는 빠르기(1/s · 지수 감쇠). **내리는 쪽이 더 빠르다.**
+ * 내려간 동안이 정면이 열리는 유일한 창이라(`SHIELD.aimTime` 0.7초), 창이 열리는 것은
+ * 창보다 빨리 보여야 한다 — 느리게 내려가면 다 내려갔을 때 이미 화살이 날아온 뒤다.
+ * 12로 두면 0.25초에 9할이 내려간다. 올라오는 것은 급할 것이 없어 절반 빠르기다.
+ */
+const SHIELD_LOWER_RATE = 12;
+const SHIELD_RAISE_RATE = 6;
+/** 성한 방패의 색과 다 닳은 방패의 색. 사이를 남은 내구도로 오간다. */
+const SHIELD_FRESH = new THREE.Color(PALETTE.shieldDark);
+const SHIELD_WORN = new THREE.Color(0x3a4356);
 
 export class Renderer {
   private readonly renderer: THREE.WebGLRenderer;
@@ -115,7 +128,7 @@ export class Renderer {
       this.playerView.shieldMaterial.opacity = 0.14 + 0.1 * (0.5 + 0.5 * Math.sin(now * 0.011));
     }
 
-    this.syncEnemies(world);
+    this.syncEnemies(world, dt);
     this.syncArrows(world);
     this.syncCores(world);
     this.syncCamera(player.pos, dt);
@@ -125,7 +138,7 @@ export class Renderer {
    * 적. 수는 판 내내 바뀌지 않으므로 배열 자리로 짝짓는다.
    * 매 프레임 만지는 것은 셋이다 — 자리·체력바·겨누는 예고.
    */
-  private syncEnemies(world: World): void {
+  private syncEnemies(world: World, dt: number): void {
     while (this.enemyViews.length < world.enemies.length) {
       // 모델은 종류마다 다르다(DESIGN 9번). 자리로 짝지으므로 그 자리의 적을 보고 만든다 —
       // 적의 종류는 판이 끝날 때까지 바뀌지 않는다.
@@ -157,13 +170,17 @@ export class Renderer {
       // 여기가 이 게임에서 유일한 "지금 나를 노리고 있다"는 예고다.
       // 두 종류가 같은 예고를 쓰므로 처음 하는 사람이 한 번만 배우면 된다.
       const charger = enemy.kind === 'charger';
+      const shield = enemy.kind === 'shield';
       const aiming = enemy.aimTimer > 0;
       const dashing = enemy.dashTimer > 0;
       view.aimRing.visible = aiming;
       if (aiming) {
-        const charge = 1 - enemy.aimTimer / (charger ? CHARGER.windup : ENEMY.aimTime);
+        const aimTime = charger ? CHARGER.windup : shield ? SHIELD.aimTime : ENEMY.aimTime;
+        const charge = 1 - enemy.aimTimer / aimTime;
         view.aimRing.scale.setScalar(2.1 - charge * 1.1);
-        view.bodyMaterial.emissive.setHex(charger ? PALETTE.charger : PALETTE.enemyArrow);
+        view.bodyMaterial.emissive.setHex(
+          charger ? PALETTE.charger : shield ? PALETTE.shield : PALETTE.enemyArrow,
+        );
         view.bodyMaterial.emissiveIntensity = 0.15 + charge * 0.5;
       } else if (dashing) {
         // 몸을 던지는 동안에는 계속 밝다. 여기서 꺼 두면 가장 위험한 순간에
@@ -178,6 +195,8 @@ export class Renderer {
       } else {
         view.bodyMaterial.emissiveIntensity = 0;
       }
+
+      this.syncShield(view, enemy, aiming, dt);
     });
 
     const locked = world.lockedEnemy;
@@ -186,6 +205,41 @@ export class Renderer {
       this.lockMarker.position.set(locked.pos.x, 0.04, locked.pos.y);
       this.lockMarker.rotation.z += 0.02;
     }
+  }
+
+  /**
+   * 방패병의 판 (DESIGN 9번). 판이 화면에서 하는 말은 셋이고, 셋 다 규칙 그대로다:
+   *
+   * 1. **겨누는 동안 내려간다** — `blocksArrow`가 `aimTimer > 0`이면 막지 않는다.
+   *    그 창이 화면에 보이지 않으면 이 적은 그냥 "가끔 안 죽는 적"이 된다.
+   *    한 프레임에 옮기지 않고 사이를 오가는 이유: 뚝 끊기면 방패가 사라졌다 나타난 것으로
+   *    보여서 "지금 내려가는 중"이라는 예고가 되지 못한다.
+   * 2. **닳으면 흐려진다** — 남은 내구도가 판의 색이다. 방패에 맞는 동안 몸 체력바는
+   *    꿈쩍도 하지 않으므로(맞는 것이 몸이 아니다), 여기가 아니면 진척을 볼 곳이 없다.
+   * 3. **받아 낸 순간 번쩍인다**(`shieldFlash`) — 몸이 아니라 판만 밝아진다.
+   *    몸이 번쩍이면 "맞혔다"로 읽혀 정면 사격을 계속하게 된다.
+   *
+   * 다 부서지면 통째로 숨긴다. 다시 서는 순간 방패도 함께 돌아온다(`shieldHp`).
+   */
+  private syncShield(view: EnemyView, enemy: Enemy, aiming: boolean, dt: number): void {
+    const plate = view.shieldPlate;
+    const material = view.shieldMaterial;
+    if (!plate || !material) return;
+
+    plate.visible = enemy.shieldHp > 0;
+    if (!plate.visible) return;
+
+    const rate = aiming ? SHIELD_LOWER_RATE : SHIELD_RAISE_RATE;
+    const blend = 1 - Math.exp(-rate * dt);
+    const targetY = aiming ? SHIELD_POSE.loweredY : SHIELD_POSE.raisedY;
+    const targetTilt = aiming ? SHIELD_POSE.loweredTilt : SHIELD_POSE.raisedTilt;
+    plate.position.y += (targetY - plate.position.y) * blend;
+    plate.rotation.x += (targetTilt - plate.rotation.x) * blend;
+
+    const worn = Math.max(enemy.shieldHp, 0) / SHIELD.shieldHp;
+    material.color.copy(SHIELD_WORN).lerp(SHIELD_FRESH, worn);
+    material.emissive.setHex(PALETTE.shieldSpark);
+    material.emissiveIntensity = enemy.shieldFlash * 0.75;
   }
 
   private syncArrows(world: World): void {

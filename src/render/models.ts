@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { ArrowOwner, EnemyKind } from '../entities/types';
-import { ARENA, ARROW, CORE, ENEMY, PLAYER } from '../data/config';
+import { ARENA, ARROW, CORE, ENEMY, PLAYER, SHIELD } from '../data/config';
 
 /**
  * 모든 도형 생성은 이 파일 안에서만 한다.
@@ -28,6 +28,15 @@ export const PALETTE = {
    */
   charger: 0xa678ff,
   chargerDark: 0x5f37c9,
+  /**
+   * 방패병(DESIGN 9번). 붉은 활잡이·보라 돌진형과 또 갈려야 한다.
+   * 차가운 청록으로 둔 이유: 이 적에게 요구되는 것은 쫓기는 다급함이 아니라
+   * "돌아서 서라"는 자리 잡기이고, 무겁고 단단한 색이 그 성격을 먼저 알린다.
+   */
+  shield: 0x4fd1c5,
+  shieldDark: 0x1f6f6b,
+  /** 방패가 화살을 받아 낸 순간 번쩍이는 색. 몸이 아니라 방패만 밝아진다. */
+  shieldSpark: 0xe6fffb,
   accent: 0xffd479,
   core: 0x7bffcf,
   coreDrop: 0xa6ff5e,
@@ -224,6 +233,13 @@ export interface EnemyView {
   hpBar: THREE.Group;
   /** 겨누는 동안 발밑에서 좁혀지는 고리. */
   aimRing: THREE.Mesh;
+  /**
+   * 방패병이 앞세운 판이 매달린 돌쩌귀(DESIGN 9번). 다른 종류는 null이다.
+   * 겨누는 동안 눕혀 내리고, 방패가 다 부서지면 통째로 숨긴다.
+   */
+  shieldPlate: THREE.Group | null;
+  /** 방패가 화살을 받아 냈을 때 번쩍이게 하려고 들고 있는다. */
+  shieldMaterial: THREE.MeshStandardMaterial | null;
 }
 
 /**
@@ -234,7 +250,12 @@ export interface EnemyView {
  * 색·높이·모양뿐이다:
  *   활잡이  — 길쭉한 붉은 기둥에 겨누는 팔. 멀리서 쏜다.
  *   돌진형  — 낮고 넓은 보라 덩어리에 앞으로 뻗은 뿔. 부딪으러 온다.
+ *   방패병  — 청록 기둥 앞에 정면을 두른 곡면 판. 그 판이 곧 규칙이다.
  * 낮고 넓게 만든 이유: 같은 반지름이라도 무게가 실려 보여야 "저건 달려온다"로 읽힌다.
+ *
+ * **방패병만 부품 하나가 몸 앞에 따로 선다**(`shieldPlate`). 화살을 막는 것이
+ * 몸이 아니라 그 판이고, 그 판이 **어느 각을 두르고 있는지**가 화면에 그대로 적혀 있어야
+ * 한다 — 그래야 "옆으로 돌면 열린다"를 설명 없이 알아본다(DESIGN 품질 기준의 30초).
  */
 export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
   const group = new THREE.Group();
@@ -243,14 +264,21 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
   group.add(pivot);
 
   const charger = kind === 'charger';
-  const height = charger ? ENEMY.height * 0.62 : ENEMY.height;
-  const bodyMaterial = standard(charger ? PALETTE.charger : PALETTE.enemy, {
-    roughness: charger ? 0.35 : 0.5,
-  });
+  const shield = kind === 'shield';
+  const height = charger ? ENEMY.height * 0.62 : shield ? SHIELD_BODY_HEIGHT : ENEMY.height;
+  const bodyMaterial = standard(
+    charger ? PALETTE.charger : shield ? PALETTE.shield : PALETTE.enemy,
+    { roughness: charger ? 0.35 : 0.5 },
+  );
   const body = new THREE.Mesh(
     charger
       ? new THREE.BoxGeometry(ENEMY.radius * 1.7, height, ENEMY.radius * 1.5)
-      : new THREE.CylinderGeometry(ENEMY.radius, ENEMY.radius * 0.85, height, 6),
+      : new THREE.CylinderGeometry(
+          ENEMY.radius * (shield ? 0.8 : 1),
+          ENEMY.radius * 0.85,
+          height,
+          shield ? 8 : 6,
+        ),
     bodyMaterial,
   );
   body.position.y = height / 2;
@@ -259,7 +287,10 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
 
   const cap = new THREE.Mesh(
     new THREE.SphereGeometry(ENEMY.radius * 0.55, 10, 6),
-    standard(charger ? PALETTE.chargerDark : PALETTE.enemyHit, { roughness: 0.35 }),
+    standard(
+      charger ? PALETTE.chargerDark : shield ? PALETTE.shieldDark : PALETTE.enemyHit,
+      { roughness: 0.35 },
+    ),
   );
   cap.position.y = height + ENEMY.radius * 0.25;
   pivot.add(cap);
@@ -276,18 +307,20 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
     pivot.add(horn);
   } else {
     // 겨누는 쪽을 가리키는 짧은 팔. 플레이어의 코와 같은 역할이다.
+    // **방패병의 팔은 몸에 붙여 둔다** — 방패 안쪽에 들어가 있어야 방패를 뚫고 나오지 않고,
+    // 방패가 내려간 동안에만 드러나 "지금 저 팔이 열려 있다"가 함께 보인다.
     const arm = new THREE.Mesh(
       new THREE.BoxGeometry(0.18, 0.18, 0.7),
-      standard(PALETTE.enemyDark, { roughness: 0.4 }),
+      standard(shield ? PALETTE.shieldDark : PALETTE.enemyDark, { roughness: 0.4 }),
     );
-    arm.position.set(0, height * 0.62, -ENEMY.radius - 0.28);
+    arm.position.set(0, height * 0.62, shield ? -ENEMY.radius * 0.5 : -ENEMY.radius - 0.28);
     pivot.add(arm);
   }
 
   const aimRing = new THREE.Mesh(
     new THREE.RingGeometry(ENEMY.radius * 1.1, ENEMY.radius * 1.35, 24),
     new THREE.MeshBasicMaterial({
-      color: charger ? PALETTE.charger : PALETTE.enemyArrow,
+      color: charger ? PALETTE.charger : shield ? PALETTE.shield : PALETTE.enemyArrow,
       transparent: true,
       opacity: 0.9,
       side: THREE.DoubleSide,
@@ -302,7 +335,101 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
   bar.position.y = height + ENEMY.radius * 0.9;
   group.add(bar);
 
-  return { group, pivot, bodyMaterial, hpFill: fill, hpBar: bar, aimRing };
+  const plate = shield ? createShieldPlate(pivot, height) : null;
+
+  return {
+    group,
+    pivot,
+    bodyMaterial,
+    hpFill: fill,
+    hpBar: bar,
+    aimRing,
+    shieldPlate: plate?.pivot ?? null,
+    shieldMaterial: plate?.material ?? null,
+  };
+}
+
+/**
+ * 방패판의 크기. 몸 반지름·키에 대한 배율로 둔다 — 몸이 바뀌면 방패도 따라가야 한다.
+ * **막는 각은 여기 없다.** 그것은 `SHIELD.arc` 하나뿐이고, 판은 그 값을 두르기만 한다.
+ */
+const SHIELD_PLATE = { radiusScale: 1.3, heightScale: 0.46 } as const;
+
+/** 방패병의 몸 키. 방패의 자세가 이 값에서 나오므로 상수로 빼 둔다. */
+const SHIELD_BODY_HEIGHT = ENEMY.height * 0.88;
+
+/**
+ * 방패의 두 자세 — 돌쩌귀의 높이(m)와 기울기(rad). Renderer가 그 사이를 오간다.
+ *
+ * **올린 자세는 가슴 높이다.** 판이 발밑까지 내려오면 든 방패가 아니라 세워 둔 벽으로
+ * 보이고, 무엇보다 내렸을 때와 높이 차가 나지 않아 예고가 안 보인다.
+ *
+ * **내린 자세는 바닥에 닿지 않는 선에서 가장 낮은 자리다.** 판이 곡면이라 양 끝이
+ * 가운데보다 아래로 처지므로, 앞쪽 아랫변이 아니라 **옆쪽 아랫변**이 바닥을 정한다
+ * (이 값에서 옆쪽 아랫변이 y≈0.01이다). 여기서 더 내리면 방패가 바닥을 파고든다.
+ *
+ * 두 자세의 윗변 차이는 0.49m다 — 적의 키(2.23m)의 5분의 1이 넘게 움직인다.
+ */
+export const SHIELD_POSE = {
+  raisedY: SHIELD_BODY_HEIGHT * 0.9,
+  raisedTilt: 0,
+  loweredY: SHIELD_BODY_HEIGHT * 0.36,
+  loweredTilt: 0.45,
+} as const;
+
+/**
+ * 방패병이 앞세우는 판 (DESIGN 9번).
+ *
+ * **판은 `SHIELD.arc`가 막는 각을 그대로 두른 곡면이다.** 평평한 널을 세워 두지 않는
+ * 이유가 여기 있다 — 몸 앞을 가로지르는 널은 보이는 각과 막는 각이 다르다.
+ * 반지름 2.2배짜리 널을 몸에 붙여 세우면 눈에는 ±45°로 보이는데 실제로는 ±75°를
+ * 막는다. 그러면 "저만큼 비켰는데 또 튕겼다"가 되고, 이 적의 유일한 규칙이 거짓말이 된다.
+ * 원통의 벽을 `SHIELD.arc`만큼만 잘라 두면 **화면에 보이는 그 구간이 곧 막는 구간**이다.
+ *
+ * **겨눌 때는 내려간다.** 그냥 숨기면 "방패가 사라졌다"로 보이지만, 발밑까지 내려가
+ * 앞으로 기우는 것은 "지금 쏘려고 방패를 치웠다"로 읽힌다. 그 0.7초(`SHIELD.aimTime`)가
+ * 정면이 열리는 유일한 창이므로, 화면에서 가장 또렷해야 하는 움직임이 이것이다.
+ * 두 자세는 `SHIELD_POSE`에 있고 Renderer가 그 사이를 오간다.
+ *
+ * 곡면이라 안쪽 면도 보인다(`DoubleSide`) — 내려가 기울면 플레이어 쪽으로 판의 등이
+ * 돌아서는데, 한쪽 면만 그리면 그 순간 방패가 통째로 사라진다.
+ */
+function createShieldPlate(
+  parent: THREE.Group,
+  height: number,
+): { pivot: THREE.Group; material: THREE.MeshStandardMaterial } {
+  const pivot = new THREE.Group();
+  pivot.position.y = SHIELD_POSE.raisedY;
+  parent.add(pivot);
+
+  const radius = ENEMY.radius * SHIELD_PLATE.radiusScale;
+  const plateHeight = height * SHIELD_PLATE.heightScale;
+  // 원통의 벽을 정면(−Z, `yawFromAngle`이 맞춰 두는 방향) 기준으로 좌우 `arc`만큼만 남긴다.
+  // CylinderGeometry의 각도 0은 +Z라 π에서 시작해야 정면이 한가운데에 온다.
+  const arcGeometry = (r: number, h: number, pad: number) =>
+    new THREE.CylinderGeometry(r, r, h, 20, 1, true, Math.PI - SHIELD.arc - pad, (SHIELD.arc + pad) * 2);
+
+  const material = standard(PALETTE.shieldDark, {
+    roughness: 0.28,
+    metalness: 0.35,
+    side: THREE.DoubleSide,
+  });
+  const plate = new THREE.Mesh(arcGeometry(radius, plateHeight, 0), material);
+  // 돌쩌귀는 판의 윗변에 있다. 내려갈 때 위에서부터 사라지는 것이 아니라 통째로 내려간다.
+  plate.position.y = -plateHeight / 2;
+  plate.castShadow = true;
+  pivot.add(plate);
+
+  // 윗변 테두리. 어두운 판만 두면 아레나 바닥(남색)에 묻혀 실루엣이 안 보인다.
+  // 판보다 아주 조금 넓게 둘러 판의 양 끝이 어디서 끊기는지를 밝은 색으로 짚어 준다.
+  const rim = new THREE.Mesh(
+    arcGeometry(radius * 1.04, plateHeight * 0.12, 0.02),
+    standard(PALETTE.shield, { roughness: 0.3, side: THREE.DoubleSide }),
+  );
+  rim.position.y = -plateHeight * 0.06;
+  pivot.add(rim);
+
+  return { pivot, material };
 }
 
 /**
