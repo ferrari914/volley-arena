@@ -3,7 +3,7 @@ import { movePlayer } from '../src/systems/movement';
 import { findNearestEnemy } from '../src/systems/autoAim';
 import { segmentPointDistanceSq, stepArrows } from '../src/systems/combat';
 import { createEnemy, createPlayer, type Arrow, type ArrowOwner } from '../src/entities/types';
-import { ARROW, ENEMY, PLAYER } from '../src/data/config';
+import { ARROW, ENEMY, PLAYER, SHIELD } from '../src/data/config';
 
 let nextId = 1;
 const enemyAt = (x: number, y: number): ReturnType<typeof createEnemy> =>
@@ -42,6 +42,7 @@ function options(overrides: Partial<Parameters<typeof stepArrows>[1]> = {}) {
     invulnerable: PLAYER.invulnerable,
     respawnDelay: ENEMY.respawnDelay,
     bounceRange: ARROW.bounceRange,
+    shieldArc: SHIELD.arc,
     player: createPlayer(PLAYER.maxHp),
     enemies: [],
     ...overrides,
@@ -297,5 +298,103 @@ describe('stepArrows — 튕김', () => {
     // 줄 끝에서 관통이 바닥나고, 거기서 한 번 꺾였다.
     expect(flying.pierce).toBe(0);
     expect(flying.bounce).toBe(0);
+  });
+});
+
+/**
+ * DESIGN 9번 — 방패병의 방패. **이 적이 요구하는 것("돌아서 쏴라")이 성립하는 자리다.**
+ *
+ * 여기서 지키는 것은 넷이다:
+ * 1. 정면은 막고 **옆구리는 뚫린다** — 돌아가는 것이 실제로 값져야 한다.
+ * 2. **겨누는 동안에는 정면도 뚫린다** — 가장 위험한 순간이 곧 가장 무른 순간이다.
+ * 3. **결국 부서진다** — 돌아가지 못하는 사람의 화살이 영원히 튕기면 고장으로 읽힌다.
+ * 4. **카드가 방패를 무시하지 못한다** — 관통 한 장에 이 적의 규칙이 사라지면 안 된다.
+ */
+describe('stepArrows — 방패병의 방패', () => {
+  /**
+   * 원점의 방패병. `facing`은 +x를 본다 — 정면은 +x 쪽에서 날아오는 화살이다.
+   * 아래 화살들은 속력 120으로 두어 한 프레임(1/60초)에 2m를 나아간다.
+   * 2m 밖에서 쏘면 그 한 프레임에 적의 한가운데를 지나므로 판정이 확실하다.
+   */
+  const shielded = (): ReturnType<typeof createEnemy> => {
+    const enemy = createEnemy(nextId++, 0, 0, SHIELD.maxHp, 'shield', SHIELD.shieldHp);
+    enemy.facing = 0;
+    return enemy;
+  };
+
+  it('정면으로 날아온 화살은 방패가 받는다 (몸에는 닿지 않는다)', () => {
+    const enemy = shielded();
+    const result = stepArrows([arrow(2, 0, -120, 0)], options({ enemies: [enemy] }));
+    expect(result.blocked).toBe(1);
+    expect(result.hits).toBe(0);
+    expect(enemy.hp).toBe(SHIELD.maxHp);
+    expect(enemy.shieldHp).toBe(SHIELD.shieldHp - 1);
+  });
+
+  it('옆구리로 들어온 화살은 그냥 뚫는다 (돌아간 보람이 있어야 한다)', () => {
+    const enemy = shielded();
+    const result = stepArrows([arrow(0, 2, 0, -120)], options({ enemies: [enemy] }));
+    expect(result.hits).toBe(1);
+    expect(enemy.hp).toBe(SHIELD.maxHp - 1);
+    expect(enemy.shieldHp).toBe(SHIELD.shieldHp);
+  });
+
+  it('부채꼴 밖으로 30°만 돌아도 열린다 (막는 것은 정면 150°뿐이다)', () => {
+    const inside = SHIELD.arc - 0.2;
+    const outside = SHIELD.arc + 0.2;
+    for (const [angle, blocked] of [
+      [inside, 1],
+      [outside, 0],
+    ] as const) {
+      const enemy = shielded();
+      // 적을 중심으로 angle만큼 돌아선 자리에서 적을 향해 쏜다.
+      const at = { x: Math.cos(angle) * 2, y: Math.sin(angle) * 2 };
+      const shot = arrow(at.x, at.y, -at.x * 60, -at.y * 60);
+      expect(stepArrows([shot], options({ enemies: [enemy] })).blocked).toBe(blocked);
+    }
+  });
+
+  it('겨누는 동안에는 정면도 뚫린다 (쏘려면 방패를 내려야 한다)', () => {
+    const enemy = shielded();
+    enemy.aimTimer = SHIELD.aimTime;
+    const result = stepArrows([arrow(2, 0, -120, 0)], options({ enemies: [enemy] }));
+    expect(result.hits).toBe(1);
+    expect(enemy.hp).toBe(SHIELD.maxHp - 1);
+  });
+
+  it('관통 화살도 방패에서 멈춘다 (카드 한 장이 이 적을 지우지 못한다)', () => {
+    const enemy = shielded();
+    const piercing = arrow(2, 0, -120, 0, 'player', 1, 3);
+    stepArrows([piercing], options({ enemies: [enemy] }));
+    expect(piercing.alive).toBe(false);
+    expect(piercing.pierce).toBe(3);
+  });
+
+  it('활잡이와 돌진형은 아무것도 막지 않는다', () => {
+    for (const enemy of [enemyAt(0, 0), createEnemy(nextId++, 0, 0, ENEMY.maxHp, 'charger')]) {
+      enemy.facing = 0;
+      expect(stepArrows([arrow(2, 0, -120, 0)], options({ enemies: [enemy] })).hits).toBe(1);
+    }
+  });
+
+  it('정면은 여덟 발, 옆구리는 세 발 — 돌아가는 쪽이 두 배 넘게 빠르다', () => {
+    /** 적이 쓰러질 때까지 한 발씩 쏜다. from에서 적을 향해 날아간다. */
+    const arrowsToKill = (from: { x: number; y: number }): number => {
+      const enemy = shielded();
+      for (let shots = 1; shots <= 30; shots += 1) {
+        stepArrows(
+          [arrow(from.x, from.y, -from.x * 60, -from.y * 60)],
+          options({ enemies: [enemy] }),
+        );
+        if (!enemy.alive) return shots;
+      }
+      return -1;
+    };
+
+    const front = arrowsToKill({ x: 2, y: 0 });
+    const flank = arrowsToKill({ x: 0, y: 2 });
+    expect(front).toBe(SHIELD.shieldHp + SHIELD.maxHp);
+    expect(flank).toBe(SHIELD.maxHp);
+    expect(front).toBeGreaterThan(flank * 2);
   });
 });

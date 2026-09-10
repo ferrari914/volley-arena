@@ -29,6 +29,8 @@ export interface ArrowStepOptions {
   respawnDelay: number;
   /** 튕긴 화살이 다음 상대를 찾는 거리(m). 이 안에 아무도 없으면 튕기지 못하고 사라진다. */
   bounceRange: number;
+  /** 방패병의 방패가 막는 정면 부채꼴의 반각(rad, DESIGN 9번). */
+  shieldArc: number;
   /** 적의 화살이 노리는 사람. */
   player: Player;
   /** 플레이어의 화살이 노리는 것들. */
@@ -48,6 +50,8 @@ export interface ArrowStepResult {
   killPoints: Vec2[];
   /** 플레이어가 이번 스텝에 받은 피해 총량. */
   damageTaken: number;
+  /** 방패에 막힌 화살 수(DESIGN 9번). 몸을 맞힌 것이 아니므로 `hits`와 따로 센다. */
+  blocked: number;
 }
 
 /**
@@ -67,12 +71,22 @@ export interface ArrowStepResult {
  * "뚫고 지나간다"는 관통의 그림이 화면에서 사라진다. 뚫을 만큼 뚫고, 더 못 갈 때 꺾는다.
  *
  * 두 경우 모두 맞힌 적을 `arrow.hitIds`에 적어 두고 다시 맞히지 않는다.
+ *
+ * **살아남지 못하는 길이 하나 있다 — 방패병의 방패다**(`blocksArrow`).
+ * 막힌 화살은 관통도 튕김도 쓰지 못하고 그 자리에서 끝난다. 카드 한 장이
+ * 방패를 무시해 버리면 "돌아서 쏴라"는 이 적의 규칙이 그 카드를 뽑은 판에서만 사라진다.
  */
 export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowStepResult {
   const { dt, arenaRadius, arrowRadius, enemyRadius, playerRadius, player, enemies } = options;
   const enemyHitSq = (arrowRadius + enemyRadius) ** 2;
   const playerHitSq = (arrowRadius + playerRadius) ** 2;
-  const result: ArrowStepResult = { hits: 0, kills: 0, killPoints: [], damageTaken: 0 };
+  const result: ArrowStepResult = {
+    hits: 0,
+    kills: 0,
+    killPoints: [],
+    damageTaken: 0,
+    blocked: 0,
+  };
 
   for (const arrow of arrows) {
     if (!arrow.alive) continue;
@@ -88,6 +102,15 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
         // 안에 머무는 몇 프레임 동안 계속 꽂혀, 관통이 아니라 연타가 된다.
         if (arrow.hitIds?.includes(enemy.id)) continue;
         if (segmentPointDistanceSq(from, to, enemy.pos) > enemyHitSq) continue;
+
+        // 방패가 받아 냈다. 몸에는 닿지 않았으므로 체력도 명중도 움직이지 않는다.
+        if (blocksArrow(enemy, arrow.vel, options.shieldArc)) {
+          enemy.shieldHp = Math.max(0, enemy.shieldHp - arrow.damage);
+          enemy.shieldFlash = 1;
+          result.blocked += 1;
+          arrow.alive = false;
+          break;
+        }
 
         enemy.hp -= arrow.damage;
         enemy.hitFlash = 1;
@@ -133,6 +156,29 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
   }
 
   return result;
+}
+
+/**
+ * 이 화살을 방패가 받아 내는가 (DESIGN 9번 · 방패병).
+ *
+ * **세 가지가 모두 참이어야 막힌다.** 하나씩이 이 적의 규칙 하나씩이다:
+ * 1. 방패병이고 방패가 아직 남아 있다 — 정면으로만 쏴도 결국 부서진다(`SHIELD.shieldHp`).
+ * 2. **겨누고 있지 않다** — 쏘려면 방패를 내려야 한다. 가장 위험한 순간이 곧
+ *    가장 무른 순간이라, 예고를 보고 피할지 쏠지를 고르게 된다.
+ * 3. **정면 부채꼴 안에서 날아왔다**(`arc`) — 옆구리와 등은 그냥 뚫린다.
+ *
+ * 방향은 화살이 **날아온 쪽**으로 잰다(위치가 아니라 속도로).
+ * 화살은 한 프레임에 제 몸통보다 멀리 나아가 몸 반대편에서 판정되기도 하므로,
+ * 위치로 재면 정면으로 쏜 화살이 등에서 맞은 것으로 읽히는 프레임이 생긴다.
+ */
+export function blocksArrow(enemy: Enemy, arrowVel: Vec2, arc: number): boolean {
+  if (enemy.kind !== 'shield' || enemy.shieldHp <= 0 || enemy.aimTimer > 0) return false;
+  const speed = length(arrowVel);
+  if (speed < 1e-6) return false;
+  // 화살이 나아가는 방향과 적이 보는 방향이 마주 볼수록 −1에 가깝다.
+  const facing = Math.cos(enemy.facing) * (arrowVel.x / speed)
+    + Math.sin(enemy.facing) * (arrowVel.y / speed);
+  return facing <= -Math.cos(arc);
 }
 
 /**

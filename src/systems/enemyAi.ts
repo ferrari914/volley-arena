@@ -7,12 +7,18 @@ import type { Enemy } from '../entities/types';
  * 규칙은 셋뿐이다 — **다가온다 · 예고한다 · 저지른다.**
  * 상태를 따로 두지 않고 타이머로만 굴린다(`aimTimer`·`fireCooldown`, 돌진형은 `dashTimer`).
  *
- * 종류가 둘로 늘었지만(DESIGN 9번) 이 문법은 그대로다. 갈리는 것은 마지막 한 칸,
+ * 종류가 셋으로 늘었지만(DESIGN 9번) 이 문법은 그대로다. 갈리는 것은 마지막 한 칸,
  * **무엇을 저지르는가**뿐이다:
  *   활잡이(archer)   — 멈춰 서서 겨눈 뒤 → 화살을 놓는다
  *   돌진형(charger)  — 멈춰 서서 웅크린 뒤 → 몸을 던진다
+ *   방패병(shield)   — 멈춰 서서 겨눈 뒤 → 화살을 놓는다 (활잡이와 같다)
  * 예고 칸을 종류마다 다시 만들지 않은 이유: 예고 없이 아픈 적은 피할 방법이 없고,
  * 예고의 모양이 종류마다 다르면 처음 하는 사람이 매번 새로 배워야 한다.
+ *
+ * **방패병이 새로 요구하는 것은 저지르는 쪽이 아니라 막는 쪽이다** — 정면으로 온
+ * 화살을 방패가 받아 낸다. 그 판정은 여기가 아니라 화살 쪽에 있다
+ * (`systems/combat.ts`의 `blocksArrow`). 여기서 방패병이 활잡이와 다른 것은 셋뿐이다:
+ * 느리게 걷고, **느리게 돌고**(옆구리가 열리는 이유다), 옆으로 돌지 않고 버티고 선다.
  *
  * 활잡이는 거리를 세 구간으로 나눈다:
  *   멀다(> approach)        → 다가온다
@@ -46,6 +52,8 @@ export interface EnemyStepOptions {
   contactRadius: number;
   /** 돌진형(DESIGN 9번)의 수치. 활잡이와 겹치지 않는 값만 여기 둔다. */
   charger: ChargerOptions;
+  /** 방패병(DESIGN 9번)의 수치. 활잡이와 같은 이름의 값이라도 값이 달라 여기 따로 둔다. */
+  shield: ShieldOptions;
   /** 조준을 흔드는 데 쓴다. World의 씨앗 고정 난수가 들어온다. */
   random: () => number;
 }
@@ -61,6 +69,33 @@ export interface ChargerOptions {
   dashCooldown: number;
   backoff: number;
   damage: number;
+}
+
+/**
+ * 방패병만 쓰는 수치. 시작값은 `data/config.ts`의 `SHIELD`에서 온다.
+ * 앞의 셋(`aimTime`·`fireCooldown`·`fireRange`)은 활잡이와 이름이 같다 —
+ * 같은 `updateFiring`에 그대로 건네주기 위해서다(`FiringTiming`).
+ */
+export interface ShieldOptions {
+  aimTime: number;
+  fireCooldown: number;
+  fireRange: number;
+  speed: number;
+  turnRate: number;
+  approachDistance: number;
+  keepDistance: number;
+  /** 방패가 다시 설 때 돌아오는 내구도. 판정은 `combat.ts`가 하고, 되돌리는 것만 여기서 한다. */
+  shieldHp: number;
+}
+
+/**
+ * 겨누고 쏘는 박자. 활잡이와 방패병이 같은 코드를 쓰되 값만 갈린다 —
+ * 종류마다 겨눔을 새로 만들면 "멈춰 선 적은 곧 무언가 한다"는 예고의 규칙이 갈라진다.
+ */
+interface FiringTiming {
+  aimTime: number;
+  fireCooldown: number;
+  fireRange: number;
 }
 
 /** 이번 스텝에 적이 쏜 화살 하나. World가 이것을 받아 실제 화살로 만든다. */
@@ -87,10 +122,11 @@ export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyS
 
   for (const enemy of enemies) {
     if (enemy.hitFlash > 0) enemy.hitFlash = Math.max(0, enemy.hitFlash - dt * 2.5);
+    if (enemy.shieldFlash > 0) enemy.shieldFlash = Math.max(0, enemy.shieldFlash - dt * 3.2);
 
     if (!enemy.alive) {
       enemy.respawnTimer -= dt;
-      if (enemy.respawnTimer <= 0) revive(enemy);
+      if (enemy.respawnTimer <= 0) revive(enemy, options);
       continue;
     }
 
@@ -103,6 +139,12 @@ export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyS
       continue;
     }
 
+    if (enemy.kind === 'shield') {
+      const shot = stepShield(enemy, enemies, dir, dist, options);
+      if (shot) result.shots.push(shot);
+      continue;
+    }
+
     // 몸은 늘 플레이어를 향해 돈다. 화살은 몸이 보는 쪽으로 나가므로,
     // 방금 등 뒤로 돌아간 플레이어를 곧바로 맞히지 못한다 — 그 틈이 회피의 여지다.
     enemy.facing = rotateToward(
@@ -111,7 +153,7 @@ export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyS
       options.turnRate * dt,
     );
 
-    const shot = updateFiring(enemy, dist, options);
+    const shot = updateFiring(enemy, dist, options, options);
     if (shot) result.shots.push(shot);
 
     // 겨누는 동안에는 멈춰 선다. 이것이 "지금 나를 노리고 있다"는 유일한 예고다.
@@ -197,6 +239,55 @@ function stepCharger(
   moveBy(enemy, move, charger.speed, options);
 }
 
+/**
+ * 방패병 한 마리 (DESIGN 9번). **활잡이의 박자를 그대로 쓴다** —
+ * 다가온다 → 멈춰 서서 겨눈다 → 화살을 놓는다. 여기서 갈리는 것은 셋뿐이다:
+ *
+ * - **느리게 돈다**(`SHIELD.turnRate`). 방패가 정면만 막으므로, 몸이 도는 속도가
+ *   곧 "옆구리가 열리는가"를 정한다. 가까이 붙어 돌면 방패가 못 따라온다.
+ * - **옆으로 돌지 않는다.** 활잡이는 사이 구간에서 플레이어를 돌지만(`desiredMove`)
+ *   방패병은 버티고 선다. 도는 것은 이 적이 아니라 플레이어여야 한다 —
+ *   둘이 함께 돌면 서로의 각이 그대로여서 옆구리가 영영 안 열린다.
+ * - **거리가 짧다**(`fireRange` 11 · `approachDistance` 9 · `keepDistance` 6).
+ *   돌아갈 수 있는 거리까지 걸어와야 이 적이 요구하는 것이 성립한다.
+ *
+ * 겨누는 동안 방패가 내려가는 것은 여기 없다 — 그건 화살이 닿는 자리의 일이라
+ * `combat.ts`의 `blocksArrow`가 `aimTimer` 하나로 판단한다.
+ */
+function stepShield(
+  enemy: Enemy,
+  enemies: readonly Enemy[],
+  dir: Vec2,
+  dist: number,
+  options: EnemyStepOptions,
+): EnemyShot | null {
+  const { dt, shield } = options;
+
+  enemy.facing = rotateToward(enemy.facing, Math.atan2(dir.y, dir.x), shield.turnRate * dt);
+
+  const shot = updateFiring(enemy, dist, options, shield);
+
+  // 겨누는 동안에는 멈춰 선다. 활잡이와 같은 예고다.
+  //   approach 바깥 → 다가온다
+  //   keep 안쪽     → 물러난다 (몸에 붙어 서면 플레이어가 적에게 가린다)
+  //   그 사이       → 버티고 선다
+  // 두 경계를 벌려 두지 않으면 그 선 위에서 한 발짝마다 앞뒤로 떤다.
+  const move = { x: 0, y: 0 };
+  if (enemy.aimTimer <= 0) {
+    if (dist > shield.approachDistance) {
+      move.x = dir.x;
+      move.y = dir.y;
+    } else if (dist < shield.keepDistance) {
+      move.x = -dir.x;
+      move.y = -dir.y;
+    }
+  }
+  addSeparation(move, enemy, enemies, options.separation);
+  moveBy(enemy, move, shield.speed, options);
+
+  return shot;
+}
+
 function distanceTo(enemy: Enemy, point: Vec2): number {
   return Math.hypot(point.x - enemy.pos.x, point.y - enemy.pos.y);
 }
@@ -210,10 +301,14 @@ function moveBy(enemy: Enemy, move: Vec2, speed: number, options: EnemyStepOptio
   clampToArena(enemy, options.arenaRadius - options.bodyRadius);
 }
 
-/** 쓰러진 적을 제자리에 다시 세운다. 체력도 타이머도 함께 되돌린다. */
-function revive(enemy: Enemy): void {
+/** 쓰러진 적을 제자리에 다시 세운다. 체력도 방패도 타이머도 함께 되돌린다. */
+function revive(enemy: Enemy, options: EnemyStepOptions): void {
   enemy.alive = true;
   enemy.hp = enemy.maxHp;
+  // 방패도 함께 돌아온다. 부서진 채로 다시 서면 그 판의 방패병은 두 번째부터
+  // 그냥 느린 활잡이가 되어, 이 적이 요구하는 것이 한 번 쓰고 사라진다.
+  enemy.shieldHp = enemy.kind === 'shield' ? options.shield.shieldHp : 0;
+  enemy.shieldFlash = 0;
   enemy.pos = { x: enemy.home.x, y: enemy.home.y };
   enemy.respawnTimer = 0;
   enemy.aimTimer = 0;
@@ -226,13 +321,23 @@ function revive(enemy: Enemy): void {
 /**
  * 겨누기와 쏘기. 사거리 안이고 쿨다운이 끝났으면 겨누기 시작하고,
  * 겨누기가 끝나는 순간 화살 하나를 돌려준다.
+ *
+ * **활잡이와 방패병이 이 함수 하나를 함께 쓴다.** 박자만 `timing`으로 갈린다
+ * (활잡이는 `options` 자신을, 방패병은 `options.shield`를 건넨다 —
+ * 프레임마다 객체를 새로 만들지 않으려고 이름을 맞춰 두었다).
+ * 화살의 흔들림·총구 위치는 종류를 가리지 않으므로 `options`에서 그대로 읽는다.
  */
-function updateFiring(enemy: Enemy, dist: number, options: EnemyStepOptions): EnemyShot | null {
+function updateFiring(
+  enemy: Enemy,
+  dist: number,
+  options: EnemyStepOptions,
+  timing: FiringTiming,
+): EnemyShot | null {
   if (enemy.aimTimer > 0) {
     enemy.aimTimer -= options.dt;
     if (enemy.aimTimer > 0) return null;
     enemy.aimTimer = 0;
-    enemy.fireCooldown = options.fireCooldown;
+    enemy.fireCooldown = timing.fireCooldown;
     // 조준을 조금 흔든다. 정확히 겨누면 멈춰 선 순간 무조건 맞아서 대응할 여지가 없다.
     const angle = enemy.facing + (options.random() * 2 - 1) * options.spread;
     const dir = { x: Math.cos(angle), y: Math.sin(angle) };
@@ -246,8 +351,8 @@ function updateFiring(enemy: Enemy, dist: number, options: EnemyStepOptions): En
   }
 
   if (enemy.fireCooldown > 0) enemy.fireCooldown -= options.dt;
-  if (enemy.fireCooldown <= 0 && options.playerAlive && dist <= options.fireRange) {
-    enemy.aimTimer = options.aimTime;
+  if (enemy.fireCooldown <= 0 && options.playerAlive && dist <= timing.fireRange) {
+    enemy.aimTimer = timing.aimTime;
   }
   return null;
 }

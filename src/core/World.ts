@@ -9,6 +9,7 @@ import {
   PLAYER,
   REINFORCE,
   REVIVE,
+  SHIELD,
   UPGRADE,
 } from '../data/config';
 import { UPGRADE_CARDS } from '../data/upgrades';
@@ -56,8 +57,14 @@ export interface EnemySpawn extends Vec2 {
  * 표준 적 배치. 자동 조준이 "가장 가까운" 것을 고르는지 눈으로 보이게 흩어 둔다.
  * 적은 쓰러지면 이 자리로 돌아와 다시 선다 — 플레이어에게서 먼 자리라 숨 돌릴 틈이 생긴다.
  *
- * **다섯 중 하나가 돌진형이다**(DESIGN 9번). 활잡이만 있으면 거리를 벌리는 것 하나로
- * 모든 위협이 풀린다 — 섞어야 "물러날 곳"과 "버틸 곳"이 동시에 사라진다.
+ * **다섯 중 하나는 돌진형, 하나는 방패병이다**(DESIGN 9번). 활잡이만 있으면 거리를
+ * 벌리는 것 하나로 모든 위협이 풀린다 — 섞어야 "물러날 곳"과 "버틸 곳"이 동시에 사라진다.
+ * 셋이 함께 있으면 요구하는 것도 셋이 된다: 계속 움직여라 · 옆으로 비켜라 · 돌아서 쏴라.
+ *
+ * **방패병은 활잡이 하나를 바꿔 세웠다. 수를 늘리지 않았다** — 적을 하나 더 세우면
+ * 한 판 길이가 가장 먼저 움직인다(세션 13이 돌진형 하나로 한 판을 32초 늘렸다).
+ * 돌진형(오른쪽)과 마주 보는 자리에 두어, 왼쪽으로 물러나도 오른쪽으로 물러나도
+ * 각각 다른 것을 요구받게 했다.
  *
  * **하나인 이유는 재서 정했다.** 둘로 두면 한 판이 105초로 짧아져 3~5분 선(150~330초,
  * `tests/progression.test.ts`) 밑으로 떨어졌다. 돌진형은 화살과 달리 예고를 보고도
@@ -70,14 +77,19 @@ export interface EnemySpawn extends Vec2 {
 const ENEMY_LAYOUT: readonly EnemySpawn[] = [
   { x: 0, y: -13 },
   { x: 12, y: 6, kind: 'charger' },
-  { x: -12, y: 6 },
+  { x: -12, y: 6, kind: 'shield' },
   { x: 18, y: -9 },
   { x: -18, y: -9 },
 ];
 
-/** 종류별 최대 체력. 적을 세우는 자리가 여기 하나뿐이라 표도 하나면 된다. */
-function maxHpOf(kind: EnemyKind): number {
-  return kind === 'charger' ? CHARGER.maxHp : ENEMY.maxHp;
+/**
+ * 종류별 최대 체력과 방패 내구도. 적을 세우는 길이 `spawnEnemy` 하나뿐이라 표도 하나면 된다 —
+ * 종류를 하나 더 넣을 때 고칠 자리가 여기와 `systems/enemyAi.ts` 둘로 끝나야 한다.
+ */
+function bodyOf(kind: EnemyKind): { maxHp: number; shieldHp: number } {
+  if (kind === 'charger') return { maxHp: CHARGER.maxHp, shieldHp: 0 };
+  if (kind === 'shield') return { maxHp: SHIELD.maxHp, shieldHp: SHIELD.shieldHp };
+  return { maxHp: ENEMY.maxHp, shieldHp: 0 };
 }
 
 export interface WorldOptions {
@@ -186,8 +198,7 @@ export class World {
 
   constructor(options: WorldOptions = {}) {
     this.enemies = (options.enemies ?? ENEMY_LAYOUT).map((p) => {
-      const kind = p.kind ?? 'archer';
-      const enemy = createEnemy(this.nextEnemyId++, p.x, p.y, maxHpOf(kind), kind);
+      const enemy = this.spawnEnemy(p.kind ?? 'archer', p.x, p.y);
       // 처음 선 적은 잠깐 다가오기만 한다(`ENEMY.startDelay`). 손을 대기도 전에
       // 첫 대를 맞으면 무엇에 맞았는지 알 수 없다 — 일어선 사람에게 적이 기다려 주는 것
       // (`REVIVE.enemyDelay`)과 같은 자리다. **증원에는 주지 않는다**: 22m 밖에서
@@ -252,6 +263,7 @@ export class World {
       invulnerable: PLAYER.invulnerable,
       respawnDelay: ENEMY.respawnDelay,
       bounceRange: ARROW.bounceRange,
+      shieldArc: SHIELD.arc,
       player: this.player,
       enemies: this.enemies,
     });
@@ -287,10 +299,18 @@ export class World {
     if (this.elapsed < due) return;
 
     this.joinedEnemies += 1;
-    const kind: EnemyKind =
-      this.joinedEnemies % REINFORCE.chargerEvery === 0 ? 'charger' : 'archer';
+    // 무엇이 들어오는지는 표가 정한다(`REINFORCE.order`). 순서가 코드가 아니라
+    // 데이터에 있어야, 종류를 하나 더 넣을 때 이 함수를 고치지 않는다.
+    const order = REINFORCE.order;
+    const kind = order[(this.joinedEnemies - 1) % order.length] ?? 'archer';
     const at = this.pickReinforceSpawn();
-    this.enemies.push(createEnemy(this.nextEnemyId++, at.x, at.y, maxHpOf(kind), kind));
+    this.enemies.push(this.spawnEnemy(kind, at.x, at.y));
+  }
+
+  /** 적 한 마리를 세운다. 종류별 수치를 꺼내 오는 길은 여기 하나뿐이다. */
+  private spawnEnemy(kind: EnemyKind, x: number, y: number): Enemy {
+    const { maxHp, shieldHp } = bodyOf(kind);
+    return createEnemy(this.nextEnemyId++, x, y, maxHp, kind, shieldHp);
   }
 
   /**
@@ -373,6 +393,7 @@ export class World {
       muzzleOffset: ENEMY.arrow.muzzleOffset,
       contactRadius: ENEMY.radius + PLAYER.radius,
       charger: CHARGER,
+      shield: SHIELD,
       random: this.random,
     });
   }

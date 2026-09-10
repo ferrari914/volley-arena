@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA, CHARGER, ENEMY, PLAYER } from '../src/data/config';
+import { ARENA, CHARGER, ENEMY, PLAYER, SHIELD } from '../src/data/config';
 import { createEnemy, type Enemy } from '../src/entities/types';
 import { stepEnemies, type EnemyStepOptions } from '../src/systems/enemyAi';
 
@@ -10,6 +10,9 @@ const enemyAt = (x: number, y: number): Enemy => createEnemy(nextId++, x, y, ENE
 /** 돌진형 한 마리(DESIGN 9번). 활잡이와 같은 자리에 세워 두고 행동만 비교한다. */
 const chargerAt = (x: number, y: number): Enemy =>
   createEnemy(nextId++, x, y, CHARGER.maxHp, 'charger');
+/** 방패병 한 마리(DESIGN 9번). 방패를 들려서 세운다. */
+const shieldAt = (x: number, y: number): Enemy =>
+  createEnemy(nextId++, x, y, SHIELD.maxHp, 'shield', SHIELD.shieldHp);
 
 function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
   return {
@@ -32,6 +35,7 @@ function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
     muzzleOffset: ENEMY.arrow.muzzleOffset,
     contactRadius: ENEMY.radius + PLAYER.radius,
     charger: CHARGER,
+    shield: SHIELD,
     // 흔들림 없이 곧장 겨눈다. 판정을 볼 때 난수가 끼면 무엇을 보고 있는지 흐려진다.
     random: () => 0.5,
     ...overrides,
@@ -385,5 +389,125 @@ describe('적 봇 — 쓰러진 뒤', () => {
     enemy.alive = false;
     enemy.respawnTimer = 100;
     expect(run([enemy], 5)).toHaveLength(0);
+  });
+});
+
+/**
+ * DESIGN 9번 둘째 종류 — 방패병.
+ *
+ * 앞의 둘과 같은 문법(다가온다 · 예고한다 · 저지른다)을 쓰고, 저지르는 것도
+ * 활잡이와 같은 화살이다. **이 적이 새로 요구하는 것은 서는 자리다** — 돌아서 쏴라.
+ * 그 요구가 성립하려면 여기 있는 것들이 지켜져야 한다:
+ * 1. **느리게 돈다** — 붙어서 도는 사람을 못 따라와야 옆구리가 열린다.
+ * 2. **옆으로 돌지 않는다** — 둘이 함께 돌면 각이 그대로여서 영영 안 열린다.
+ * 3. **가까이 온다** — 돌아갈 수 있는 거리까지 걸어와야 한다.
+ * (방패가 실제로 막는 자리는 화살 쪽 일이라 `tests/systems.test.ts`가 본다.)
+ */
+describe('방패병', () => {
+  /** 겨누지 않게 해 두고 움직임만 본다. `MOVE_ONLY`와 같은 이유다. */
+  const NEVER_AIMS: Partial<EnemyStepOptions> = { shield: { ...SHIELD, fireRange: 0 } };
+  /** 도는 것만 본다. 발을 묶어 두어야 반지름이 변하지 않는다. */
+  const TURN_ONLY: Partial<EnemyStepOptions> = {
+    shield: { ...SHIELD, fireRange: 0, speed: 0 },
+  };
+
+  /**
+   * 플레이어가 반지름 radius로 적 주위를 도는 동안 돌린다.
+   * 돌기가 끝난 뒤 적이 보는 쪽과 실제 플레이어 방향 사이의 각(rad)을 돌려준다 —
+   * 이 각이 방패의 반각(`SHIELD.arc`)을 넘으면 옆구리가 열린 것이다.
+   */
+  function orbit(enemy: Enemy, radius: number, seconds: number): number {
+    let angle = 0;
+    for (let i = 0; i < Math.round(seconds / DT); i += 1) {
+      angle += (PLAYER.speed / radius) * DT;
+      const playerPos = { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+      stepEnemies([enemy], options({ ...TURN_ONLY, playerPos }));
+    }
+    const last = { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+    const toPlayer = Math.atan2(last.y - enemy.pos.y, last.x - enemy.pos.x);
+    return Math.abs(Math.atan2(Math.sin(toPlayer - enemy.facing), Math.cos(toPlayer - enemy.facing)));
+  }
+
+  it('활잡이처럼 겨눈 뒤에 쏜다 (예고는 종류를 가리지 않는다)', () => {
+    const enemy = shieldAt(0, -8);
+    const shots = run([enemy], SHIELD.aimTime + 0.2);
+    expect(shots.length).toBe(1);
+  });
+
+  it('활잡이보다 가까이 와서야 겨눈다 (돌아갈 수 있는 거리까지 걸어온다)', () => {
+    // 활잡이가 쏘는 거리(15 안쪽)에 세워 둔다. 방패병은 아직 쏘지 못한다.
+    const between = (ENEMY.fireRange + SHIELD.fireRange) / 2;
+    expect(run([shieldAt(0, -between)], 1, { shield: { ...SHIELD, speed: 0 } })).toHaveLength(0);
+    expect(run([enemyAt(0, -between)], 1, { speed: 0 }).length).toBeGreaterThan(0);
+  });
+
+  it('붙어서 도는 사람은 못 따라온다 (옆구리가 열린다)', () => {
+    const near = shieldAt(0, -6);
+    // 6m에서 도는 사람의 각속도는 1.2rad/s, 방패병은 0.8rad/s다. 초당 0.4rad씩 벌어진다.
+    expect(orbit(near, 6, 4)).toBeGreaterThan(SHIELD.arc);
+  });
+
+  it('멀찍이 도는 사람은 방패가 따라 돈다 (붙어야 열린다)', () => {
+    const far = shieldAt(0, -12);
+    // 12m에서 도는 사람의 각속도는 0.6rad/s로 방패병(0.8)보다 느리다 — 계속 정면이다.
+    expect(orbit(far, 12, 4)).toBeLessThan(SHIELD.arc);
+  });
+
+  it('사이 구간에서는 옆으로 돌지 않고 버티고 선다', () => {
+    const middle = (SHIELD.keepDistance + SHIELD.approachDistance) / 2;
+    const enemy = shieldAt(0, -middle);
+    const before = { ...enemy.pos };
+    run([enemy], 1, NEVER_AIMS);
+    expect(Math.hypot(enemy.pos.x - before.x, enemy.pos.y - before.y)).toBeLessThan(0.05);
+  });
+
+  it('멀면 다가오고 너무 가까우면 물러난다', () => {
+    const far = shieldAt(0, -14);
+    run([far], 1, NEVER_AIMS);
+    expect(Math.hypot(far.pos.x, far.pos.y)).toBeLessThan(14);
+
+    const close = shieldAt(0, -SHIELD.keepDistance + 2);
+    run([close], 1, NEVER_AIMS);
+    expect(Math.hypot(close.pos.x, close.pos.y)).toBeGreaterThan(SHIELD.keepDistance - 2);
+  });
+
+  it('두 경계 사이에 멈춰 서고 그 선 위에서 떨지 않는다', () => {
+    // 세션 13이 돌진형에서 밟은 자리다 — 경계가 하나면 그 선 위에서 앞뒤로 떤다.
+    const enemy = shieldAt(0, -14);
+    run([enemy], 6, NEVER_AIMS);
+    const settled = Math.hypot(enemy.pos.x, enemy.pos.y);
+    expect(settled).toBeGreaterThanOrEqual(SHIELD.keepDistance);
+    expect(settled).toBeLessThanOrEqual(SHIELD.approachDistance + 0.1);
+
+    let moved = 0;
+    for (let i = 0; i < Math.round(2 / DT); i += 1) {
+      const before = { ...enemy.pos };
+      stepEnemies([enemy], options(NEVER_AIMS));
+      moved = Math.max(moved, Math.hypot(enemy.pos.x - before.x, enemy.pos.y - before.y));
+    }
+    expect(moved).toBeLessThan(0.01);
+  });
+
+  it('겨누는 동안에는 멈춰 선다 (활잡이와 같은 예고다)', () => {
+    const enemy = shieldAt(0, -14);
+    // 걸어와 사거리에 드는 순간까지만 돌린다. 시간을 정해 두고 재면 그 사이에
+    // 겨눔이 끝나 버려 무엇을 보고 있는지 흐려진다.
+    for (let i = 0; i < Math.round(10 / DT) && enemy.aimTimer <= 0; i += 1) {
+      stepEnemies([enemy], options());
+    }
+    expect(enemy.aimTimer).toBeGreaterThan(0);
+    const before = { ...enemy.pos };
+    run([enemy], SHIELD.aimTime / 2);
+    expect(Math.hypot(enemy.pos.x - before.x, enemy.pos.y - before.y)).toBeLessThan(1e-6);
+  });
+
+  it('다시 서면 방패도 돌아온다 (한 번 쓰고 사라지지 않는다)', () => {
+    const enemy = shieldAt(0, -8);
+    enemy.shieldHp = 0;
+    enemy.alive = false;
+    enemy.respawnTimer = ENEMY.respawnDelay;
+    run([enemy], ENEMY.respawnDelay + 0.1, NEVER_AIMS);
+    expect(enemy.alive).toBe(true);
+    expect(enemy.shieldHp).toBe(SHIELD.shieldHp);
   });
 });

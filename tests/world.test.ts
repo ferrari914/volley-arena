@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { World } from '../src/core/World';
-import { AIM, ARENA, ARROW, CHARGER, CORE, ENEMY, PLAYER, REINFORCE, REVIVE } from '../src/data/config';
+import {
+  AIM,
+  ARENA,
+  ARROW,
+  CHARGER,
+  CORE,
+  ENEMY,
+  PLAYER,
+  REINFORCE,
+  REVIVE,
+  SHIELD,
+} from '../src/data/config';
 import type { FrameInput } from '../src/core/World';
 
 const DT = 1 / 60;
@@ -366,14 +377,31 @@ describe('World — 증원', () => {
     expect(REINFORCE.spawnRadius).toBeLessThanOrEqual(ARENA.radius - ENEMY.radius);
   });
 
-  it('돌진형도 섞여 들어온다 — 활잡이만 늘면 물러설 곳만 좁아진다', () => {
+  it('세 종류가 다 섞여 들어온다 — 한 종류만 늘면 요구하는 것도 하나로 준다', () => {
     const world = new World();
     survive(world, REINFORCE.firstDelay + REINFORCE.interval * REINFORCE.maxExtra);
     const joined = world.enemies.slice(layout);
-    expect(joined.filter((e) => e.kind === 'charger').length).toBe(
-      Math.floor(REINFORCE.maxExtra / REINFORCE.chargerEvery),
-    );
-    expect(joined.filter((e) => e.kind === 'archer').length).toBeGreaterThan(0);
+    // 표(`REINFORCE.order`)에 적힌 그대로 들어와야 한다. 표를 고치면 이 검사가 함께 움직인다.
+    expect(joined.map((e) => e.kind)).toEqual([...REINFORCE.order]);
+    for (const kind of ['archer', 'charger', 'shield'] as const) {
+      expect(joined.filter((e) => e.kind === kind).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('증원으로 들어온 방패병도 방패를 들고 있다', () => {
+    // 처음 배치와 증원이 다른 길로 세워지면(생성자 · updateReinforcements) 한쪽만
+    // 방패를 빠뜨리기 쉽다 — 세우는 길을 `spawnEnemy` 하나로 모아 둔 이유다.
+    // **들어온 그 순간에 본다.** 판을 끝까지 돌리고 나서 보면 이미 몇 대 맞은 뒤라
+    // 방패를 들고 왔는지 맞아서 깎인 것인지 구별할 수 없다.
+    const world = new World();
+    const nth = REINFORCE.order.indexOf('shield') + 1;
+    expect(nth).toBeGreaterThan(0);
+    // 첫 방패병이 들어오는 시각까지만 돌린다(`survive`가 체력을 되돌려 준다 —
+    // 그냥 돌리면 증원이 오기 전에 쓰러져 시계가 멈춘다).
+    survive(world, REINFORCE.firstDelay + REINFORCE.interval * (nth - 1) + 1);
+    const joined = world.enemies[world.enemies.length - 1];
+    expect(joined?.kind).toBe('shield');
+    expect(joined?.shieldHp).toBe(SHIELD.shieldHp);
   });
 
   it('이어하기로 살아나도 증원은 되돌아가지 않는다', () => {

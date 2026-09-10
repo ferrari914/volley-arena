@@ -59,13 +59,15 @@ export interface Arrow {
 
 /**
  * 적의 종류 (DESIGN 9번).
- * - `archer` — 거리를 지키며 화살을 쏜다(DESIGN 5번의 그 적).
- * - `charger` — 거리를 지우며 몸으로 부딪는다. 화살을 쏘지 않는다.
+ * - `archer` — 거리를 지키며 화살을 쏜다(DESIGN 5번의 그 적). → 계속 움직여라
+ * - `charger` — 거리를 지우며 몸으로 부딪는다. 화살을 쏘지 않는다. → 옆으로 비켜라
+ * - `shield` — 앞을 막고 걸어와 쏜다. 정면으로 온 화살은 방패가 받는다. → 돌아서 쏴라
  *
- * 종류마다 다른 수치는 `data/config.ts`의 `ENEMY`·`CHARGER`에 있고,
- * 행동이 갈리는 곳은 `systems/enemyAi.ts` 한 곳뿐이다.
+ * 종류마다 다른 수치는 `data/config.ts`의 `ENEMY`·`CHARGER`·`SHIELD`에 있고,
+ * 행동이 갈리는 곳은 `systems/enemyAi.ts` 한 곳뿐이다
+ * (방패가 화살을 받는 자리만 `systems/combat.ts`에 있다 — 판정은 화살 쪽 일이다).
  */
-export type EnemyKind = 'archer' | 'charger';
+export type EnemyKind = 'archer' | 'charger' | 'shield';
 
 /** 적 봇 (DESIGN 5번). 플레이어를 쫓아와 겨누고 쏜다. */
 export interface Enemy {
@@ -93,6 +95,14 @@ export interface Enemy {
   /** 다음으로 겨눌(웅크릴) 수 있을 때까지 남은 시간(s). */
   fireCooldown: number;
   /**
+   * 남은 방패 내구도. **방패병만 쓴다**(나머지는 늘 0).
+   * 정면에서 온 화살이 몸 대신 이것을 깎고, 0이 되면 방패가 떨어져 나간다
+   * (`systems/combat.ts`의 `blocksArrow`). 다시 서는 순간 함께 돌아온다.
+   */
+  shieldHp: number;
+  /** 방패가 화살을 받아 낸 연출용. 1에서 0으로 줄어든다. 몸이 아니라 방패가 번쩍인다. */
+  shieldFlash: number;
+  /**
    * 돌진이 남은 시간(s). **돌진형만 쓴다**(활잡이는 늘 0).
    * 0보다 큰 동안에는 방향을 바꾸지 않고 `facing` 쪽으로만 달린다 —
    * 그래서 옆으로 비킨 플레이어를 따라 꺾지 못한다. 이것이 피할 여지다.
@@ -112,12 +122,17 @@ export function createPlayer(maxHp: number): Player {
   };
 }
 
+/**
+ * 적 한 마리를 세운다. 종류별 수치(체력·방패)는 부르는 쪽이 표에서 꺼내 넣는다 —
+ * 여기서 config를 읽으면 테스트가 한 마리만 따로 세워 볼 때 표 전체가 딸려 온다.
+ */
 export function createEnemy(
   id: number,
   x: number,
   y: number,
   maxHp: number,
   kind: EnemyKind = 'archer',
+  shieldHp = 0,
 ): Enemy {
   return {
     id,
@@ -133,6 +148,8 @@ export function createEnemy(
     hitFlash: 0,
     aimTimer: 0,
     fireCooldown: 0,
+    shieldHp,
+    shieldFlash: 0,
     dashTimer: 0,
   };
 }
