@@ -178,6 +178,15 @@ function crowdProbe({ count, veteran }) {
       const dy = e.pos.y - world.player.pos.y;
       if (Math.hypot(dx, dy) <= 14) near += 1;
     }
+    // **한 프레임의 값만으로는 화살 쪽 비용을 읽을 수 없다.** 살아 있는 화살 수가 프레임마다
+    // 크게 흔들리기 때문이다 — 화살은 수명이 다해서도 죽지만 적에게 꽂혀서도 죽는다.
+    // 적이 코앞에 몰려 있으면 나가자마자 사라지고(실측 11발), 적이 멀면 다 날아가는 동안
+    // 쌓인다(같은 판에서 33발). 그래서 가장 많았던 프레임을 따로 붙잡아 둔다.
+    const peak = window.__crowdPeak ?? { arrows: 0, drawCalls: 0 };
+    peak.arrows = Math.max(peak.arrows, world.arrows.length);
+    peak.drawCalls = Math.max(peak.drawCalls, window.__drawCalls ?? 0);
+    window.__crowdPeak = peak;
+
     window.__crowd = {
       total: world.enemies.length,
       alive: alive.length,
@@ -185,6 +194,11 @@ function crowdProbe({ count, veteran }) {
       elapsed: world.elapsed,
       level: world.progress.level,
       arrows: world.arrows.length,
+      // 바닥의 코어도 하나에 한 콜씩이다(세션 26). 잘 하는 사람일수록 드롭이 쌓여
+      // **화살보다 코어가 더 많은 프레임**이 나온다 — 화살 쪽 값을 읽으려면 이 수를 함께 봐야 한다.
+      cores: world.cores.length,
+      peakArrows: peak.arrows,
+      peakDrawCalls: peak.drawCalls,
       // 화살 쪽 렌더 비용을 읽으려면 화살이 몇 발씩 나가는지를 함께 봐야 한다.
       shot: {
         count: world.stats.arrowCount,
@@ -299,6 +313,19 @@ try {
     // fps는 그 직전의 헐거운 화면(또는 밀어 대느라 무거웠던 프레임)을 아직 기억하고 있다.
     // 견주어야 하는 것은 창의 나이가 아니라 **제 모양을 갖춘 뒤의 나이**다.
     await page.waitForTimeout(SETTLE_MS);
+    // 기다리는 동안에도 판은 돈다. 적은 쓰러지고 다시 서고, 사람은 코어를 주우러 걸어간다 —
+    // 그래서 이 순간에 무리가 화면에 들어와 있으리라는 보장이 없다(실측: 열다섯 중 둘만 남은 프레임).
+    // 무리가 든 프레임을 잠깐 기다렸다가 찍는다. 못 잡으면 그냥 찍고, 아래 수로 판단하게 한다.
+    await page
+      .waitForFunction(
+        () => {
+          const seen = window.__crowd;
+          return seen ? seen.near >= Math.max(1, seen.alive - 1) : false;
+        },
+        undefined,
+        { timeout: 5000 },
+      )
+      .catch(() => console.warn('  (무리가 흩어진 프레임에 찍는다 — 아래 수를 보고 판단할 것)'));
     const path = `${OUT}/${label}.png`;
     const age = Date.now() - openedAt;
     await page.screenshot({ path });
@@ -307,12 +334,13 @@ try {
     console.log(
       `  적 ${seen.alive}/${seen.total}마리(14m 안 ${seen.near}) · ` +
         `${Math.round(seen.elapsed)}초 · Lv${seen.level} · 화살 ${seen.arrows} · ` +
-        `드로우콜 ${seen.drawCalls}`,
+        `코어 ${seen.cores} · 드로우콜 ${seen.drawCalls}`,
     );
     console.log(
       `  카드 ${seen.cards}장 · 한 번에 ${seen.shot.count}발 · 관통 ${seen.shot.pierce} · ` +
         `튕김 ${seen.shot.bounce} · 발사 간격 ${seen.shot.cooldown.toFixed(3)}s`,
     );
+    console.log(`  가장 많았던 프레임: 화살 ${seen.peakArrows} · 드로우콜 ${seen.peakDrawCalls}`);
     await page.close();
   } else {
     for (const kind of kinds) {
