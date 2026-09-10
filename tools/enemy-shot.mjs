@@ -5,6 +5,7 @@
  *   npm run shot:enemy -- shield calm worn flash aim
  *   npm run shot:enemy -- crowd             # 적이 상한(15마리)까지 찬 화면
  *   npm run shot:enemy -- crowd 13
+ *   npm run shot:enemy -- crowd veteran     # 그 자리까지 실제로 싸워 올라간 사람의 화면
  *
  * **왜 `npm run qa`로는 안 되는가**: qa는 판을 처음부터 돌려 화면 흐름을 잰다.
  * 그 판에서 특정 적이 화면에 잡히는지는 운이고(방패병은 22m 밖에 서 있다),
@@ -32,11 +33,17 @@ const OUT = 'shots';
 const STATES = ['live', 'calm', 'aim', 'worn', 'flash'];
 /** 무리 화면의 기본 목표 수. `REINFORCE`의 상한(5 + maxExtra)과 같은 값이다. */
 const CROWD_DEFAULT = 15;
-/** 창을 열고 찍기까지의 시간(ms). 목표 수가 달라도 이 나이는 같게 둔다(아래 주석). */
+/**
+ * **다 모인 뒤 찍기까지 기다리는 시간(ms).** 창을 연 시각이 아니라 화면이 제 모양을 갖춘
+ * 시각에서 잰다 — 다 채우는 데 걸리는 시간은 목표 수마다 다르고, `veteran`은 판을 실제로
+ * 돌리느라 20초 넘게 걸린다(자세한 이유는 아래 기다림 옆에 적어 두었다).
+ */
 const SETTLE_MS = 15000;
 
 const argv = process.argv.slice(2);
 const crowd = argv.includes('crowd');
+/** 무리 화면을 **실제로 싸워 올라간 사람**으로 찍는가(위 `crowdProbe` 머리말). */
+const veteran = argv.includes('veteran');
 const kind = argv.find((a) => ['archer', 'charger', 'shield'].includes(a));
 const states = argv.filter((a) => STATES.includes(a));
 const kinds = kind ? [kind] : ['archer', 'charger', 'shield'];
@@ -73,22 +80,93 @@ function closeUpProbe({ kind, state }) {
 }
 
 /**
- * 적이 목표 수만큼 설 때까지 **시계만 앞으로 민다**. 적을 직접 만들어 세우지 않는 이유:
+ * 적이 목표 수만큼 설 때까지 판을 앞으로 민다. 적을 직접 만들어 세우지 않는 이유:
  * 증원이 어디에 서고 무엇이 오는지는 `REINFORCE.order`와 `pickReinforceSpawn`이 정하는데,
  * 도구가 그것을 흉내 내면 표를 고친 날 화면이 조용히 거짓말을 하게 된다.
- * 시계를 밀면 게임이 자기 규칙대로 부른다 — 그래서 이 화면은 실제로 오래 버틴 사람의 화면이다.
+ * 판을 밀면 게임이 자기 규칙대로 부른다 — 그래서 이 화면은 실제로 오래 버틴 사람의 화면이다.
  *
- * **한 프레임에 4초씩 민다.** 증원 간격(32초)보다 짧아야 한 프레임에 여러 마리가
- * 한꺼번에 튀어나오지 않고, 다 채운 뒤 HUD에 남는 시각도 실제 그 시각에서 4초 안쪽이다
- * (열다섯째는 408초에 온다). 상한에 닿아 더 안 늘면 시계도 멈춘다 —
- * 안 그러면 화면의 시각만 끝없이 올라간다.
+ * **미는 방법이 둘이다. 무엇을 보려느냐로 갈린다.**
+ *
+ * - 기본(`crowd`): **시계만 민다**(`world.elapsed += AHEAD`). 판은 실시간 그대로 돌아가므로
+ *   화면에 서는 것은 **Lv1이 상대하는 열다섯**이다. 적 쪽 값(드로우콜·뭉침)을 볼 때 쓴다.
+ *   싸게 밀 수 있고, 사람 쪽이 자라지 않으니 적 수 말고는 달라지는 것이 없다.
+ * - `veteran`: **판을 실제로 돌린다**(`world.step`을 한 프레임에 여러 번). 코어를 주우러 걷고
+ *   카드를 고르고 적을 잡는 것이 전부 게임 안에서 실제로 일어나므로, 그 자리에 닿았을 때의
+ *   레벨·화력·살아 있는 화살 수가 **진짜 그 판의 값**이다. 화살 쪽 렌더 비용은 이쪽으로만 볼 수 있다 —
+ *   시계만 밀면 화살은 영영 대여섯 발이다(STATUS 세션 26의 '렌더 비용' 항목).
+ *
+ * 한 프레임에 미는 양(`AHEAD`)은 두 쪽이 다르다 — 그 자리의 주석을 보라.
+ * 상한에 닿아 더 안 늘면 미는 것도 멈춘다. 안 그러면 화면의 시각만 끝없이 올라가고,
+ * `veteran`은 fps 표시까지 흐려진다(미는 동안에는 한 프레임이 천 스텝을 돈다.
+ * 다 채운 뒤 `SETTLE_MS`만큼 가만히 두어야 프레임이 제 무게로 돌아온다).
  */
-function crowdProbe({ count }) {
+function crowdProbe({ count, veteran }) {
+  /**
+   * 한 프레임에 밀어 주는 판 시간(s).
+   *
+   * **시계를 미는 쪽은 4초여야 한다** — 증원 간격(32초)보다 짧아야 한 프레임에 여러 마리가
+   * 한꺼번에 튀어나오지 않는다. **판을 실제로 돌리는 쪽은 그럴 이유가 없다**: 그 안에서
+   * 한 스텝씩 다 도므로 증원도 제 시각에 하나씩 온다. 그래서 크게 잡는다 —
+   * 여기서 아끼는 것은 그리는 시간이다(400초를 4초씩 밀면 백 프레임을 그린다).
+   */
+  const AHEAD = veteran ? 20 : 4;
+  /** 게임 루프와 같은 60fps. `Ticker`의 고정 간격이다. */
+  const DT = 1 / 60;
+
+  /**
+   * 가장 가까운 코어로 걸어가는 사람. `tests/support/match.ts`의 `walkToNearestCore`와 같은 규칙이고,
+   * **밸런스를 재는 자와 같은 사람이어야 화면의 레벨을 그 표와 견줄 수 있다.**
+   * (브라우저 안에서 도는 코드라 그 파일을 가져다 쓸 수 없어 규칙만 옮겨 적었다.)
+   */
+  function walkToNearestCore(world) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const core of world.cores) {
+      if (!core.alive) continue;
+      const d = Math.hypot(core.pos.x - world.player.pos.x, core.pos.y - world.player.pos.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = core;
+      }
+    }
+    if (!best || bestDist < 1e-6) return { move: { x: 0, y: 0 }, aim: null };
+    return {
+      move: {
+        x: (best.pos.x - world.player.pos.x) / bestDist,
+        y: (best.pos.y - world.player.pos.y) / bestDist,
+      },
+      aim: null,
+    };
+  }
+
+  /** 아직 더 밀어야 하는가. 상한에 닿았거나 판이 너무 길어지면 멈춘다. */
+  function filling(world) {
+    return world.enemies.length < count && world.elapsed < 900 && !world.defeated;
+  }
+
   return (world) => {
-    // 카드가 뜨면 판이 멈춘다(그동안 시계도 안 간다). 첫 장을 골라 계속 굴린다 —
-    // 여기까지 온 사람이 카드를 안 골랐을 리 없다.
-    if (world.offer) world.chooseUpgrade(world.offer.choices[0].card.id);
-    if (world.enemies.length < count && world.elapsed < 900) world.elapsed += 4;
+    if (veteran) {
+      // **화력만 고르는 사람이다**(`preferPower`). 화살 쪽 렌더 비용의 상한을 보려는 화면이므로,
+      // 화살이 가장 많아지는 쪽을 세운다 — 다중 발사·관통·튕김이 전부 화력 카드다.
+      const steps = Math.round(AHEAD / DT);
+      for (let i = 0; i < steps && filling(world); i += 1) {
+        const offer = world.offer;
+        if (offer) {
+          const pick = offer.choices.find((c) => c.card.role === 'power') ?? offer.choices[0];
+          // 못 고르면 판이 멈춘 채로 남는다. 여기서 접어야 바깥의 기다림이 이유를 보고 끝난다.
+          if (!pick || !world.chooseUpgrade(pick.card.id)) break;
+        }
+        // 미는 동안에는 죽지 않는다(아래와 같은 이유). 스텝 안에서 체력이 다하면 판이 끝나므로
+        // 돌리기 **전에** 채운다.
+        world.player.hp = world.player.maxHp;
+        world.step(walkToNearestCore(world), DT);
+      }
+    } else {
+      // 카드가 뜨면 판이 멈춘다(그동안 시계도 안 간다). 첫 장을 골라 계속 굴린다 —
+      // 여기까지 온 사람이 카드를 안 골랐을 리 없다.
+      if (world.offer) world.chooseUpgrade(world.offer.choices[0].card.id);
+      if (filling(world)) world.elapsed += AHEAD;
+    }
     // 찍는 동안에는 죽지 않는다. 열다섯을 상대로 이 판의 화력은 몇 초를 못 버틴다 —
     // 쓰러지면 화면이 결과 화면으로 바뀌어 아무것도 못 본다.
     world.player.hp = world.player.maxHp;
@@ -107,6 +185,14 @@ function crowdProbe({ count }) {
       elapsed: world.elapsed,
       level: world.progress.level,
       arrows: world.arrows.length,
+      // 화살 쪽 렌더 비용을 읽으려면 화살이 몇 발씩 나가는지를 함께 봐야 한다.
+      shot: {
+        count: world.stats.arrowCount,
+        pierce: world.stats.pierce,
+        bounce: world.stats.bounce,
+        cooldown: world.stats.fireCooldown,
+      },
+      cards: world.takenUpgrades.length,
       // 이 프레임이 실제로 부른 드로우콜. 아래 `countDrawCalls`가 세고 여기서 비운다.
       drawCalls: window.__drawCalls ?? 0,
     };
@@ -165,39 +251,67 @@ async function openPage(label, probeSource, arg, before) {
 try {
   await mkdir(OUT, { recursive: true });
   if (crowd) {
-    const label = `crowd-${crowdCount}`;
+    const label = veteran ? `crowd-${crowdCount}-veteran` : `crowd-${crowdCount}`;
     const openedAt = Date.now();
-    const page = await openPage(label, crowdProbe.toString(), { count: crowdCount }, countDrawCalls);
+    if (veteran) console.log('  (판을 실제로 돌려 그 자리까지 간다 — 20초쯤 걸린다)');
+    const page = await openPage(
+      label,
+      crowdProbe.toString(),
+      { count: crowdCount, veteran },
+      countDrawCalls,
+    );
     // 다 서기까지: 4초씩 미니 열 마리에 100프레임 남짓이다.
+    // `veteran`은 한 프레임이 240스텝을 도느라 프레임이 무거워져 그만큼 더 걸린다 —
+    // 그래도 15초 안에는 끝나야 한다(아래 `SETTLE_MS`가 그 시각에 찍는다).
     await page.waitForFunction(
       (count) => (window.__crowd?.total ?? 0) >= count,
       crowdCount,
       { timeout: 20000 },
     );
     // 선 것과 화면에 든 것은 다르다. 증원은 22m 밖에서 걸어 들어온다(활잡이 3.4m/s).
-    // 열넷째까지 14m 안에 들면 찍는다 — 하나쯤은 늘 쓰러져 다시 서는 중이라
+    // 하나만 빼고 14m 안에 들면 찍는다 — 하나쯤은 늘 쓰러져 다시 서는 중이라
     // 전원을 기다리면 영영 안 찍힌다.
+    //
+    // **`veteran`은 목표 수가 아니라 서 있는 수에서 센다.** 실제로 싸우는 판에서는
+    // 늘 서넛이 쓰러져 다시 서는 중이라(첫 판에 11/15였다) 목표 수로 세면 이 기다림이
+    // 영영 안 끝난다. 그러면 20초를 다 쓰고 나서야 찍히는데, 그건 나이를 맞춘 화면이 아니다
+    // (`SETTLE_MS` 주석 — 나이가 다르면 fps도 드로우콜도 견줄 수 없다).
     await page
       .waitForFunction(
-        (count) => (window.__crowd?.near ?? 0) >= count - 1,
-        crowdCount,
+        ([count, veteran]) => {
+          const seen = window.__crowd;
+          if (!seen) return false;
+          const target = veteran ? Math.max(1, seen.alive - 1) : count - 1;
+          return seen.near >= target;
+        },
+        [crowdCount, veteran],
         { timeout: 20000 },
       )
       .catch(() => console.warn('  (다 모이기 전에 찍는다 — 아래 수를 보고 판단할 것)'));
-    // **어느 장이든 창을 연 지 같은 시간 뒤에 찍는다.** fps 표시는 지수 이동 평균이라
-    // (`Ticker`의 0.1) 0에서 올라오는 데 시간이 걸리고, 무리를 채우는 데 걸리는 시간은
-    // 목표 수마다 다르다. 그냥 찍으면 **적이 적은 화면일수록 fps가 낮게 찍힌다** —
-    // 일찍 찍히기 때문이다(적 5마리를 2초에 찍으니 14fps, 열다섯을 7초에 찍으니 24fps였다).
-    // 두 장을 나란히 놓고 견주려면 나이가 같아야 한다.
-    await page.waitForTimeout(Math.max(0, openedAt + SETTLE_MS - Date.now()));
+    // **다 모인 뒤로 같은 시간을 기다렸다가 찍는다.** fps 표시는 지수 이동 평균이라
+    // (`Ticker`의 0.1) 화면이 바뀐 뒤 값이 따라오는 데 시간이 걸린다. 그냥 찍으면
+    // **적이 적은 화면일수록 fps가 낮게 찍힌다** — 일찍 찍히기 때문이다
+    // (적 5마리를 2초에 찍으니 14fps, 열다섯을 7초에 찍으니 24fps였다).
+    //
+    // **창을 연 시각이 아니라 여기서부터 잰다.** 다 채우는 데 걸리는 시간이 장마다 다르기
+    // 때문이다 — 시계만 미는 쪽은 2초, `veteran`은 판을 실제로 돌리느라 20초쯤 걸린다.
+    // 창을 연 시각에서 재면 오래 채운 장일수록 **다 모인 화면을 짧게 본 채로** 찍히고,
+    // fps는 그 직전의 헐거운 화면(또는 밀어 대느라 무거웠던 프레임)을 아직 기억하고 있다.
+    // 견주어야 하는 것은 창의 나이가 아니라 **제 모양을 갖춘 뒤의 나이**다.
+    await page.waitForTimeout(SETTLE_MS);
     const path = `${OUT}/${label}.png`;
+    const age = Date.now() - openedAt;
     await page.screenshot({ path });
     const seen = await page.evaluate(() => window.__crowd);
-    console.log(`  ${path}`);
+    console.log(`  ${path} (창을 연 지 ${(age / 1000).toFixed(1)}초)`);
     console.log(
       `  적 ${seen.alive}/${seen.total}마리(14m 안 ${seen.near}) · ` +
         `${Math.round(seen.elapsed)}초 · Lv${seen.level} · 화살 ${seen.arrows} · ` +
         `드로우콜 ${seen.drawCalls}`,
+    );
+    console.log(
+      `  카드 ${seen.cards}장 · 한 번에 ${seen.shot.count}발 · 관통 ${seen.shot.pierce} · ` +
+        `튕김 ${seen.shot.bounce} · 발사 간격 ${seen.shot.cooldown.toFixed(3)}s`,
     );
     await page.close();
   } else {
