@@ -484,6 +484,37 @@ function withReplyLimit(promise, what) {
 }
 
 /**
+ * **이 기계가 프레임을 몇 장 그렸는지 게임 밖에서 따로 센다**(세션 32).
+ *
+ * 게임 시계는 프레임을 타고 흐른다 — `Ticker`가 한 프레임에 최대 다섯 스텝(83ms)까지만
+ * 밀어 주므로, **브라우저가 초당 0.6프레임 아래로 떨어지면 게임 시간은 20초에 1초도 못 간다.**
+ * 그 화면은 멈춘 것이 아니라 기어가는 것인데, 시계만 보는 자에게는 똑같이 보인다.
+ *
+ * HUD의 fps 표시로는 이것을 잴 수 없다. 같은 `maxSteps` 때문에 한 프레임의 길이가 83ms로
+ * 잘려서 **표시되는 fps에 12라는 바닥이 생긴다** — 0.5fps로 기어가는 화면도 12fps라고 적는다.
+ * 그래서 재는 자가 자기 세는 자를 따로 심는다(게임 코드는 건드리지 않는다).
+ */
+function installFrameProbe(context) {
+  return context.addInitScript(() => {
+    window.__qaFrames = 0;
+    const tick = () => {
+      window.__qaFrames += 1;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+/** 지금까지 그려진 프레임 수. 세는 자가 안 심겼으면 null. */
+async function readFrames(page) {
+  const count = await withReplyLimit(
+    page.evaluate(() => (typeof window.__qaFrames === 'number' ? window.__qaFrames : null)),
+    '그린 프레임 수 묻기',
+  );
+  return typeof count === 'number' ? count : null;
+}
+
+/**
  * **시계가 멈췄을 때 왜 멈췄는지를 화면에서 직접 묻는다**(세션 31).
  *
  * 게임이 시계를 세우는 길은 둘뿐이다.
@@ -492,7 +523,10 @@ function withReplyLimit(promise, what) {
  *       탭이 뒤로 가면 배터리를 안 쓰는 것이 맞는 동작이지만, **헤드리스에서는
  *       사람이 아무 짓도 안 했는데 페이지가 뒤로 가 있을 수 있다** — 그러면 판은
  *       멀쩡한데 시계만 서고, 재는 자에게는 "게임이 안 끝난다"로 보인다.
- * 둘 다 아니면 남는 것은 브라우저가 프레임을 못 그리고 있다는 뜻이다.
+ * 둘 다 아니면 남는 것은 브라우저 쪽인데, **세션 32가 세 판을 다시 재서 그 자리를 좁혔다.**
+ * 프레임이 아예 안 그려지는 것과 **초당 한 장 아래로 기어가는 것**은 다른 고장이다 —
+ * 앞엣것은 브라우저가 죽은 것이고, 뒤엣것은 이 기계가 느린 것이다.
+ * 그래서 추측으로 적지 않고 `__qaFrames`를 두 번 읽어 **실제로 몇 장을 그렸는지 재서 적는다.**
  */
 async function readWhyStopped(page) {
   try {
@@ -512,10 +546,32 @@ async function readWhyStopped(page) {
     if (state.defeat) return '쓰러진 화면이 떠 있다';
     if (state.ad) return '광고 화면이 떠 있다';
     if (state.paused) return 'body[data-paused]는 붙어 있는데 덮은 화면이 없다';
-    return '멈춘 화면이 없다 — 브라우저가 프레임을 못 그리고 있다';
+    const drawn = await measureFps(page);
+    if (drawn === null) return '멈춘 화면이 없다 — 프레임을 세는 자가 안 심겼다';
+    if (drawn.frames === 0) {
+      return `멈춘 화면이 없는데 ${drawn.seconds.toFixed(1)}초 동안 프레임이 한 장도 안 그려졌다 — 브라우저가 멈췄다`;
+    }
+    return (
+      `멈춘 화면이 없다 — 브라우저가 ${drawn.seconds.toFixed(1)}초에 ${drawn.frames}장만 그린다 ` +
+      `(${drawn.fps.toFixed(2)}fps · 게임 시간은 프레임당 83ms까지만 흐르므로 ` +
+      `0.6fps 아래면 시계는 20초에 1초도 못 간다)`
+    );
   } catch (error) {
     return error.message;
   }
+}
+
+/** 실제로 그려지는 프레임 수를 잰다(재는 자가 심은 세는 자로). 못 재면 null. */
+async function measureFps(page, windowMs = 3000) {
+  const before = await readFrames(page);
+  if (before === null) return null;
+  const startedAt = Date.now();
+  await page.waitForTimeout(windowMs);
+  const after = await readFrames(page);
+  if (after === null) return null;
+  const seconds = (Date.now() - startedAt) / 1000;
+  const frames = after - before;
+  return { frames, seconds, fps: frames / seconds };
 }
 
 async function waitForDefeat(page, gameLimit = 150) {
@@ -842,6 +898,10 @@ try {
   for (const view of VIEWS) {
     const { name, safe, ...contextOptions } = view;
     const context = await browser.newContext(contextOptions);
+    // 게임이 멈춘 것과 이 기계가 기어가는 것을 가르려면 프레임을 따로 세야 한다.
+    // 페이지를 열기 전에 심어야 첫 프레임부터 센다(`pressure` 화면은 중간에 다시 열린다 —
+    // 컨텍스트에 심으므로 다시 열어도 따라온다).
+    await installFrameProbe(context);
     const page = await context.newPage();
 
     page.on('console', (message) => {
