@@ -528,15 +528,31 @@ function installFrameProbe(context) {
       raw(tick);
     };
     raw(tick);
+
+    /** 게임이 제 입으로 말하는 값. 그리는 칸에서 매 프레임 불린다(main.ts). */
+    window.__qaRenders = 0;
+    window.__qaWorld = null;
+    window.__frameProbe = (world) => {
+      window.__qaRenders += 1;
+      window.__qaWorld = {
+        elapsed: world.elapsed,
+        defeated: world.defeated,
+        offer: Boolean(world.offer),
+        paused: world.isPaused,
+        hp: world.player.hp,
+      };
+    };
   });
 }
 
-/** 지금까지의 두 셈(브라우저 · 게임 틱). 세는 자가 안 심겼으면 null. */
+/** 지금까지의 세 셈(브라우저 · 게임 틱 · 게임이 그린 횟수)과 게임이 말하는 상태. */
 async function readFrames(page) {
   const counts = await withReplyLimit(
     page.evaluate(() => ({
       browser: typeof window.__qaFrames === 'number' ? window.__qaFrames : null,
       game: typeof window.__qaGameFrames === 'number' ? window.__qaGameFrames : null,
+      renders: typeof window.__qaRenders === 'number' ? window.__qaRenders : null,
+      world: window.__qaWorld ?? null,
     })),
     '그린 프레임 수 묻기',
   );
@@ -586,7 +602,15 @@ async function readWhyStopped(page) {
   }
 }
 
-/** 실제로 그려지는 프레임 수를 잰다(재는 자가 심은 세는 자로). 못 재면 null. */
+/**
+ * 같은 창(3초) 안에서 세 가지를 한꺼번에 잰다:
+ * 브라우저가 그리는가 · 게임의 틱이 도는가 · **게임의 시계가 그동안 갔는가.**
+ *
+ * 마지막 것이 세션 36이 더한 자리다. 앞의 둘만으로는 "틱은 44fps로 도는데 시계는 안 간다"에서
+ * 막힌다 — 그때 **HUD의 글자가 안 바뀌는 것**과 **게임의 `elapsed`가 안 느는 것**은
+ * 고칠 자리가 정반대인데, 밖에서 글자만 읽는 자에게는 똑같이 보인다.
+ * 그래서 같은 창에서 게임에게 직접 묻는다(`window.__frameProbe` · 게임 코드는 안 건드린다).
+ */
 async function measureFps(page, windowMs = 3000) {
   const before = await readFrames(page);
   if (before === null) return null;
@@ -603,6 +627,17 @@ async function measureFps(page, windowMs = 3000) {
     fps: frames / seconds,
     gameFrames,
     gameFps: gameFrames === null ? null : gameFrames / seconds,
+    world: worldDelta(before, after),
+  };
+}
+
+/** 창의 앞뒤로 게임이 말한 것을 견줘 한 덩이로 만든다. 물을 길이 없었으면 null. */
+function worldDelta(before, after) {
+  if (before.world === null || after.world === null) return null;
+  return {
+    ...after.world,
+    moved: after.world.elapsed - before.world.elapsed,
+    renders: (after.renders ?? 0) - (before.renders ?? 0),
   };
 }
 

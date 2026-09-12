@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import {
   describeFrames,
   describeOverlay,
+  describeWorld,
   FROZEN_LIMIT,
   MAX_GAME_SECONDS_PER_FRAME,
   STALL_FPS,
@@ -34,7 +35,7 @@ const CLEAR = {
 };
 
 /** 브라우저는 도는데 게임 틱만 `gameFps`로 도는 3초짜리 측정 한 건. */
-function measured(gameFps, browserFps = 60) {
+function measured(gameFps, browserFps = 60, world = null) {
   const seconds = 3;
   return {
     frames: Math.round(browserFps * seconds),
@@ -42,6 +43,21 @@ function measured(gameFps, browserFps = 60) {
     fps: browserFps,
     gameFrames: Math.round(gameFps * seconds),
     gameFps,
+    world,
+  };
+}
+
+/** 게임이 제 입으로 말한 것 한 벌. 검사마다 필요한 칸만 바꾼다. */
+function said(extra = {}) {
+  return {
+    elapsed: 65,
+    moved: 0,
+    renders: 134,
+    defeated: false,
+    offer: false,
+    paused: false,
+    hp: 42,
+    ...extra,
   };
 }
 
@@ -98,8 +114,8 @@ describe('멈춘 이유 — 두 셈(브라우저 · 게임 틱)', () => {
 
 describe('세션 32~34를 헤매게 한 문구가 다시 나오지 않는다', () => {
   it('35fps가 도는데 "기어간다"고 적지 않는다 — 그 속도면 시계는 흘렀어야 한다', () => {
-    const why = describeFrames(measured(35, 35.13));
-    expect(why).toContain('앞뒤가 안 맞는다');
+    const why = describeFrames(measured(35, 35.13, said()));
+    expect(why).toContain('화면의 시계는 안 간다');
     expect(why).not.toContain('기어간다');
     expect(why).not.toContain('1초도 못 간다');
   });
@@ -113,15 +129,41 @@ describe('세션 32~34를 헤매게 한 문구가 다시 나오지 않는다', (
       const moves = Math.min(1, fps * MAX_GAME_SECONDS_PER_FRAME) * FROZEN_LIMIT;
       // 시계는 초 단위로만 적히므로, 1초를 못 넘기면 재는 자에게는 선 것으로 보인다.
       if (moves < 1) expect(why, `${fps.toFixed(2)}fps`).toContain('기어간다');
-      else expect(why, `${fps.toFixed(2)}fps`).toContain('앞뒤가 안 맞는다');
+      else expect(why, `${fps.toFixed(2)}fps`).toContain('화면의 시계는 안 간다');
     }
   });
 
   it('설명이 없는 자리에서는 있는 척하지 않고 얼마나 갔어야 하는지를 적는다', () => {
     // 5fps면 시계는 실제의 0.42배로 흘러 20초 창에서 8.3초가 갔어야 한다. 그런데 안 갔다.
-    const why = describeFrames(measured(5));
+    const why = describeFrames(measured(5, 60, said()));
     expect(why).toContain('0.42배');
     expect(why).toContain('8.3초는 갔어야 한다');
+  });
+});
+
+describe('게임에게 직접 물은 값 (세션 36)', () => {
+  it('물을 길이 없으면 없다고 적는다 — 그 자리를 비워 두면 다음 바퀴가 지어낸다', () => {
+    expect(describeWorld(null)).toContain('물을 길이 없다');
+    expect(describeFrames(measured(44))).toContain('물을 길이 없다');
+  });
+
+  it('게임의 시계가 갔으면 멈춘 것은 화면의 글자라고 가른다', () => {
+    // 고칠 자리가 정반대인 두 고장이라, 이 한 줄이 다음 바퀴의 방향을 정한다.
+    expect(describeWorld(said({ moved: 3.01 }))).toContain('멈춘 것은 화면의 글자다');
+    expect(describeWorld(said({ moved: 0 }))).toContain('World.step까지 못 간다');
+  });
+
+  it('게임이 아는 이유를 그대로 옮긴다 — 카드 · 쓰러짐 · 이름 없는 isPaused', () => {
+    expect(describeWorld(said({ offer: true, paused: true }))).toContain('카드가 떠 있다');
+    expect(describeWorld(said({ defeated: true, paused: true }))).toContain('쓰러졌다');
+    expect(describeWorld(said({ paused: true }))).toContain('isPaused만 켜져 있다');
+  });
+
+  it('멈출 이유가 없다고 하면 없다고 적는다 (없는 이유를 지어내지 않는다)', () => {
+    const line = describeWorld(said());
+    expect(line).toContain('멈출 이유가 없다고 한다');
+    expect(line).toContain('65.00초');
+    expect(line).toContain('그리기 134번');
   });
 });
 

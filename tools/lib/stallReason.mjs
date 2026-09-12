@@ -79,13 +79,44 @@ export function describeFrames(drawn) {
     // 시계는 실제 시간의 (틱 속도 × 83ms)배로 흐른다. 1배가 천장이다.
     const rate = Math.min(1, drawn.gameFps * MAX_GAME_SECONDS_PER_FRAME);
     return (
-      `앞뒤가 안 맞는다 — ${gameSide}이 도는데 시계는 안 간다 (${browserSide}). ` +
-      `이 속도면 시계가 실제 시간의 ${rate.toFixed(2)}배로 흘러 ` +
-      `${FROZEN_LIMIT}초 동안 ${(rate * FROZEN_LIMIT).toFixed(1)}초는 갔어야 한다`
+      `${gameSide}이 도는데 화면의 시계는 안 간다 (${browserSide} · 이 속도면 시계가 실제 시간의 ` +
+      `${rate.toFixed(2)}배로 흘러 ${FROZEN_LIMIT}초 동안 ${(rate * FROZEN_LIMIT).toFixed(1)}초는 ` +
+      `갔어야 한다) — ${describeWorld(drawn.world)}`
     );
   }
   return (
     `멈춘 화면이 없다 — ${gameSide}으로 기어간다 (${browserSide} · 게임 시간은 프레임당 ` +
     `83ms까지만 흐르므로 ${STALL_FPS.toFixed(1)}fps 아래면 시계는 ${FROZEN_LIMIT}초에 1초도 못 간다)`
+  );
+}
+
+/**
+ * **게임에게 직접 물은 값을 한 줄로 적는다**(세션 36).
+ *
+ * "틱은 44fps로 도는데 시계는 안 간다"까지 좁히고 나면 남는 갈래가 둘인데,
+ * **고칠 자리가 정반대다**: 게임의 `elapsed`는 흐르는데 화면의 글자만 안 바뀌는 것(HUD 쪽)과,
+ * 게임의 `elapsed` 자체가 안 느는 것(`World.step`에 닿지 못하는 것)이다.
+ * 밖에서 HUD 글자만 읽는 자에게는 두 고장이 똑같이 보인다 — 그래서 게임의 입을 빌린다.
+ *
+ * 게임이 시계를 세우는 이유는 스스로 안다(`offer`·`defeated`). **셋 다 아니라고 하면
+ * 그렇게 적는다** — 없는 이유를 지어내는 것이 세션 32~34를 헤매게 한 병이다.
+ *
+ * @param {null | {elapsed:number, moved:number, renders:number,
+ *                 defeated:boolean, offer:boolean, paused:boolean, hp:number}} world
+ */
+export function describeWorld(world) {
+  if (world === null || world === undefined) return '게임에게 직접 물을 길이 없다(__frameProbe가 안 심겼다)';
+  const reasons = [];
+  if (world.offer) reasons.push('카드가 떠 있다');
+  if (world.defeated) reasons.push('쓰러졌다');
+  if (world.paused && reasons.length === 0) reasons.push('isPaused만 켜져 있다');
+  const said = reasons.length > 0 ? reasons.join(' · ') : '멈출 이유가 없다고 한다';
+  const clock =
+    world.moved > 0
+      ? `제 시계는 그 사이 ${world.moved.toFixed(2)}초 갔다 — 멈춘 것은 화면의 글자다`
+      : '제 시계도 안 갔다 — World.step까지 못 간다';
+  return (
+    `게임에게 물으니 ${world.elapsed.toFixed(2)}초 · 그리기 ${world.renders}번 · ` +
+    `체력 ${world.hp.toFixed(1)} · ${clock} (${said})`
   );
 }
