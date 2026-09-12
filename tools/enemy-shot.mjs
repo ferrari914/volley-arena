@@ -25,6 +25,7 @@
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { startPreview } from './lib/preview.mjs';
+import { acquireBrowserLock, LOCK_BUSY_EXIT } from './lib/lock.mjs';
 
 const PORT = 4187;
 const OUT = 'shots';
@@ -248,6 +249,15 @@ function countDrawCalls() {
       };
     }
   }
+}
+
+// 브라우저 도구는 한 번에 하나만 돈다(`lib/lock.mjs` 머리말을 보라).
+// 겹쳐 돌면 값이 틀리는 정도가 아니라, **틀린 값이 게임 이야기로 문서에 남는다.**
+try {
+  acquireBrowserLock('npm run shot:enemy (enemy-shot.mjs)');
+} catch (error) {
+  console.error(error.message);
+  process.exit(LOCK_BUSY_EXIT);
 }
 
 const preview = await startPreview(PORT);

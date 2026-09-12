@@ -6,7 +6,8 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['tools/**/*.mjs'],
+    // node에서 도는 파일들(도구와 그 검사). process·__dirname 같은 것을 쓴다.
+    files: ['tools/**/*.mjs', 'tests/**/*.mjs'],
     rules: { 'no-undef': 'off' },
   },
   {
