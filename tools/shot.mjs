@@ -46,6 +46,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { chromium, devices } from 'playwright';
 import { startPreview } from './lib/preview.mjs';
 import { acquireBrowserLock, LOCK_BUSY_EXIT } from './lib/lock.mjs';
+import { describeFrames, describeOverlay, FROZEN_LIMIT } from './lib/stallReason.mjs';
 
 const PORT = 4183;
 const OUT = 'shots';
@@ -458,8 +459,11 @@ function clockSeconds(text) {
  * 그래서 벽시계로는 **흐르는가**만 본다(`FROZEN_LIMIT` 동안 시계가 한 칸도 안 넘어가면 멈춘 것이다).
  * 원래 이 선이 잡으려던 것이 그것이고, 이 편이 더 빨리(240초가 아니라 20초) 잡아낸다.
  * `WALL_CAP`은 영영 안 끝나는 일만 막는 마지막 선이라 넉넉히 둔다.
+ *
+ * `FROZEN_LIMIT`은 `lib/stallReason.mjs`에서 가져온다 — 왜 멈췄는지를 적는 쪽이
+ * **이 20초로 "설 수 있는 속도"를 계산하기 때문이다**(0.6fps). 두 자리에 따로 적어 두면
+ * 한쪽만 바뀌는 날 문구가 조용히 거짓말을 한다.
  */
-const FROZEN_LIMIT = 20;
 const WALL_CAP = 600;
 
 /**
@@ -485,49 +489,79 @@ function withReplyLimit(promise, what) {
 }
 
 /**
- * **이 기계가 프레임을 몇 장 그렸는지 게임 밖에서 따로 센다**(세션 32).
+ * **프레임을 두 군데서 센다: 브라우저가 그리는가 · 게임의 틱이 도는가**(세션 32 · 세션 35).
  *
  * 게임 시계는 프레임을 타고 흐른다 — `Ticker`가 한 프레임에 최대 다섯 스텝(83ms)까지만
- * 밀어 주므로, **브라우저가 초당 0.6프레임 아래로 떨어지면 게임 시간은 20초에 1초도 못 간다.**
+ * 밀어 주므로, **초당 0.6프레임 아래로 떨어지면 게임 시간은 20초에 1초도 못 간다.**
  * 그 화면은 멈춘 것이 아니라 기어가는 것인데, 시계만 보는 자에게는 똑같이 보인다.
  *
  * HUD의 fps 표시로는 이것을 잴 수 없다. 같은 `maxSteps` 때문에 한 프레임의 길이가 83ms로
  * 잘려서 **표시되는 fps에 12라는 바닥이 생긴다** — 0.5fps로 기어가는 화면도 12fps라고 적는다.
  * 그래서 재는 자가 자기 세는 자를 따로 심는다(게임 코드는 건드리지 않는다).
+ *
+ * **세는 자가 하나였을 때 그 값이 거꾸로 읽혔다(세션 35).** 세션 32~34가 남긴 실패 문구는
+ * `브라우저가 3.0초에 106장만 그린다 (35.13fps)`라고 적으면서 동시에 **"브라우저가 프레임을
+ * 못 그린다"**고 말했다. 두 말은 함께 설 수 없다 — 35fps면 한 프레임이 28ms라
+ * `Ticker`의 83ms 천장에 닿지도 않고, 게임 시계는 실제 시간과 같은 속도로 흘러야 한다.
+ * **틀린 것은 게임이 아니라 셈이다: 그 106장은 재는 자 자신의 고리가 돈 횟수이지
+ * 게임이 돈 횟수가 아니다.** `main.ts`의 `syncRunning`이 `ticker.stop()`을 부르면
+ * 게임의 rAF 사슬만 끊기고, 재는 자의 고리는 그대로 돈다.
+ *
+ * 그래서 페이지의 `requestAnimationFrame`을 감싸 **게임이 받은 프레임을 따로 센다.**
+ * 우리 고리는 감싸기 전의 원본(`raw`)을 쓰므로 제 발자국을 제가 세지 않는다.
+ * (감싼 함수는 원본이 준 id를 그대로 돌려주므로 `cancelAnimationFrame`은 그대로 듣는다.)
  */
 function installFrameProbe(context) {
   return context.addInitScript(() => {
+    /** 재는 자의 고리가 돈 횟수 — "브라우저가 그리기는 하는가". */
     window.__qaFrames = 0;
+    /** 페이지(=게임 `Ticker`)가 rAF로 받은 횟수 — "게임의 틱이 도는가". */
+    window.__qaGameFrames = 0;
+    const raw = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (callback) =>
+      raw((time) => {
+        window.__qaGameFrames += 1;
+        return callback(time);
+      });
     const tick = () => {
       window.__qaFrames += 1;
-      requestAnimationFrame(tick);
+      raw(tick);
     };
-    requestAnimationFrame(tick);
+    raw(tick);
   });
 }
 
-/** 지금까지 그려진 프레임 수. 세는 자가 안 심겼으면 null. */
+/** 지금까지의 두 셈(브라우저 · 게임 틱). 세는 자가 안 심겼으면 null. */
 async function readFrames(page) {
-  const count = await withReplyLimit(
-    page.evaluate(() => (typeof window.__qaFrames === 'number' ? window.__qaFrames : null)),
+  const counts = await withReplyLimit(
+    page.evaluate(() => ({
+      browser: typeof window.__qaFrames === 'number' ? window.__qaFrames : null,
+      game: typeof window.__qaGameFrames === 'number' ? window.__qaGameFrames : null,
+    })),
     '그린 프레임 수 묻기',
   );
-  return typeof count === 'number' ? count : null;
+  return typeof counts?.browser === 'number' ? counts : null;
 }
 
 /**
  * **시계가 멈췄을 때 왜 멈췄는지를 화면에서 직접 묻는다**(세션 31).
  *
- * 게임이 시계를 세우는 길은 둘뿐이다.
+ * **게임이 시계를 세우는 길은 셋이다**(세션 35 정정 — 전에는 둘이라고 적어 두고
+ * 셋째를 아예 묻지 않았다).
  *   (1) `World.isPaused` — 카드가 떴거나 쓰러졌다. 그러면 `body[data-paused]`가 붙는다.
  *   (2) `document.hidden` — `main.ts`의 `syncRunning`이 **틱 자체를 멈춘다.**
  *       탭이 뒤로 가면 배터리를 안 쓰는 것이 맞는 동작이지만, **헤드리스에서는
  *       사람이 아무 짓도 안 했는데 페이지가 뒤로 가 있을 수 있다** — 그러면 판은
  *       멀쩡한데 시계만 서고, 재는 자에게는 "게임이 안 끝난다"로 보인다.
- * 둘 다 아니면 남는 것은 브라우저 쪽인데, **세션 32가 세 판을 다시 재서 그 자리를 좁혔다.**
- * 프레임이 아예 안 그려지는 것과 **초당 한 장 아래로 기어가는 것**은 다른 고장이다 —
- * 앞엣것은 브라우저가 죽은 것이고, 뒤엣것은 이 기계가 느린 것이다.
- * 그래서 추측으로 적지 않고 `__qaFrames`를 두 번 읽어 **실제로 몇 장을 그렸는지 재서 적는다.**
+ *   (3) **세로 화면 미디어쿼리** — 같은 `syncRunning`의 나머지 반쪽이다
+ *       (`(orientation: portrait) and (max-width: 820px)`). "돌려 주세요" 안내가 화면을
+ *       덮는 동안 그리지 않는 것도 맞는 동작인데, **이쪽은 `body[data-paused]`를 붙이지
+ *       않으므로 (1)의 그물에 걸리지 않는다.** 묻지 않으면 영영 안 보인다.
+ * 셋 다 아니면 남는 것은 브라우저 쪽이고, 거기서 다시 갈린다 —
+ * **그 갈림과 문구는 `lib/stallReason.mjs`에 있다.** 화면에서 값을 긁어 오는 일과
+ * 그 값을 읽고 뭐라고 적을지 정하는 일을 갈라 둔 것은, **뒤엣것이 실제로 틀렸었기 때문이다**
+ * (세션 32~34는 35fps를 보고 "브라우저가 못 그린다"고 적은 문구를 세 바퀴 동안 쫓았다).
+ * 이제 뒤엣것만 브라우저 없이 검사가 잰다(`tests/stallReason.test.mjs`).
  */
 async function readWhyStopped(page) {
   try {
@@ -535,6 +569,8 @@ async function readWhyStopped(page) {
       page.evaluate(() => ({
         hidden: document.hidden,
         visibility: document.visibilityState,
+        portrait: window.matchMedia('(orientation: portrait) and (max-width: 820px)').matches,
+        size: `${window.innerWidth}x${window.innerHeight}`,
         paused: document.body.dataset.paused === '1',
         card: Boolean(document.querySelector('#upgrade[data-show="1"]')),
         defeat: Boolean(document.querySelector('#defeat[data-show="1"]')),
@@ -542,21 +578,9 @@ async function readWhyStopped(page) {
       })),
       '왜 멈췄는지 묻기',
     );
-    if (state.hidden) return `페이지가 뒤로 가 있다(visibilityState ${state.visibility}) — 틱이 멈춘다`;
-    if (state.card) return '카드가 떠 있는데 안 내려간다';
-    if (state.defeat) return '쓰러진 화면이 떠 있다';
-    if (state.ad) return '광고 화면이 떠 있다';
-    if (state.paused) return 'body[data-paused]는 붙어 있는데 덮은 화면이 없다';
-    const drawn = await measureFps(page);
-    if (drawn === null) return '멈춘 화면이 없다 — 프레임을 세는 자가 안 심겼다';
-    if (drawn.frames === 0) {
-      return `멈춘 화면이 없는데 ${drawn.seconds.toFixed(1)}초 동안 프레임이 한 장도 안 그려졌다 — 브라우저가 멈췄다`;
-    }
-    return (
-      `멈춘 화면이 없다 — 브라우저가 ${drawn.seconds.toFixed(1)}초에 ${drawn.frames}장만 그린다 ` +
-      `(${drawn.fps.toFixed(2)}fps · 게임 시간은 프레임당 83ms까지만 흐르므로 ` +
-      `0.6fps 아래면 시계는 20초에 1초도 못 간다)`
-    );
+    const overlay = describeOverlay(state);
+    if (overlay !== null) return overlay;
+    return describeFrames(await measureFps(page));
   } catch (error) {
     return error.message;
   }
@@ -571,8 +595,15 @@ async function measureFps(page, windowMs = 3000) {
   const after = await readFrames(page);
   if (after === null) return null;
   const seconds = (Date.now() - startedAt) / 1000;
-  const frames = after - before;
-  return { frames, seconds, fps: frames / seconds };
+  const frames = after.browser - before.browser;
+  const gameFrames = after.game === null || before.game === null ? null : after.game - before.game;
+  return {
+    frames,
+    seconds,
+    fps: frames / seconds,
+    gameFrames,
+    gameFps: gameFrames === null ? null : gameFrames / seconds,
+  };
 }
 
 async function waitForDefeat(page, gameLimit = 150) {
