@@ -472,6 +472,22 @@ function clockSeconds(text) {
 const WALL_CAP = 600;
 
 /**
+ * **쓰러지기를 기다리는 동안 페이지에 말을 거는 간격(ms).**
+ *
+ * 전에는 150ms마다 CDP를 **세 번**(`page.$` 두 번 + `page.evaluate` 한 번) 두드렸다.
+ * 세션 36이 그 값을 재서 이렇게 바꿨다 — **재는 행위가 재려는 것을 멈추고 있었다.**
+ * 멈췄다고 적힌 구간에서 게임 시간은 실제의 **0.02배**로 흘렀는데,
+ * 재는 자가 3초만 입을 다물면(`measureFps`의 창) 곧바로 **1.00배**로 돌아왔다.
+ * 게임은 그 순간에도 "멈출 이유가 없다"고 말하고 있었다(`describeWorld`).
+ * 이 기계는 화면을 소프트웨어로 그리므로(2532x1170) 페이지의 손이 하나뿐이다 —
+ * 그 손을 왕복으로 붙잡으면 그릴 겨를이 없다.
+ *
+ * 카드는 늦게 골라도 판이 조금 길어질 뿐이고(그동안 게임은 멈춰 있다), 그 몫은
+ * `WALL_CAP`이 받아 준다. **덜 묻는 쪽이 더 정확하다.**
+ */
+const POLL_MS = 500;
+
+/**
  * **페이지가 대답하지 않는 것과 게임이 멈춘 것은 다른 고장이다**(세션 31).
  * 실제로 겪었다: 시계가 멈춘 것을 20초에 잡아야 하는데 **515초**가 걸렸다 —
  * 시계를 읽는 `page.evaluate` 자체가 그동안 돌아오지 않았기 때문이다.
@@ -657,13 +673,18 @@ async function waitForDefeat(page, gameLimit = 150) {
   for (;;) {
     let now;
     try {
-      if (await withReplyLimit(page.$('#defeat[data-show="1"]'), '쓰러진 화면')) {
-        return { fell: true };
-      }
-      if (await withReplyLimit(page.$('#upgrade[data-show="1"]'), '카드 화면')) {
-        await withReplyLimit(page.keyboard.press('Digit1'), '카드 고르기');
-      }
-      now = clockSeconds(await withReplyLimit(readClock(page), '시계 읽기'));
+      // 세 가지를 한 번에 묻는다(아래 POLL_MS 주석 참고). 왕복을 셋에서 하나로 줄인 자리다.
+      const seen = await withReplyLimit(
+        page.evaluate(() => ({
+          defeat: Boolean(document.querySelector('#defeat[data-show="1"]')),
+          card: Boolean(document.querySelector('#upgrade[data-show="1"]')),
+          clock: document.getElementById('hud-stats')?.textContent ?? '',
+        })),
+        '판이 어떤가 묻기',
+      );
+      if (seen.defeat) return { fell: true };
+      if (seen.card) await withReplyLimit(page.keyboard.press('Digit1'), '카드 고르기');
+      now = clockSeconds(seen.clock);
     } catch (error) {
       return { fell: false, stalled: true, why: `${error.message} — 게임이 아니라 브라우저가 멈췄다` };
     }
@@ -695,8 +716,7 @@ async function waitForDefeat(page, gameLimit = 150) {
           `(${(game / wall).toFixed(2)}배 · ${await readWhyStopped(page)})`,
       };
     }
-    // 카드를 빨리 내릴수록 게임 시간과 실제 시간이 가깝게 흐른다(멈춰 있는 몫이 줄어든다).
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(POLL_MS);
   }
 }
 
