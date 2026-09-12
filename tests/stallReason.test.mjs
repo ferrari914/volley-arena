@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeFrames,
+  describeClock,
   describeOverlay,
   describeWorld,
   FROZEN_LIMIT,
@@ -164,6 +165,21 @@ describe('게임에게 직접 물은 값 (세션 36)', () => {
     expect(line).toContain('멈출 이유가 없다고 한다');
     expect(line).toContain('65.00초');
     expect(line).toContain('그리기 134번');
+  });
+});
+
+describe('재는 자가 읽는 글자 (세션 36)', () => {
+  it('읽은 글자를 그대로 옮긴다 — 무엇을 읽고 섰다고 했는지가 보여야 한다', () => {
+    expect(describeClock({ clock: '0:19   처치 3', clocks: 1 })).toContain('"0:19   처치 3"');
+  });
+
+  it('시계가 화면에 없으면 없다고 말한다 (빈 글자를 "안 간다"로 적지 않는다)', () => {
+    expect(describeClock({ clock: null, clocks: 0 })).toContain('아예 없다');
+  });
+
+  it('같은 id가 둘이면 첫째만 읽힌다는 것을 함께 적는다', () => {
+    // getElementById는 첫째만 준다 — 살아 있는 HUD가 둘째면 재는 자는 죽은 글자를 읽는다.
+    expect(describeClock({ clock: '0:19   처치 3', clocks: 2 })).toContain('2개다');
   });
 });
 

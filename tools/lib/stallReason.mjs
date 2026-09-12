@@ -120,3 +120,20 @@ export function describeWorld(world) {
     `체력 ${world.hp.toFixed(1)} · ${clock} (${said})`
   );
 }
+
+/**
+ * **재는 자가 읽는 그 글자를 그대로 보여 준다**(세션 36).
+ *
+ * 게임은 제 시계가 1.00배로 흐른다고 하는데 화면의 시계는 안 갔다 — 그러면 남는 것은
+ * **둘 사이의 글자**다. 그 글자를 추측하지 말고 그대로 옮긴다.
+ * 같은 id가 둘이면 `getElementById`는 **첫째만** 돌려주므로, 살아 있는 HUD가 둘째일 때
+ * 재는 자는 영영 죽은 글자를 읽는다 — 그래서 개수도 함께 센다.
+ *
+ * @param {{clock:string|null, clocks:number}} state
+ */
+export function describeClock(state) {
+  if (state.clocks === 0) return '화면에 시계(#hud-stats)가 아예 없다';
+  const many =
+    state.clocks > 1 ? ` · #hud-stats가 ${state.clocks}개다(재는 자는 첫째만 읽는다)` : '';
+  return `재는 자가 읽는 글자는 "${state.clock}"${many}`;
+}

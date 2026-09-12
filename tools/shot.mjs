@@ -46,7 +46,12 @@ import { mkdir, rm } from 'node:fs/promises';
 import { chromium, devices } from 'playwright';
 import { startPreview } from './lib/preview.mjs';
 import { acquireBrowserLock, LOCK_BUSY_EXIT } from './lib/lock.mjs';
-import { describeFrames, describeOverlay, FROZEN_LIMIT } from './lib/stallReason.mjs';
+import {
+  describeClock,
+  describeFrames,
+  describeOverlay,
+  FROZEN_LIMIT,
+} from './lib/stallReason.mjs';
 
 const PORT = 4183;
 const OUT = 'shots';
@@ -591,12 +596,15 @@ async function readWhyStopped(page) {
         card: Boolean(document.querySelector('#upgrade[data-show="1"]')),
         defeat: Boolean(document.querySelector('#defeat[data-show="1"]')),
         ad: Boolean(document.querySelector('#adbreak[data-show="1"]')),
+        // 재는 자가 실제로 읽는 그 글자. 같은 id가 둘이면 첫째만 읽힌다는 것까지 함께 본다.
+        clock: document.getElementById('hud-stats')?.textContent ?? null,
+        clocks: document.querySelectorAll('#hud-stats').length,
       })),
       '왜 멈췄는지 묻기',
     );
     const overlay = describeOverlay(state);
     if (overlay !== null) return overlay;
-    return describeFrames(await measureFps(page));
+    return `${describeFrames(await measureFps(page))} · ${describeClock(state)}`;
   } catch (error) {
     return error.message;
   }
