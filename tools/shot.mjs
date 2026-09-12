@@ -483,6 +483,41 @@ function withReplyLimit(promise, what) {
   ]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * **시계가 멈췄을 때 왜 멈췄는지를 화면에서 직접 묻는다**(세션 31).
+ *
+ * 게임이 시계를 세우는 길은 둘뿐이다.
+ *   (1) `World.isPaused` — 카드가 떴거나 쓰러졌다. 그러면 `body[data-paused]`가 붙는다.
+ *   (2) `document.hidden` — `main.ts`의 `syncRunning`이 **틱 자체를 멈춘다.**
+ *       탭이 뒤로 가면 배터리를 안 쓰는 것이 맞는 동작이지만, **헤드리스에서는
+ *       사람이 아무 짓도 안 했는데 페이지가 뒤로 가 있을 수 있다** — 그러면 판은
+ *       멀쩡한데 시계만 서고, 재는 자에게는 "게임이 안 끝난다"로 보인다.
+ * 둘 다 아니면 남는 것은 브라우저가 프레임을 못 그리고 있다는 뜻이다.
+ */
+async function readWhyStopped(page) {
+  try {
+    const state = await withReplyLimit(
+      page.evaluate(() => ({
+        hidden: document.hidden,
+        visibility: document.visibilityState,
+        paused: document.body.dataset.paused === '1',
+        card: Boolean(document.querySelector('#upgrade[data-show="1"]')),
+        defeat: Boolean(document.querySelector('#defeat[data-show="1"]')),
+        ad: Boolean(document.querySelector('#adbreak[data-show="1"]')),
+      })),
+      '왜 멈췄는지 묻기',
+    );
+    if (state.hidden) return `페이지가 뒤로 가 있다(visibilityState ${state.visibility}) — 틱이 멈춘다`;
+    if (state.card) return '카드가 떠 있는데 안 내려간다';
+    if (state.defeat) return '쓰러진 화면이 떠 있다';
+    if (state.ad) return '광고 화면이 떠 있다';
+    if (state.paused) return 'body[data-paused]는 붙어 있는데 덮은 화면이 없다';
+    return '멈춘 화면이 없다 — 브라우저가 프레임을 못 그리고 있다';
+  } catch (error) {
+    return error.message;
+  }
+}
+
 async function waitForDefeat(page, gameLimit = 150) {
   const startedWall = Date.now();
   const started = clockSeconds(await readClock(page)) ?? 0;
@@ -514,7 +549,9 @@ async function waitForDefeat(page, gameLimit = 150) {
       return {
         fell: false,
         stalled: true,
-        why: `게임 시계가 ${frozen.toFixed(0)}초 동안 ${game}초에 멈춰 서 있다 — 판이 멈췄거나 카드가 안 내려간다`,
+        why:
+          `게임 시계가 ${frozen.toFixed(0)}초 동안 ${game}초에 멈춰 서 있다 ` +
+          `(${await readWhyStopped(page)})`,
       };
     }
     const wall = (Date.now() - startedWall) / 1000;
@@ -524,7 +561,7 @@ async function waitForDefeat(page, gameLimit = 150) {
         stalled: true,
         why:
           `벽시계 ${wall.toFixed(0)}초를 다 쓰는 동안 게임 시간은 ${game}초만 흘렀다 ` +
-          `(${(game / wall).toFixed(2)}배) — 게임이 아니라 이 기계가 느린 것이다`,
+          `(${(game / wall).toFixed(2)}배 · ${await readWhyStopped(page)})`,
       };
     }
     // 카드를 빨리 내릴수록 게임 시간과 실제 시간이 가깝게 흐른다(멈춰 있는 몫이 줄어든다).
