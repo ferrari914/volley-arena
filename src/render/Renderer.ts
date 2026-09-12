@@ -11,22 +11,12 @@ import {
   createEnemy,
   createLockMarker,
   createPlayer,
-  CAMERA_OFFSET as CAMERA_OFFSET_SPEC,
   PALETTE,
   SHIELD_POSE,
   type EnemyView,
 } from './models';
+import { cameraFocusFor, createGameCamera, placeCamera } from './camera';
 
-/**
- * 쿼터뷰 카메라가 플레이어로부터 떨어져 있는 거리. 1인칭도 정탑다운도 아니다.
- * 더 멀리 빼면 주변이 넓게 보이지만 작은 화면에서 플레이어가 점이 된다.
- * 값은 models.ts가 갖고 있다 — 적 머리 위 체력바가 같은 각도를 써야 하기 때문이다.
- */
-const CAMERA_OFFSET = new THREE.Vector3(
-  CAMERA_OFFSET_SPEC.x,
-  CAMERA_OFFSET_SPEC.y,
-  CAMERA_OFFSET_SPEC.z,
-);
 /** 픽셀 비율 상한. 3배 이상 화면에서 그대로 그리면 중급 기기가 못 버틴다. */
 const MAX_PIXEL_RATIO = 2;
 
@@ -58,6 +48,8 @@ export class Renderer {
   private readonly corePools: Record<CoreOrigin, THREE.Mesh[]> = { ambient: [], drop: [] };
 
   private readonly cameraFocus = new THREE.Vector3();
+  /** `syncCamera`가 매 프레임 쓰는 임시 자리. 프레임마다 새로 만들지 않으려고 둔다. */
+  private readonly focusTarget = new THREE.Vector3();
   private lastRenderTime = performance.now();
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -72,7 +64,7 @@ export class Renderer {
 
     this.scene.fog = new THREE.Fog(0x0b1020, 40, 96);
 
-    this.camera = new THREE.PerspectiveCamera(46, 1, 0.5, 220);
+    this.camera = createGameCamera();
     this.scene.add(this.camera);
 
     this.scene.add(createArena());
@@ -308,13 +300,8 @@ export class Renderer {
   private syncCamera(playerPos: Vec2, dt: number): void {
     // 프레임 수와 무관하게 같은 속도로 따라붙는다.
     const follow = 1 - Math.exp(-9 * dt);
-    this.cameraFocus.lerp(new THREE.Vector3(playerPos.x, 0, playerPos.y), follow);
-    this.camera.position.set(
-      this.cameraFocus.x + CAMERA_OFFSET.x,
-      CAMERA_OFFSET.y,
-      this.cameraFocus.z + CAMERA_OFFSET.z,
-    );
-    this.camera.lookAt(this.cameraFocus);
+    this.cameraFocus.lerp(cameraFocusFor(playerPos, this.focusTarget), follow);
+    placeCamera(this.camera, this.cameraFocus);
   }
 
   render(): void {
@@ -350,7 +337,7 @@ export class Renderer {
 
     // 카메라는 새 플레이어 자리로 즉시 옮긴다. 부드럽게 따라가게 두면
     // 판이 시작하자마자 화면이 지난 판의 마지막 자리에서 미끄러져 온다.
-    this.cameraFocus.set(world.player.pos.x, 0, world.player.pos.y);
+    this.cameraFocus.copy(cameraFocusFor(world.player.pos));
   }
 
   /** 화면의 한 점이 바닥면 어디인지. 마우스 조준에 쓴다. */

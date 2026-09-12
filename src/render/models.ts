@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { ArrowOwner, EnemyKind } from '../entities/types';
 import { ARENA, ARROW, CORE, ENEMY, PLAYER, SHIELD } from '../data/config';
+import { CAMERA_TILT } from './camera';
 
 /**
  * 모든 도형 생성은 이 파일 안에서만 한다.
@@ -51,15 +52,6 @@ export const PALETTE = {
   core: 0x7bffcf,
   coreDrop: 0xa6ff5e,
 } as const;
-
-/**
- * 쿼터뷰 카메라가 플레이어로부터 떨어져 있는 자리.
- * 여기 두는 이유: 적 머리 위 체력바가 카메라를 마주 보는 각도가 이 값에서 나온다.
- * 카메라는 돌지 않으므로 각도를 한 번 구해 두면 어느 자리에서나 맞는다
- * (원근 때문에 화면 가장자리에서 아주 조금 기울지만 눈에 띄지 않는다).
- */
-export const CAMERA_OFFSET = { x: 0, y: 15.5, z: 12.5 } as const;
-export const CAMERA_TILT = Math.atan2(CAMERA_OFFSET.y, CAMERA_OFFSET.z);
 
 function standard(color: number, extra: THREE.MeshStandardMaterialParameters = {}) {
   return new THREE.MeshStandardMaterial({ color, flatShading: true, ...extra });
@@ -486,6 +478,7 @@ function createShieldPlate(
  *
  * 카메라가 돌지 않는 쿼터뷰라서, 카메라를 마주 보는 각도를 한 번 고정해 두면
  * 매 프레임 방향을 다시 계산할 필요가 없다(적 20마리면 그 계산이 그냥 낭비다).
+ * 그 각도(`CAMERA_TILT`)는 `camera.ts`가 갖고 있다 — 화면을 세우는 값과 같아야 한다.
  * 채움은 지오메트리를 옆으로 밀어 두어 scale.x가 왼쪽 끝에 붙어 줄어들게 한다 —
  * 가운데에서 양쪽으로 줄어들면 체력바로 읽히지 않는다.
  */
