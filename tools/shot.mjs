@@ -461,15 +461,46 @@ function clockSeconds(text) {
 const FROZEN_LIMIT = 20;
 const WALL_CAP = 600;
 
+/**
+ * **페이지가 대답하지 않는 것과 게임이 멈춘 것은 다른 고장이다**(세션 31).
+ * 실제로 겪었다: 시계가 멈춘 것을 20초에 잡아야 하는데 **515초**가 걸렸다 —
+ * 시계를 읽는 `page.evaluate` 자체가 그동안 돌아오지 않았기 때문이다.
+ * 즉 멈춘 것은 게임 루프가 아니라 브라우저 쪽이었고, 그 사실이 문구에 한 글자도 없었다.
+ * 그래서 묻는 쪽에 한도를 건다 — 이쪽이 걸리면 게임이 아니라 **이 기계의 헤드리스 브라우저**다.
+ */
+const REPLY_LIMIT = 30;
+
+function withReplyLimit(promise, what) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`페이지가 ${REPLY_LIMIT}초 동안 대답하지 않는다 (${what})`)),
+        REPLY_LIMIT * 1000,
+      );
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function waitForDefeat(page, gameLimit = 150) {
   const startedWall = Date.now();
   const started = clockSeconds(await readClock(page)) ?? 0;
   let game = 0;
   let lastMoved = Date.now();
   for (;;) {
-    if (await page.$('#defeat[data-show="1"]')) return { fell: true };
-    if (await page.$('#upgrade[data-show="1"]')) await page.keyboard.press('Digit1');
-    const now = clockSeconds(await readClock(page));
+    let now;
+    try {
+      if (await withReplyLimit(page.$('#defeat[data-show="1"]'), '쓰러진 화면')) {
+        return { fell: true };
+      }
+      if (await withReplyLimit(page.$('#upgrade[data-show="1"]'), '카드 화면')) {
+        await withReplyLimit(page.keyboard.press('Digit1'), '카드 고르기');
+      }
+      now = clockSeconds(await withReplyLimit(readClock(page), '시계 읽기'));
+    } catch (error) {
+      return { fell: false, stalled: true, why: `${error.message} — 게임이 아니라 브라우저가 멈췄다` };
+    }
     if (now !== null && now - started !== game) {
       game = now - started;
       lastMoved = Date.now();
