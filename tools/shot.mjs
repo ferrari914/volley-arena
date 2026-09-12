@@ -323,10 +323,11 @@ async function checkEnemyPressure(page, name, problems) {
  * 보면 두 버튼이 같은 일을 해도 통과한다 — 실제로 둘을 갈라놓는 값을 함께 잰다.
  */
 async function checkDefeat(page, name, problems) {
-  if (!(await waitForDefeat(page))) {
+  const fall = await waitForDefeat(page);
+  if (!fall.fell) {
     problems.push(
-      `[${name}] 서 있는데 게임 시간 150초가 지나도록 쓰러지지 않았다 — ` +
-        `"움직이면 피하고 서 있으면 죽는다"(DESIGN 5번)가 흔들렸다`,
+      `[${name}] 서 있는데 ${fall.why}` +
+        (fall.stalled ? '' : ` — "움직이면 피하고 서 있으면 죽는다"(DESIGN 5번)가 흔들렸다`),
     );
     return;
   }
@@ -446,19 +447,58 @@ function clockSeconds(text) {
  *
  * 실제 시간은 화면이 아예 멈춰 버린 경우를 잡는 안전선으로만 쓴다(게임 시간이 안 흐르면
  * 게임 시간 한도에는 영영 닿지 않으므로, 이쪽이 없으면 검사가 끝나지 않는다).
+ *
+ * **그 안전선이 재는 자 노릇을 하고 있었다(세션 31).** 전에는 "벽시계 240초"에 걸려도 게임 시간
+ * 한도에 걸린 것과 똑같이 `false` 하나를 돌려줬고, 실패 문구는 늘 **"게임 시간 150초가 지나도록"**
+ * 이라고 말했다. 그런데 이 기계에서 판이 도는 속도는 프레임에 묶여 있다 —
+ * 카드가 떠 있는 동안 게임이 멈추고, 소프트웨어 렌더러가 느려지면 게임 시간이 벽시계보다 늦게 간다.
+ * **즉 기계가 느린 판까지 "게임이 흔들렸다"로 적힌다.** 둘은 고칠 자리가 정반대다.
+ *
+ * 그래서 벽시계로는 **흐르는가**만 본다(`FROZEN_LIMIT` 동안 시계가 한 칸도 안 넘어가면 멈춘 것이다).
+ * 원래 이 선이 잡으려던 것이 그것이고, 이 편이 더 빨리(240초가 아니라 20초) 잡아낸다.
+ * `WALL_CAP`은 영영 안 끝나는 일만 막는 마지막 선이라 넉넉히 둔다.
  */
+const FROZEN_LIMIT = 20;
+const WALL_CAP = 600;
+
 async function waitForDefeat(page, gameLimit = 150) {
-  const wallDeadline = Date.now() + 240000;
+  const startedWall = Date.now();
   const started = clockSeconds(await readClock(page)) ?? 0;
-  while (Date.now() < wallDeadline) {
-    if (await page.$('#defeat[data-show="1"]')) return true;
+  let game = 0;
+  let lastMoved = Date.now();
+  for (;;) {
+    if (await page.$('#defeat[data-show="1"]')) return { fell: true };
     if (await page.$('#upgrade[data-show="1"]')) await page.keyboard.press('Digit1');
     const now = clockSeconds(await readClock(page));
-    if (now !== null && now - started > gameLimit) return false;
+    if (now !== null && now - started !== game) {
+      game = now - started;
+      lastMoved = Date.now();
+    }
+    if (game > gameLimit) {
+      return { fell: false, why: `게임 시간 ${game}초가 지나도록 쓰러지지 않았다` };
+    }
+
+    const frozen = (Date.now() - lastMoved) / 1000;
+    if (frozen > FROZEN_LIMIT) {
+      return {
+        fell: false,
+        stalled: true,
+        why: `게임 시계가 ${frozen.toFixed(0)}초 동안 ${game}초에 멈춰 서 있다 — 판이 멈췄거나 카드가 안 내려간다`,
+      };
+    }
+    const wall = (Date.now() - startedWall) / 1000;
+    if (wall > WALL_CAP) {
+      return {
+        fell: false,
+        stalled: true,
+        why:
+          `벽시계 ${wall.toFixed(0)}초를 다 쓰는 동안 게임 시간은 ${game}초만 흘렀다 ` +
+          `(${(game / wall).toFixed(2)}배) — 게임이 아니라 이 기계가 느린 것이다`,
+      };
+    }
     // 카드를 빨리 내릴수록 게임 시간과 실제 시간이 가깝게 흐른다(멈춰 있는 몫이 줄어든다).
     await page.waitForTimeout(150);
   }
-  return false;
 }
 
 /**
@@ -520,8 +560,9 @@ async function checkRevive(page, name, problems, levelAtDeath) {
  * 이어한 판은 아무리 멀리 가도 최고 기록을 건드리지 않는다(DESIGN 7번의 결정).
  */
 async function checkRestart(page, name, problems, storedBefore) {
-  if (!(await waitForDefeat(page))) {
-    problems.push(`[${name}] 이어한 뒤 다시 서 있었는데 두 번째로 쓰러지지 않았다`);
+  const fall = await waitForDefeat(page);
+  if (!fall.fell) {
+    problems.push(`[${name}] 이어한 뒤 다시 서 있었는데 ${fall.why}`);
     return;
   }
 
