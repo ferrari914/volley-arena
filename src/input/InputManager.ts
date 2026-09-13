@@ -14,7 +14,14 @@ export class InputManager implements InputSource {
   constructor(host: HTMLElement) {
     this.touch = new TouchInput(host);
     this.desktop = new KeyboardMouseInput(host);
-    document.body.dataset['input'] = 'keyboard';
+    // 아무도 아직 손을 대기 전에도 어느 기기인지 가려 둔다. 이 값 하나로
+    // 가상 스틱과 조작 안내가 갈리는데, 둘 다 판이 열리는 **첫 화면**에 있는 것들이다
+    // — 무조건 'keyboard'로 두면 전화기에서 첫 6초 동안 "WASD로 이동"이 뜬다.
+    // 주 포인터가 굵으면(손가락) 터치로 본다. 손가락이 닿거나 마우스가 움직이면
+    // 그쪽이 이 값을 다시 덮어쓰므로, 여기서 틀려도 한 번의 입력으로 바로잡힌다.
+    document.body.dataset['input'] = window.matchMedia('(pointer: coarse)').matches
+      ? 'touch'
+      : 'keyboard';
   }
 
   read(context: InputContext): InputState {

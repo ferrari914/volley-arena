@@ -61,6 +61,21 @@ import {
 const PORT = 4183;
 const OUT = 'shots';
 
+/**
+ * 조작 안내(`#hint`)가 그 기기의 말을 하는가 — DESIGN 품질 기준
+ * "처음 하는 사람이 설명 없이 30초 안에 조작을 이해할 것".
+ *
+ * 데스크톱에는 가상 스틱이 아예 없는데(`body[data-input='keyboard']`가 숨긴다)
+ * 안내만 "왼쪽으로 이동 · 오른쪽으로 조준"이라고 말하면, 처음 하는 사람은
+ * 화면에 없는 것을 찾게 된다. 세션 45의 `shots/desktop.png` 위쪽에 실제로 그렇게 찍혔다.
+ * 안내는 두 벌을 담아 두고 CSS가 한 벌만 보이므로 **보이는 글자만** 읽는다(innerText) —
+ * 숨은 쪽까지 세면 어느 기기에서든 늘 통과한다.
+ */
+const HINT_WORDS = {
+  touch: { want: '왼쪽으로 이동', avoid: 'WASD' },
+  keyboard: { want: 'WASD', avoid: '왼쪽으로 이동' },
+};
+
 /** 결과 화면 한 줄의 모양. 이번 판과 최고 기록이 같은 모양이어야 눈으로 견줄 수 있다. */
 const RESULT_LINE = /^레벨 (\d+) · 처치 (\d+) · (\d+:\d\d) 생존$/;
 /** 최고 기록이 저장되는 자리(src/data/records.ts와 같은 값). */
@@ -1181,6 +1196,17 @@ try {
         problems.push(
           `[${name}] 판이 열렸는데 자동 조준이 아니다 (${aimMode}) — ` +
             '아무도 조준하지 않았는데 조준이 잡혀 있다',
+        );
+      }
+
+      // 조작 안내는 이 기기에 있는 것만 말해야 한다(위 HINT_WORDS).
+      const kind = view.hasTouch ? 'touch' : 'keyboard';
+      const { want, avoid } = HINT_WORDS[kind];
+      const hint = (await page.locator('#hint').innerText()).trim();
+      if (!hint.includes(want) || hint.includes(avoid)) {
+        problems.push(
+          `[${name}] 조작 안내가 이 기기의 말을 하지 않는다 ("${hint}") — ` +
+            `${kind === 'touch' ? '손가락으로 하는' : '스틱이 없는'} 화면인데 '${want}'가 없다`,
         );
       }
     }

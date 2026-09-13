@@ -6,6 +6,15 @@ const HINT_SECONDS = 6;
 /** 레벨업 표시가 화면에 머무는 시간(s). */
 const LEVEL_UP_SECONDS = 1.4;
 
+/** 조작 안내 한 벌. `kind`가 맞는 것만 화면에 뜬다(style.css). */
+function hintLine(kind: 'touch' | 'keyboard', text: string): HTMLElement {
+  const line = document.createElement('span');
+  line.className = 'hint__line';
+  line.dataset['for'] = kind;
+  line.textContent = text;
+  return line;
+}
+
 /**
  * 화면 위쪽 한 줄: 레벨 · 체력바/경험치바 · 시간/처치 · 진단(fps·조준).
  *
@@ -73,7 +82,14 @@ export class Hud {
 
     this.hint = document.createElement('div');
     this.hint.id = 'hint';
-    this.hint.textContent = '왼쪽으로 이동 · 오른쪽으로 조준 · 멈춰 서면 적의 화살에 맞는다';
+    // 같은 말을 기기별로 두 벌 담아 두고, 보이는 쪽은 CSS가 고른다
+    // (`body[data-input]` — 가상 스틱을 숨기는 것과 같은 신호다).
+    // 손가락이 없는 화면에 "왼쪽으로 이동 · 오른쪽으로 조준"이라고 적으면,
+    // 스틱은 숨겨 놓고 스틱 이야기를 하는 셈이 된다.
+    this.hint.append(
+      hintLine('touch', '왼쪽으로 이동 · 오른쪽으로 조준 · 멈춰 서면 적의 화살에 맞는다'),
+      hintLine('keyboard', 'WASD로 이동 · 마우스로 조준 · 멈춰 서면 적의 화살에 맞는다'),
+    );
     host.appendChild(this.hint);
 
     // 맞았을 때 화면 가장자리가 붉어진다. 작은 화면에서는 위쪽 체력바보다

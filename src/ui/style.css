@@ -94,7 +94,7 @@ body {
   background: #ffd479;
 }
 
-/* 손가락이 닿기 전에는 스틱을 숨긴다(데스크톱). */
+/* 손가락으로 하는 화면이 아니면 스틱을 숨긴다(데스크톱 · InputManager가 가린다). */
 body[data-input='keyboard'] .stick {
   display: none;
 }
@@ -287,6 +287,23 @@ body[data-paused='1'] .stick {
   color: var(--ink-dim);
   white-space: nowrap;
   transition: opacity 500ms ease;
+}
+
+/*
+ * 안내는 기기에 맞는 한 벌만 보인다. 고르는 신호는 가상 스틱을 숨기는 것과 같은
+ * `data-input` 하나다 — 둘이 갈라지면 스틱은 숨고 안내만 스틱 이야기를 하게 된다.
+ * 신호가 아직 없을 때는 손가락 쪽을 보여 준다(DESIGN: 모바일 브라우저가 최우선).
+ */
+.hint__line[data-for='keyboard'] {
+  display: none;
+}
+
+body[data-input='keyboard'] .hint__line[data-for='touch'] {
+  display: none;
+}
+
+body[data-input='keyboard'] .hint__line[data-for='keyboard'] {
+  display: inline;
 }
 
 /* --- 세로 화면 안내 --- */
