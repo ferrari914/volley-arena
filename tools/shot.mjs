@@ -670,8 +670,16 @@ async function waitForDefeat(page, gameLimit = 150) {
   const started = clockSeconds(await readClock(page)) ?? 0;
   let game = 0;
   let lastMoved = Date.now();
+  /**
+   * **재는 자 자신의 한 바퀴가 가장 오래 걸린 시간(ms).**
+   * 페이지만 기어가는 것인지, 이 기계 전체가 기어가는 것인지를 가르는 값이다(세션 36).
+   * 한 바퀴는 `page.evaluate` 한 번과 기다림뿐이라 평소에는 `POLL_MS` 언저리다 —
+   * 여기가 수십 초로 튀면 **굶은 것은 페이지가 아니라 우리 쪽 왕복까지 포함한 전부다.**
+   */
+  let slowestLoop = 0;
   for (;;) {
     let now;
+    const loopStarted = Date.now();
     try {
       // 세 가지를 한 번에 묻는다(아래 POLL_MS 주석 참고). 왕복을 셋에서 하나로 줄인 자리다.
       const seen = await withReplyLimit(
@@ -688,6 +696,7 @@ async function waitForDefeat(page, gameLimit = 150) {
     } catch (error) {
       return { fell: false, stalled: true, why: `${error.message} — 게임이 아니라 브라우저가 멈췄다` };
     }
+    slowestLoop = Math.max(slowestLoop, Date.now() - loopStarted);
     if (now !== null && now - started !== game) {
       game = now - started;
       lastMoved = Date.now();
@@ -703,7 +712,7 @@ async function waitForDefeat(page, gameLimit = 150) {
         stalled: true,
         why:
           `게임 시계가 ${frozen.toFixed(0)}초 동안 ${game}초에 멈춰 서 있다 ` +
-          `(${await readWhyStopped(page)})`,
+          `(${await readWhyStopped(page)} · 재는 자의 한 바퀴는 최대 ${slowestLoop}ms 걸렸다)`,
       };
     }
     const wall = (Date.now() - startedWall) / 1000;
@@ -713,7 +722,8 @@ async function waitForDefeat(page, gameLimit = 150) {
         stalled: true,
         why:
           `벽시계 ${wall.toFixed(0)}초를 다 쓰는 동안 게임 시간은 ${game}초만 흘렀다 ` +
-          `(${(game / wall).toFixed(2)}배 · ${await readWhyStopped(page)})`,
+          `(${(game / wall).toFixed(2)}배 · ${await readWhyStopped(page)} · ` +
+          `재는 자의 한 바퀴는 최대 ${slowestLoop}ms 걸렸다)`,
       };
     }
     await page.waitForTimeout(POLL_MS);
