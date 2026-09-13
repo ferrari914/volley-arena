@@ -32,7 +32,17 @@ export async function startMatch(page, mapId = 'open') {
   }
   const card = page.locator(`#map-card-${mapId}`);
   await card.waitFor({ state: 'visible', timeout: APPEAR_TIMEOUT });
-  await card.click();
+  // **손가락이 달린 화면은 손가락으로 누른다.** `click()`은 터치 기기를 흉내 내는
+  // 화면에서도 마우스 이벤트를 낸다 — 그러면 게임은 그 순간부터 그 화면을
+  // 데스크톱으로 보고(`body[data-input='keyboard']`) 가상 스틱을 숨긴 채 "WASD로 이동"이라고
+  // 말한다. 도구가 마우스로 시작한 탓에 모바일 화면 전부가 데스크톱 화면으로 찍히던 자리다.
+  if (await page.evaluate(() => navigator.maxTouchPoints > 0)) {
+    const box = await card.boundingBox();
+    if (!box) throw new Error('맵 카드의 자리를 잴 수 없다 — 화면에 떠 있지 않다');
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+  } else {
+    await card.click();
+  }
   // 누른 뒤 판이 실제로 열렸는지 본다. 두 번 눌리는 것을 MapSelect가 막으므로
   // 여기서는 사라지기만 기다리면 된다.
   await page.locator('#map-select').waitFor({ state: 'hidden', timeout: APPEAR_TIMEOUT });

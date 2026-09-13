@@ -62,14 +62,14 @@ const PORT = 4183;
 const OUT = 'shots';
 
 /**
- * 조작 안내(`#hint`)가 그 기기의 말을 하는가 — DESIGN 품질 기준
+ * 조작 안내(`#hint`)가 지금 화면에 **있는 것**을 말하는가 — DESIGN 품질 기준
  * "처음 하는 사람이 설명 없이 30초 안에 조작을 이해할 것".
  *
- * 데스크톱에는 가상 스틱이 아예 없는데(`body[data-input='keyboard']`가 숨긴다)
- * 안내만 "왼쪽으로 이동 · 오른쪽으로 조준"이라고 말하면, 처음 하는 사람은
- * 화면에 없는 것을 찾게 된다. 세션 45의 `shots/desktop.png` 위쪽에 실제로 그렇게 찍혔다.
- * 안내는 두 벌을 담아 두고 CSS가 한 벌만 보이므로 **보이는 글자만** 읽는다(innerText) —
- * 숨은 쪽까지 세면 어느 기기에서든 늘 통과한다.
+ * 가상 스틱을 숨겨 놓고 "왼쪽으로 이동 · 오른쪽으로 조준"이라고 말하면, 처음 하는 사람은
+ * 화면에 없는 것을 찾는다. 세션 45의 `shots/desktop.png` 위쪽에 실제로 그렇게 찍혔다.
+ * 그래서 기기 이름이 아니라 **스틱이 보이는지**와 맞춰 본다 — 둘은 같은 신호
+ * (`body[data-input]`)로 갈리므로, 어긋나면 둘 중 하나가 고장 난 것이다.
+ * 안내는 두 벌을 담아 두고 CSS가 한 벌만 보이므로 **보이는 글자만** 읽는다(innerText).
  */
 const HINT_WORDS = {
   touch: { want: '왼쪽으로 이동', avoid: 'WASD' },
@@ -1179,6 +1179,17 @@ try {
       for (const problem of await measureSafeArea(page, safe, GUARDED)) {
         problems.push(`[${name}] 안전 영역(맵 고르기): ${problem}`);
       }
+      // **아직 아무도 손을 대지 않은 자리다.** 여기서 기기를 잘못 가리면, 전화기가
+      // 첫 화면에서 스틱을 숨긴 채 "WASD로 이동"이라고 말한다(InputManager).
+      // 손가락이나 마우스가 한 번 움직이면 그 값이 덮이므로, 재려면 여기여야 한다.
+      const guessed = await page.evaluate(() => document.body.dataset['input'] ?? '(없다)');
+      const expected = view.hasTouch ? 'touch' : 'keyboard';
+      if (guessed !== expected) {
+        problems.push(
+          `[${name}] 아무도 손대기 전에 기기를 잘못 가렸다 (${guessed}, 기대 ${expected}) — ` +
+            '첫 화면의 가상 스틱과 조작 안내가 이 값 하나로 갈린다',
+        );
+      }
       await startMatch(page);
       startedMatch = true;
     }
@@ -1199,14 +1210,15 @@ try {
         );
       }
 
-      // 조작 안내는 이 기기에 있는 것만 말해야 한다(위 HINT_WORDS).
-      const kind = view.hasTouch ? 'touch' : 'keyboard';
+      // 조작 안내는 지금 화면에 있는 것만 말해야 한다(위 HINT_WORDS).
+      const sticks = await page.locator('.stick--move').isVisible();
+      const kind = sticks ? 'touch' : 'keyboard';
       const { want, avoid } = HINT_WORDS[kind];
       const hint = (await page.locator('#hint').innerText()).trim();
       if (!hint.includes(want) || hint.includes(avoid)) {
         problems.push(
-          `[${name}] 조작 안내가 이 기기의 말을 하지 않는다 ("${hint}") — ` +
-            `${kind === 'touch' ? '손가락으로 하는' : '스틱이 없는'} 화면인데 '${want}'가 없다`,
+          `[${name}] 조작 안내가 화면에 없는 것을 말한다 ("${hint}") — ` +
+            `가상 스틱이 ${sticks ? '보이는' : '숨은'} 화면인데 '${want}'가 없다`,
         );
       }
     }
