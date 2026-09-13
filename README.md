@@ -45,7 +45,7 @@ npm run qa           # 빌드 → 실제 브라우저로 실행 → shots/ 에 �
 ```bash
 npm run shot:enemy                                  # 세 종류를 있는 그대로
 npm run shot:enemy -- shield calm worn flash aim    # 방패병의 네 상태
-npm run shot:enemy -- crowd                         # 적이 상한(15마리)까지 찬 화면
+npm run shot:enemy -- crowd                         # 적이 상한(17마리)까지 찬 화면
 npm run shot:enemy -- crowd 5                       # 견줄 화면(판의 첫머리)
 npm run shot:enemy -- crowd veteran                 # 그 자리까지 실제로 싸워 올라간 사람
 ```
