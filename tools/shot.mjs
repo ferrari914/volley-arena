@@ -665,6 +665,43 @@ function worldDelta(before, after) {
   };
 }
 
+/**
+ * **기다리는 내내 프레임이 흘렀는지를 묻는 김에 같이 센다**(세션 36).
+ *
+ * 세션 36이 여기까지 좁혔다: 멈췄다고 적힌 구간에서 게임 시계는 실제의 0.02배로 흐르는데,
+ * **재는 자가 3초만 입을 다물면 곧바로 1.00배가 된다.** 그런데 그 3초는 이미 지난 일이라,
+ * 멈춰 있던 100초 동안 실제로 프레임이 흘렀는지는 아무도 못 봤다.
+ * 그래서 묻는 김에 `__qaFrames`를 얹어 **기다리는 구간의 fps를 직접 그린다** —
+ * 왕복이 늘지 않는다(같은 `page.evaluate` 하나에 값 하나를 더 얹을 뿐이다).
+ *
+ * 이 값이 갈라 주는 것: 기다리는 동안 **0fps**였다면 페이지가 정말로 안 그린 것이고,
+ * 평소처럼 **수십 fps**였다면 프레임은 흘렀는데 게임 시계만 안 간 것이다 — 고칠 자리가 다르다.
+ */
+function frameWatch() {
+  let first = null;
+  let last = null;
+  let firstAt = 0;
+  let lastAt = 0;
+  return {
+    see(frames) {
+      if (frames === null || frames === undefined) return;
+      const at = Date.now();
+      if (first === null) {
+        first = frames;
+        firstAt = at;
+      }
+      last = frames;
+      lastAt = at;
+    },
+    tell() {
+      if (first === null || lastAt === firstAt) return '기다리는 동안의 프레임은 못 쟀다';
+      const seconds = (lastAt - firstAt) / 1000;
+      const frames = last - first;
+      return `기다리는 ${seconds.toFixed(0)}초 동안 ${frames}장(${(frames / seconds).toFixed(2)}fps)`;
+    },
+  };
+}
+
 async function waitForDefeat(page, gameLimit = 150) {
   const startedWall = Date.now();
   const started = clockSeconds(await readClock(page)) ?? 0;
@@ -677,6 +714,7 @@ async function waitForDefeat(page, gameLimit = 150) {
    * 여기가 수십 초로 튀면 **굶은 것은 페이지가 아니라 우리 쪽 왕복까지 포함한 전부다.**
    */
   let slowestLoop = 0;
+  const waiting = frameWatch();
   for (;;) {
     let now;
     const loopStarted = Date.now();
@@ -687,12 +725,15 @@ async function waitForDefeat(page, gameLimit = 150) {
           defeat: Boolean(document.querySelector('#defeat[data-show="1"]')),
           card: Boolean(document.querySelector('#upgrade[data-show="1"]')),
           clock: document.getElementById('hud-stats')?.textContent ?? '',
+          // 기다리는 내내 프레임이 흐르는지를 같은 왕복에 얹어 본다(세션 36).
+          frames: typeof window.__qaFrames === 'number' ? window.__qaFrames : null,
         })),
         '판이 어떤가 묻기',
       );
       if (seen.defeat) return { fell: true };
       if (seen.card) await withReplyLimit(page.keyboard.press('Digit1'), '카드 고르기');
       now = clockSeconds(seen.clock);
+      waiting.see(seen.frames);
     } catch (error) {
       return { fell: false, stalled: true, why: `${error.message} — 게임이 아니라 브라우저가 멈췄다` };
     }
@@ -712,7 +753,8 @@ async function waitForDefeat(page, gameLimit = 150) {
         stalled: true,
         why:
           `게임 시계가 ${frozen.toFixed(0)}초 동안 ${game}초에 멈춰 서 있다 ` +
-          `(${await readWhyStopped(page)} · 재는 자의 한 바퀴는 최대 ${slowestLoop}ms 걸렸다)`,
+          `(${await readWhyStopped(page)} · 재는 자의 한 바퀴는 최대 ${slowestLoop}ms 걸렸다 · ` +
+          `${waiting.tell()})`,
       };
     }
     const wall = (Date.now() - startedWall) / 1000;
@@ -723,7 +765,7 @@ async function waitForDefeat(page, gameLimit = 150) {
         why:
           `벽시계 ${wall.toFixed(0)}초를 다 쓰는 동안 게임 시간은 ${game}초만 흘렀다 ` +
           `(${(game / wall).toFixed(2)}배 · ${await readWhyStopped(page)} · ` +
-          `재는 자의 한 바퀴는 최대 ${slowestLoop}ms 걸렸다)`,
+          `재는 자의 한 바퀴는 최대 ${slowestLoop}ms 걸렸다 · ${waiting.tell()})`,
       };
     }
     await page.waitForTimeout(POLL_MS);
