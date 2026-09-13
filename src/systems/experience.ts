@@ -144,8 +144,9 @@ export interface DropOptions {
 }
 
 /**
- * 쓰러진 자리에 코어를 흩뿌린다. 여러 개로 나누는 이유는
- * 한 덩이보다 여러 개가 빨려 들어오는 편이 "잡았다"는 느낌이 훨씬 크기 때문이다.
+ * 쓰러진 자리에 코어를 흩뿌린다. **지금은 한 마리에 한 알이다**(`CORE.drop.perKill` ·
+ * 왜 셋에서 하나로 줄였는지는 config의 주석에 수치와 함께 있다). 개수는 설정값이므로
+ * 여기는 몇 개든 받는다.
  */
 export function createDropCores(
   at: Vec2,
@@ -155,9 +156,13 @@ export function createDropCores(
 ): XpCore[] {
   const { count, value, lifetime, scatter, limitRadius } = options;
   const out: XpCore[] = [];
+  // 뿌리는 방향 전체를 한 번 돌려 둔다. 이것이 없으면 어느 쪽으로 흩어지는지가
+  // 세계 축에 고정돼 매번 같은 모양이 되고, 한 알만 떨어질 때는 아예 한쪽 216도
+  // 안에서만 떨어진다(아래 흔드는 폭이 0.6칸이라 count가 1이면 그 폭이 곧 전부다).
+  const start = random() * Math.PI * 2;
   for (let i = 0; i < count; i += 1) {
-    // 고르게 나눠 놓고 조금씩 흔든다. 완전 난수로 두면 세 개가 한자리에 겹치는 판이 나온다.
-    const angle = ((i + random() * 0.6) / count) * Math.PI * 2;
+    // 고르게 나눠 놓고 조금씩 흔든다. 완전 난수로 두면 여러 개가 한자리에 겹치는 판이 나온다.
+    const angle = start + ((i + random() * 0.6) / count) * Math.PI * 2;
     const radius = scatter * (0.55 + random() * 0.45);
     const pos = { x: at.x + Math.cos(angle) * radius, y: at.y + Math.sin(angle) * radius };
     const dist = Math.hypot(pos.x, pos.y);

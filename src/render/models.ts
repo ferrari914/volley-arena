@@ -528,11 +528,15 @@ export function createLockMarker(): THREE.Mesh {
  * 경험치 코어. 팔면체 하나로 만든다 — 아레나의 기둥·구·원기둥과 겹치지 않는
  * 유일한 형태라, 작게 그려도 "저건 주우러 가는 것"으로 읽힌다.
  * 드롭은 색을 달리해서 맵에 놓인 것보다 값지다는 것을 보여 준다.
+ *
+ * **드롭이 1.4배로 큰 이유**: 한 마리가 한 알을 떨군다(`CORE.drop.perKill` 1 · 값 15).
+ * 셋이 한꺼번에 빨려 들어오던 자리를 한 알이 대신하므로, 그 한 알이 맵 코어(값 1)와
+ * 같은 크기로 보이면 처치의 보상이 화면에서 작아진다. 1.25배였던 것을 그만큼 키웠다.
  */
 export function createCore(drop: boolean): THREE.Mesh {
   const color = drop ? PALETTE.coreDrop : PALETTE.core;
   const mesh = new THREE.Mesh(
-    new THREE.OctahedronGeometry(CORE.radius * (drop ? 1.25 : 1.0)),
+    new THREE.OctahedronGeometry(CORE.radius * (drop ? 1.4 : 1.0)),
     // emissive를 세게 주면 모든 면이 같은 밝기가 되어 납작한 사각형으로 보인다.
     // 빛나되 면의 음영이 남을 만큼만 준다 — 그래야 각진 결정처럼 읽힌다.
     standard(color, { emissive: color, emissiveIntensity: 0.4, roughness: 0.35 }),

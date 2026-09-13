@@ -3,6 +3,7 @@ import { World } from '../src/core/World';
 import type { FrameInput } from '../src/core/World';
 import { ARENA, CORE, ENEMY, LEVEL, PLAYER } from '../src/data/config';
 import { createXpCore, type XpCore } from '../src/entities/types';
+import { isOffScreen, makeProjector } from './support/camera';
 import {
   DT,
   IDLE,
@@ -11,6 +12,8 @@ import {
   median,
   play,
   playMatch,
+  preferPower,
+  quantile,
   walkToNearestCore,
 } from './support/match';
 import {
@@ -298,6 +301,8 @@ describe('밸런스 — 전투가 채집보다 빠르다', () => {
 /** DESIGN "3~5분". 코어만 보고 걷는 사람이라 실제 플레이보다 짧게 끝나므로 아래쪽을 넉넉히 잡았다. */
 const SHORTEST = 150;
 const LONGEST = 330;
+/** 판이 영영 안 끝나는 고장을 잡는 선(초). 흔들리는 극단값이라 관측된 최악보다 한참 위에 둔다. */
+const RUNAWAY = 480;
 /** 씨앗은 고정한다. 바퀴마다 다른 판을 재면 수치를 비교할 수 없다. */
 const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
 /** 코어만 보고 걷는 사람의 스무 판. 아래 묶음들이 같은 스무 판을 나눠 본다. */
@@ -338,35 +343,54 @@ describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
     expect(inRange).toBeGreaterThanOrEqual(15);
   });
 
-  it('가장 긴 판도 6분을 넘지 않는다 — 세 사람 모두', () => {
-    // **증원(`REINFORCE`)이 사 온 보장이 이것이다.** 증원이 없던 때는 화력이 세게 자란
-    // 씨앗의 판이 391초까지, 카드를 잘 고르는 사람은 514초까지 갔다 — 판 길이가
-    // 곧 화력의 함수여서 위쪽에 천장이 없었다. 지금은 시간이 갈수록 아레나가 무거워져
-    // 천장이 생긴다.
-    //
-    // **세 사람을 다 본다(세션 25).** 세션 24까지 이 검사는 코어만 보고 걷는 사람 하나만
-    // 봤고, 그동안 **비키는 사람의 가장 긴 판은 491초였다** — 검사가 통과하는 내내
-    // 선 밖에 있었다. 잘 하는 사람일수록 위쪽 꼬리가 길어지는데(덜 맞으니 더 오래 산다)
-    // 가장 서툰 자 하나로만 천장을 재고 있었던 것이다. 아래쪽 꼬리에 대해 세션 18·24가
-    // 두 번 내린 답("한 사람만 재면 버릇을 게임으로 오해한다")이 위쪽에도 그대로 적용된다.
-    //
-    // 이 선이 깨지면 증원이 약해진 것이다. 선을 옮기지 말고 `REINFORCE`를 되돌릴 것.
-    const longest = (rows: readonly { elapsed: number }[]): number =>
-      Math.max(...rows.map((r) => r.elapsed));
+  /**
+   * **증원(`REINFORCE`)이 사 온 보장이 이것이다.** 증원이 없던 때는 화력이 세게 자란
+   * 씨앗의 판이 391초까지, 카드를 잘 고르는 사람은 514초까지 갔다 — 판 길이가
+   * 곧 화력의 함수여서 위쪽에 천장이 없었다. 지금은 시간이 갈수록 아레나가 무거워져
+   * 천장이 생긴다.
+   *
+   * **세 사람을 다 본다(세션 25).** 세션 24까지 이 검사는 코어만 보고 걷는 사람 하나만
+   * 봤고, 그동안 **비키는 사람의 가장 긴 판은 491초였다** — 검사가 통과하는 내내
+   * 선 밖에 있었다. 잘 하는 사람일수록 위쪽 꼬리가 길어지는데(덜 맞으니 더 오래 산다)
+   * 가장 서툰 자 하나로만 천장을 재고 있었던 것이다.
+   *
+   * **왜 '가장 긴 판'이 아니라 p90인가 — 그 자는 씨앗을 재고 있었다 (세션 40).**
+   * 세션 25가 "이 자가 흔들린다"고 적어 둔 것을 실제로 재 봤다. **게임을 한 줄도
+   * 바꾸지 않고** 씨앗 블록만 20개씩 옮겨 여섯 번 재니, 사람별 '가장 긴 판'이
+   * **286~396초**로 흔들렸다 — 합격선 360이 그 폭 한가운데에 있었다. 즉 이 검사는
+   * 그동안 게임이 아니라 **어느 씨앗 스무 개를 골랐는지**를 재고 있었고,
+   * 통과 여부가 동전 던지기였다. (세션 39가 증원을 32/10 → 28/12로 옮긴 것도
+   * 일부는 이 자를 달래려던 값이다. 다음에 이 선이 깨지면 값을 옮기기 전에
+   * **씨앗 블록을 바꿔 두 번 더 재 보라** — 한 판 차이로 깨졌으면 그건 씨앗이다.)
+   *
+   * **대신 예순 판(세 사람 × 씨앗 20개)을 한 묶음으로 보고 p90을 쓴다.** 같은 여섯
+   * 블록에서 p90은 **296~318초**로 폭이 23초다(위 자의 4분의 1). 극단값 하나가
+   * 자를 흔들지 못하면서, 천장이 무너지는 것은 그대로 잡는다 — 실제로 증원을
+   * 세션 16 수준(60초 간격·여덟 자리)으로 되돌려 재면 **p90 355초 · 가장 긴 판 494초**로
+   * 두 선이 다 깨진다.
+   *
+   * **선은 두 개다.** p90은 `LONGEST`(330초)와 같은 선을 쓴다 — "열에 아홉은 3~5분 안에
+   * 끝난다"가 DESIGN 품질 기준을 그대로 옮긴 문장이다. 그리고 어떤 판도 8분을 넘지 않는다:
+   * 이쪽은 극단값이라 흔들리므로 관측된 최악(396초)보다 훨씬 위에 두고, **판이 영영
+   * 안 끝나는 고장**만 잡는 자로 쓴다.
+   *
+   * 이 선이 깨지면 증원이 약해진 것이다. 선을 옮기지 말고 `REINFORCE`를 되돌릴 것.
+   */
+  it('위쪽 꼬리 — 예순 판 중 열에 아홉이 5분 반 안에 끝난다', () => {
+    const pooled = [...results, ...dodged, ...circled].map((r) => r.elapsed);
+    const sorted = [...pooled].sort((a, b) => a - b);
+    const p90 = quantile(sorted, 0.9);
+    const longest = sorted[sorted.length - 1] ?? 0;
+    const longestOf = (rows: readonly { elapsed: number }[]): string =>
+      Math.max(...rows.map((r) => r.elapsed)).toFixed(0);
     console.log(
-      `가장 긴 판 — 안 비키는 사람 ${longest(results).toFixed(0)}초 · ` +
-        `비키는 사람 ${longest(dodged).toFixed(0)}초 · 도는 사람 ${longest(circled).toFixed(0)}초 ` +
-        `(합격선 360)`,
+      `위쪽 꼬리 ${pooled.length}판 — p90 ${p90.toFixed(0)}초(합격선 ${LONGEST}) · ` +
+        `가장 긴 판 ${longest.toFixed(0)}초(합격선 ${RUNAWAY}) · ` +
+        `사람별 가장 긴 판 ${longestOf(results)} · ${longestOf(dodged)} · ${longestOf(circled)}초 ` +
+        `(이 셋은 씨앗에 따라 ±50초씩 흔들린다 — 판단하지 말 것)`,
     );
-    // 실측(세션 25 · 증원 32초 간격 · 열 자리): 316 · 351 · 331초.
-    // 비키는 사람이 선에 가장 가깝다 — 위쪽 꼬리를 다음에 손볼 때 먼저 볼 자가 그 사람이다.
-    for (const [who, rows] of [
-      ['안 비키는 사람', results],
-      ['비키는 사람', dodged],
-      ['도는 사람', circled],
-    ] as const) {
-      expect(longest(rows), `${who}의 가장 긴 판 ${longest(rows).toFixed(0)}초`).toBeLessThan(360);
-    }
+    expect(p90, `예순 판의 p90 ${p90.toFixed(0)}초`).toBeLessThan(LONGEST);
+    expect(longest, `가장 긴 판 ${longest.toFixed(0)}초`).toBeLessThan(RUNAWAY);
   });
 
   it('어떤 씨앗에서도 판이 10분 안에 끝나고 레벨이 충분히 오른다', () => {
@@ -570,5 +594,83 @@ describe('밸런스 — 움직이면 피하고, 서 있으면 죽는다', () => 
         `(${(moving / standing).toFixed(1)}배)`,
     );
     expect(moving).toBeGreaterThan(standing * 3);
+  });
+});
+
+
+/**
+ * **화면 — 바닥이 코어로 덮이지 않는다** (세션 27·28이 화면에서 본 것 · 세션 40이 자로 세웠다).
+ *
+ * 세션 27·28이 다 자란 사람의 화면을 찍어 세어 보니 **코어 46 · 적 5 · 화살 15**였다.
+ * 프레임 문제가 아니라 **읽히는가**의 문제다 — 움직이는 것(적·화살)보다 바닥에 누운 것이
+ * 먼저 눈에 들면, 처음 하는 사람은 무엇을 봐야 하는지 알 수 없다
+ * (DESIGN 품질 기준 "설명 없이 30초 안에 조작을 이해할 것").
+ *
+ * **한 장으로 판정하지 않는다**(세션 39가 뭉침에서 겪은 것). 스크린샷은 한 프레임이라
+ * 그날의 운이 섞인다. 여기서는 스무 판을 돌리며 **모바일 화면에 실제로 든 것만** 센다
+ * (`tests/support/camera.ts`의 투영 — `npm run qa`가 찍는 그 창과 같은 화면비).
+ *
+ * **재는 사람은 화력을 먼저 고르는 사람이다.** 바닥을 덮는 것은 처치 속도이므로
+ * 가장 빨리 죽이는 사람의 화면이 최악이다(다른 자들의 화면은 이보다 늘 헐겁다).
+ *
+ * 고치기 전후(같은 스무 판 · 화면에 든 코어의 판별 최댓값, 그 중앙):
+ *   3알 × 5  → **29.5개** · 코어/(적+화살) p95의 중앙 **1.49** (최악 2.00)
+ *   1알 × 15 → **10.5개** · 그 비율 **0.60** (최악 0.83)
+ */
+describe('화면 — 바닥의 코어가 적과 화살을 덮지 않는다', () => {
+  /** `npm run qa`가 찍는 모바일 가로 창. 옆으로 보이는 거리는 화면비의 함수라 이 창으로 잰다. */
+  const MOBILE = 844 / 390;
+  /** 화면에 든 코어 수의 판별 최댓값, 그 중앙(개). 고치기 전 29.5였다. */
+  const PEAK_LINE = 18;
+  /** 화면에서 코어가 적+화살의 몇 배인가. 1을 넘으면 바닥이 더 눈에 든다. */
+  const RATIO_LINE = 1.0;
+
+  it('가장 빨리 죽이는 사람의 화면에서도 코어가 적·화살보다 많지 않다', () => {
+    const rig = makeProjector(MOBILE);
+    const peaks: number[] = [];
+    const ratios: number[] = [];
+    for (const seed of SEEDS) {
+      const world = new World({ seed });
+      const framePeak: number[] = [];
+      const frameRatio: number[] = [];
+      for (let i = 0; i < 60 * 600 && !world.defeated; i += 1) {
+        play(world, 1, walkToNearestCore, preferPower);
+        // 1초에 한 프레임만 센다. 투영이 프레임마다 카메라를 다시 세우는 일이라
+        // 스무 판을 매 프레임 재면 검사 하나가 몇 초를 먹는다.
+        if (i % 60 !== 0) continue;
+        rig.place(world.player.pos);
+        const onScreen = (x: number, y: number, h: number): boolean =>
+          !isOffScreen(rig.project(x, y, h));
+        let cores = 0;
+        for (const core of world.cores) {
+          if (core.alive && onScreen(core.pos.x, core.pos.y, CORE.radius + 0.5)) cores += 1;
+        }
+        let movers = 0;
+        for (const enemy of world.enemies) {
+          if (enemy.alive && onScreen(enemy.pos.x, enemy.pos.y, 0.85)) movers += 1;
+        }
+        for (const arrow of world.arrows) {
+          if (arrow.alive && onScreen(arrow.pos.x, arrow.pos.y, 0.9)) movers += 1;
+        }
+        framePeak.push(cores);
+        frameRatio.push(cores / Math.max(1, movers));
+      }
+      framePeak.sort((a, b) => a - b);
+      frameRatio.sort((a, b) => a - b);
+      peaks.push(framePeak[framePeak.length - 1] ?? 0);
+      // 한 프레임의 최악이 아니라 그 판의 p95다 — 코어를 쓸어 담기 직전의 한 순간이
+      // 판 전체를 대표하지 않는다(`tests/loadScene.test.ts`가 반대쪽에서 겪은 것과 같다).
+      ratios.push(quantile(frameRatio, 0.95));
+    }
+    const peak = median(peaks);
+    const ratio = median(ratios);
+    console.log(
+      `화면에 든 코어 — 판별 최댓값의 중앙 ${peak.toFixed(1)}개(합격선 ${PEAK_LINE}) · ` +
+        `가장 나쁜 판 ${Math.max(...peaks)}개 · ` +
+        `코어/(적+화살) p95의 중앙 ${ratio.toFixed(2)}(합격선 ${RATIO_LINE}) · ` +
+        `가장 나쁜 판 ${Math.max(...ratios).toFixed(2)}`,
+    );
+    expect(peak, `화면에 든 코어 최댓값의 중앙 ${peak.toFixed(1)}개`).toBeLessThanOrEqual(PEAK_LINE);
+    expect(ratio, `코어/(적+화살) ${ratio.toFixed(2)}`).toBeLessThanOrEqual(RATIO_LINE);
   });
 });

@@ -132,9 +132,16 @@ describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
       support * 1.15,
     );
 
-    // ④ 표 전체의 모양. 실측 선 안 141/180판 · 최장 371초.
+    // ④ 표 전체의 모양. 실측 선 안 141/180판 · p90 312초.
+    //
+    // **'가장 긴 판'으로 재던 것을 p90으로 바꿨다(세션 40).** 게임을 한 줄도 안 바꾸고
+    // 씨앗 블록만 옮겨 여섯 번 재니 그 값이 322~396초로 흔들렸다 — 420 선이 그 폭 바로 위라,
+    // 밸런스와 무관한 씨앗 운이 통과 여부를 정하고 있었다(수치와 근거는
+    // `tests/progression.test.ts`의 '위쪽 꼬리' 주석에 있다). 여기서도 같은 자를 쓴다.
+    const lengths = [...all.map((r) => r.elapsed)].sort((a, b) => a - b);
     expect(inRange(all)).toBeGreaterThanOrEqual(120);
-    expect(Math.max(...all.map((r) => r.elapsed))).toBeLessThan(420);
+    expect(quantile(lengths, 0.9), '180판의 p90').toBeLessThan(LONGEST);
+    expect(lengths[lengths.length - 1] ?? 0, '180판 중 가장 긴 판').toBeLessThan(480);
 
     // ⑤ 180판 어디에서도 판이 끝나지 않거나 준비 시간이 새지 않는다.
     // 씨앗 20개로는 못 보는 자리다 — `ENEMY.startDelay`가 새는 곳이 있으면 여기서 걸린다.
@@ -173,7 +180,7 @@ describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
         '',
         line('모두', all),
         `  안 도는 사람과 견주어: 선 안 ${inRange(plain)} → ${inRange(all)}/${all.length}판 · ` +
-          `가장 짧은 판 ${shortest(plain).toFixed(0)} → ${shortest(all).toFixed(0)}초 · ` +
+          `가장 짧은 판 ${shortest(plain).toFixed(0)} → ${shortest(all).toFixed(0)}초(씨앗을 타는 값이다) · ` +
           `막힘 ${blocked(plain)} → ${blocked(all)}발`,
         '',
       ].join('\n'),
@@ -187,10 +194,22 @@ describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
     );
 
     // ② 그리고 아래쪽 끝이 올라간다. 세션 23이 "방패병이 벌렸다"고 적은 그 끝이다.
-    expect(
-      shortest(all),
-      `가장 짧은 판 ${shortest(plain).toFixed(0)} → ${shortest(all).toFixed(0)}초`,
-    ).toBeGreaterThan(shortest(plain));
+    //
+    // **'가장 짧은 판'이 아니라 p5로 잰다(세션 40).** 위쪽에서 겪은 것과 같은 일이 여기도 있었다 —
+    // 세션 24가 쓴 대로 `shortest`로 재면, **게임을 한 줄도 안 바꾸고** 씨앗 블록만 옮겨
+    // 여섯 번 재는 동안 **두 블록에서 이 선이 깨진다**(85 → 82초 · 88 → 76초).
+    // 180판 중 단 한 판이 정하는 값이라, 도는 사람이 어쩌다 한 판을 못 살면 세션 24의 결론이
+    // 뒤집힌 것처럼 보인다. **p5는 여섯 블록 모두에서, 고치기 전과 후 모두에서 올라간다**
+    // (원본 106→145 · 111→144 · 114→132 · 105→135 · 104→132 · 114→134).
+    // 세션 24의 주장은 그대로다. 바뀐 것은 그 주장을 재는 자뿐이다.
+    const p5 = (rows: readonly MatchResult[]): number =>
+      quantile(
+        rows.map((r) => r.elapsed).sort((a, b) => a - b),
+        0.05,
+      );
+    expect(p5(all), `p5 ${p5(plain).toFixed(0)} → ${p5(all).toFixed(0)}초`).toBeGreaterThan(
+      p5(plain),
+    );
 
     // ③ **그런데 위쪽은 반대로 갔다 — 이것이 세션 24가 새로 안 것이다.**
     // 도는 사람은 방패병을 빨리 지우고(처치 269 → 310) 그만큼 빨리 자라서, 잘 고르는 사람의
