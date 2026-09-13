@@ -137,3 +137,83 @@ export function describeClock(state) {
     state.clocks > 1 ? ` · #hud-stats가 ${state.clocks}개다(재는 자는 첫째만 읽는다)` : '';
   return `재는 자가 읽는 글자는 "${state.clock}"${many}`;
 }
+
+/**
+ * **이 기계가 잠들어 있던 시간을 게임 탓으로 적지 않는다(세션 38).**
+ *
+ * 세션 31~37은 일곱 바퀴 동안 `npm run qa`의 "서서 기다리는" 자리가 우는 까닭을 쫓았다.
+ * 게임은 제 입으로 결백했고(`describeWorld`가 "멈출 이유가 없다"), 재는 자의 폴링을
+ * 20분의 1로 줄여도(150ms×3회 → 500ms×1회) 통과율은 그대로였다.
+ * **변수는 코드 밖에 있었다 — 이 맥이 배터리가 바닥난 채 10초마다 잠들고 있었다.**
+ * (`pmset -g log`: 2026-09-13 08시 127번 · 09시 142번 `Entering Sleep state due to
+ * 'Maintenance Sleep' ... Using Batt (Charge:1%)`, 그리고 10:25:55에 `Low Power Sleep`으로
+ * 5시간. 전원을 꽂은 뒤 같은 검사가 240 · 122 · 295초에 세 판 연속 통과했다.)
+ *
+ * 잠든 기계 위에서는 **게임도 재는 자도 존재하지 않는다.** 그런데 깨어나서 시계를 보면
+ * 벽시계만 훌쩍 가 있으므로, 재는 자는 그것을 "게임 시계가 멈췄다"로 적는다.
+ * 그래서 **한 바퀴가 예정보다 이만큼(초) 넘게 걸리면 그 시간은 셈에서 빼고, 빼 갔다고 적는다.**
+ * 5초인 이유: 평소 한 바퀴는 `POLL_MS`(500ms) + 왕복 수십 ms이고, 기계가 버거워 열 배로
+ * 느려진 경우(5초)까지는 "느린 것"으로 보아 남긴다. 그 위는 프로세스가 아예 안 돌았다는 뜻이다.
+ */
+export const SLEEP_GAP = 5;
+
+/**
+ * 한 바퀴가 예정보다 얼마나 오래 걸렸는지를 지켜보며, 건너뛴 시간을 모은다.
+ *
+ * @param {number} expectedGapMs 한 바퀴에 일부러 기다리는 시간(ms). 이건 건너뛴 것이 아니다.
+ * @param {{gapLimit?: number, now?: () => number}} options 검사가 시계를 넣을 수 있게 열어 둔다.
+ */
+export function createSleepWatch(expectedGapMs = 0, { gapLimit = SLEEP_GAP, now = Date.now } = {}) {
+  let last = now();
+  let slept = 0;
+  let times = 0;
+  let longest = 0;
+  return {
+    /** 한 바퀴를 돈 직후에 부른다. 건너뛴 시간(초)을 돌려준다 — 0이면 평소 속도다. */
+    mark() {
+      const at = now();
+      const gap = (at - last - expectedGapMs) / 1000;
+      last = at;
+      if (!(gap > gapLimit)) return 0;
+      slept += gap;
+      times += 1;
+      longest = Math.max(longest, gap);
+      return gap;
+    },
+    /** 지금까지 건너뛴 시간의 합(초). 벽시계에서 이만큼을 빼야 "깨어 있던 시간"이다. */
+    get slept() {
+      return slept;
+    },
+    totals() {
+      return { slept, times, longest };
+    },
+  };
+}
+
+/**
+ * 건너뛴 시간을 한 줄로 적는다. 없으면 없다고 적는다 —
+ * **"잠든 적이 없다"도 정보다**(그러면 진짜로 게임이나 브라우저 쪽을 봐야 한다).
+ *
+ * @param {{slept:number, times:number, longest:number}} totals
+ */
+export function describeSleep(totals) {
+  if (totals.times === 0) return '그 사이 이 기계가 잠든 적은 없다';
+  return (
+    `그 사이 이 기계가 ${totals.times}번 잠들어 ${totals.slept.toFixed(0)}초를 건너뛰었다` +
+    `(가장 긴 것 ${totals.longest.toFixed(0)}초) — 그만큼은 빼고 셌다`
+  );
+}
+
+/**
+ * 전원 상태를 한 줄로 적는다(`pmset -g batt`를 읽은 값).
+ *
+ * **배터리로 도는 동안의 실패는 먼저 전원을 꽂고 다시 재야 한다.** 세션 38이 그렇게 갈렸다.
+ *
+ * @param {null | {ac:boolean, percent:number|null, charging:boolean}} power
+ */
+export function describePower(power) {
+  if (power === null || power === undefined) return '전원 상태는 못 읽었다';
+  const charge = power.percent === null ? '' : ` ${power.percent}%`;
+  if (power.ac) return `전원에 꽂혀 있다(${power.charging ? '충전 중' : '충전 안 함'}${charge})`;
+  return `배터리로 돌고 있다(${charge.trim()}) — 바닥나면 이 맥은 10초마다 잠든다(세션 38)`;
+}

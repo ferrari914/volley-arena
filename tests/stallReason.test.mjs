@@ -13,12 +13,16 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  createSleepWatch,
   describeFrames,
   describeClock,
   describeOverlay,
+  describePower,
+  describeSleep,
   describeWorld,
   FROZEN_LIMIT,
   MAX_GAME_SECONDS_PER_FRAME,
+  SLEEP_GAP,
   STALL_FPS,
 } from '../tools/lib/stallReason.mjs';
 import { Ticker } from '../src/core/Ticker.ts';
@@ -197,5 +201,86 @@ describe('선을 긋는 값이 게임과 재는 자에게서 나온다', () => {
     expect(STALL_FPS).toBeCloseTo(0.6, 10);
     // 이 속도로 창을 꽉 채우면 시계는 정확히 1초 간다 — 그것이 선의 정의다.
     expect(STALL_FPS * FROZEN_LIMIT * MAX_GAME_SECONDS_PER_FRAME).toBeCloseTo(1, 10);
+  });
+});
+
+/**
+ * **잠든 기계를 게임 탓으로 적지 않는가**(세션 38).
+ *
+ * 세션 31~37은 일곱 바퀴를 썼다. 게임은 제 입으로 1.00배로 흐른다고 했고, 재는 자의 폴링을
+ * 20분의 1로 줄여도 통과율은 그대로였다 — 변수는 코드 밖, **배터리가 바닥나 10초마다 잠드는 맥**이었다.
+ * 잠든 시간은 게임도 재는 자도 존재하지 않은 시간이므로 셈에서 빼고, 뺐다고 적어야 한다.
+ * 같은 일을 여덟 번째로 겪지 않으려면 이 셈을 기계가 지켜야 한다.
+ */
+describe('기계가 잠든 시간은 셈에서 빠진다', () => {
+  /** 손으로 미는 시계. 밀어 둔 만큼이 "건너뛴 시간"이다. */
+  function fakeClock() {
+    let at = 0;
+    return { now: () => at, push: (ms) => (at += ms) };
+  }
+
+  it('평소 한 바퀴는 건너뛴 것이 아니다', () => {
+    const clock = fakeClock();
+    const watch = createSleepWatch(500, { now: clock.now });
+    clock.push(560); // 기다린 500ms + 왕복 60ms
+    expect(watch.mark()).toBe(0);
+    expect(watch.totals()).toEqual({ slept: 0, times: 0, longest: 0 });
+  });
+
+  it('기계가 버거워 열 배 느려진 바퀴까지는 남긴다 — 그건 느린 것이지 없던 것이 아니다', () => {
+    const clock = fakeClock();
+    const watch = createSleepWatch(500, { now: clock.now });
+    clock.push(500 + SLEEP_GAP * 1000);
+    expect(watch.mark()).toBe(0);
+  });
+
+  it('다섯 시간을 건너뛴 바퀴는 그만큼을 빼 준다', () => {
+    const clock = fakeClock();
+    const watch = createSleepWatch(500, { now: clock.now });
+    clock.push(500 + 18_613_000); // 세션 38이 실제로 겪은 값(맥이 Low Power Sleep으로 5.2시간)
+    expect(watch.mark()).toBeCloseTo(18_613, 3);
+    expect(watch.slept).toBeCloseTo(18_613, 3);
+  });
+
+  it('여러 번 잠들면 횟수와 가장 긴 것을 함께 센다 — 10초마다 한 번이 이 맥의 모습이다', () => {
+    const clock = fakeClock();
+    const watch = createSleepWatch(500, { now: clock.now });
+    for (const gap of [8000, 600, 30_000, 700]) {
+      clock.push(500 + gap);
+      watch.mark();
+    }
+    const totals = watch.totals();
+    expect(totals.times).toBe(2);
+    expect(totals.longest).toBeCloseTo(30, 3);
+    expect(totals.slept).toBeCloseTo(38, 3);
+  });
+
+  it('잠든 적이 없으면 없다고 적는다 — 그때는 정말 게임이나 브라우저를 봐야 한다', () => {
+    expect(describeSleep({ slept: 0, times: 0, longest: 0 })).toContain('잠든 적은 없다');
+  });
+
+  it('잠든 것을 적을 때 횟수·합·가장 긴 것이 다 들어간다', () => {
+    const said = describeSleep({ slept: 38, times: 2, longest: 30 });
+    expect(said).toContain('2번');
+    expect(said).toContain('38초');
+    expect(said).toContain('30초');
+  });
+});
+
+describe('전원 상태를 문구가 제대로 옮긴다', () => {
+  it('배터리로 돌고 있으면 그 사실이 먼저 보인다', () => {
+    const said = describePower({ ac: false, charging: false, percent: 1 });
+    expect(said).toContain('배터리');
+    expect(said).toContain('1%');
+  });
+
+  it('꽂혀 있으면 꽂혀 있다고 적는다 — 그때의 실패는 기계 탓으로 돌릴 수 없다', () => {
+    const said = describePower({ ac: true, charging: true, percent: 13 });
+    expect(said).toContain('전원에 꽂혀 있다');
+    expect(said).not.toContain('배터리');
+  });
+
+  it('못 읽었으면 못 읽었다고 적는다 — 지어내지 않는다', () => {
+    expect(describePower(null)).toContain('못 읽었다');
   });
 });

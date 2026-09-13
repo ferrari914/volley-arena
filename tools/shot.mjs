@@ -43,13 +43,17 @@
  * 문제가 하나라도 있으면 0이 아닌 코드로 끝난다.
  */
 import { mkdir, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { chromium, devices } from 'playwright';
 import { startPreview } from './lib/preview.mjs';
 import { acquireBrowserLock, LOCK_BUSY_EXIT } from './lib/lock.mjs';
 import {
+  createSleepWatch,
   describeClock,
   describeFrames,
   describeOverlay,
+  describePower,
+  describeSleep,
   FROZEN_LIMIT,
 } from './lib/stallReason.mjs';
 
@@ -294,10 +298,19 @@ async function checkEnemyPressure(page, name, problems) {
     return;
   }
 
-  const deadline = Date.now() + 14000;
+  /**
+   * **기다리는 14초는 "깨어 있던 14초"다**(세션 38). 이 맥은 배터리가 바닥나면 10초마다
+   * 잠드는데, 잠든 동안 게임은 한 걸음도 안 걷는다 — 그런데 벽시계만 보는 자에게는
+   * 14초가 다 지나 버린 것으로 보여 **"적이 다가오지 않는다"고 적힌다**(세션 37 실측).
+   * 그래서 건너뛴 시간은 예산에서 빼고, 실패할 때 전원 상태를 함께 적는다.
+   */
+  const sleeping = createSleepWatch(500);
+  const startedWall = Date.now();
   let after = before;
-  while (Date.now() < deadline) {
+  for (;;) {
     await page.waitForTimeout(500);
+    sleeping.mark();
+    if ((Date.now() - startedWall) / 1000 - sleeping.slept > 14) break;
     after = await readBar(page, 'hud-hp-fill');
     if (after !== null && after < before - 0.001) break;
     // 카드가 뜨면 게임이 멈춘다. 골라서 내리고 계속 기다린다.
@@ -309,7 +322,8 @@ async function checkEnemyPressure(page, name, problems) {
   if (!(after < before - 0.001)) {
     problems.push(
       `[${name}] 가만히 서 있었는데 체력이 줄지 않았다 (체력바 ${before} 그대로) — ` +
-        '적이 다가오지 않거나, 쏘지 않거나, 맞은 것이 화면까지 오지 않는다',
+        '적이 다가오지 않거나, 쏘지 않거나, 맞은 것이 화면까지 오지 않는다 ' +
+        `(${describeSleep(sleeping.totals())} · ${describePower(await readPower())})`,
     );
     return;
   }
@@ -510,6 +524,36 @@ function withReplyLimit(promise, what) {
 }
 
 /**
+ * **이 기계가 전원에 꽂혀 있는가**(세션 38).
+ *
+ * 세션 31~37이 일곱 바퀴 동안 쫓은 "게임 시계가 멈춘다"는 **배터리가 바닥난 맥이
+ * 10초마다 잠들던 것**이었다. 잠든 동안에는 게임도 재는 자도 존재하지 않으므로,
+ * 깨어나서 보면 벽시계만 훌쩍 가 있고 게임 시계는 그대로다 — 게임 탓으로 읽힌다.
+ * 그래서 실패 문구에 전원 상태를 함께 적고, 시작할 때도 한 줄 찍는다.
+ * **배터리로 돈 판의 실패는 전원을 꽂고 다시 재기 전까지 게임 이야기로 적지 마라.**
+ *
+ * 맥이 아니면 null이다(이 도구는 지금 맥에서만 돈다 — 그렇다고 적고 넘어간다).
+ */
+async function readPower() {
+  if (process.platform !== 'darwin') return null;
+  try {
+    const stdout = await new Promise((resolve, reject) => {
+      execFile('pmset', ['-g', 'batt'], { timeout: 5000 }, (error, out) =>
+        error ? reject(error) : resolve(out),
+      );
+    });
+    const percent = /(\d+)%/.exec(stdout);
+    return {
+      ac: /AC Power/.test(stdout),
+      charging: /; charging/.test(stdout),
+      percent: percent ? Number(percent[1]) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * **프레임을 두 군데서 센다: 브라우저가 그리는가 · 게임의 틱이 도는가**(세션 32 · 세션 35).
  *
  * 게임 시계는 프레임을 타고 흐른다 — `Ticker`가 한 프레임에 최대 다섯 스텝(83ms)까지만
@@ -693,17 +737,24 @@ function frameWatch() {
       last = frames;
       lastAt = at;
     },
-    tell() {
+    /**
+     * `slept`는 이 기계가 잠들어 있던 시간(초)이다. **그 시간은 나누는 쪽에서 뺀다** —
+     * 잠든 동안 안 그린 것을 "페이지가 기어간다"로 적으면 세션 31~37을 또 반복한다(세션 38).
+     */
+    tell(slept = 0) {
       if (first === null || lastAt === firstAt) return '기다리는 동안의 프레임은 못 쟀다';
       const seconds = (lastAt - firstAt) / 1000;
+      const awake = seconds - slept;
       const frames = last - first;
-      return `기다리는 ${seconds.toFixed(0)}초 동안 ${frames}장(${(frames / seconds).toFixed(2)}fps)`;
+      const rate = awake > 0 ? `${(frames / awake).toFixed(2)}fps` : '못 쟀다';
+      const asleep = slept > 0 ? ` 중 깨어 있던 ${awake.toFixed(0)}초` : '';
+      return `기다리는 ${seconds.toFixed(0)}초${asleep} 동안 ${frames}장(${rate})`;
     },
   };
 }
 
 async function waitForDefeat(page, gameLimit = 150) {
-  const startedWall = Date.now();
+  let startedWall = Date.now();
   const started = clockSeconds(await readClock(page)) ?? 0;
   let game = 0;
   let lastMoved = Date.now();
@@ -715,6 +766,14 @@ async function waitForDefeat(page, gameLimit = 150) {
    */
   let slowestLoop = 0;
   const waiting = frameWatch();
+  /**
+   * **잠든 기계 위에서는 게임도 재는 자도 존재하지 않는다**(세션 38 · `createSleepWatch` 머리말).
+   * 한 바퀴가 예정보다 훌쩍 넘게 걸리면 그 시간은 아무도 안 돈 시간이므로,
+   * `lastMoved`와 `startedWall`을 그만큼 뒤로 밀어 **셈에서 빼 버린다.**
+   * 빼지 않으면 "게임 시계가 18613초 동안 멈춰 있다"(세션 38 실측 · 실은 맥이 5시간 잤다)처럼
+   * 기계의 잠이 게임 이야기로 적힌다.
+   */
+  const sleeping = createSleepWatch(POLL_MS);
   for (;;) {
     let now;
     const loopStarted = Date.now();
@@ -753,8 +812,9 @@ async function waitForDefeat(page, gameLimit = 150) {
         stalled: true,
         why:
           `게임 시계가 ${frozen.toFixed(0)}초 동안 ${game}초에 멈춰 서 있다 ` +
-          `(${await readWhyStopped(page)} · 재는 자의 한 바퀴는 최대 ${slowestLoop}ms 걸렸다 · ` +
-          `${waiting.tell()})`,
+          `(${describeSleep(sleeping.totals())} · ${describePower(await readPower())} · ` +
+          `${await readWhyStopped(page)} · 재는 자의 한 바퀴는 최대 ${slowestLoop}ms 걸렸다 · ` +
+          `${waiting.tell(sleeping.slept)})`,
       };
     }
     const wall = (Date.now() - startedWall) / 1000;
@@ -763,12 +823,18 @@ async function waitForDefeat(page, gameLimit = 150) {
         fell: false,
         stalled: true,
         why:
-          `벽시계 ${wall.toFixed(0)}초를 다 쓰는 동안 게임 시간은 ${game}초만 흘렀다 ` +
-          `(${(game / wall).toFixed(2)}배 · ${await readWhyStopped(page)} · ` +
-          `재는 자의 한 바퀴는 최대 ${slowestLoop}ms 걸렸다 · ${waiting.tell()})`,
+          `깨어 있던 ${wall.toFixed(0)}초를 다 쓰는 동안 게임 시간은 ${game}초만 흘렀다 ` +
+          `(${(game / wall).toFixed(2)}배 · ${describeSleep(sleeping.totals())} · ` +
+          `${describePower(await readPower())} · ${await readWhyStopped(page)} · ` +
+          `재는 자의 한 바퀴는 최대 ${slowestLoop}ms 걸렸다 · ${waiting.tell(sleeping.slept)})`,
       };
     }
     await page.waitForTimeout(POLL_MS);
+    const skipped = sleeping.mark();
+    if (skipped > 0) {
+      lastMoved += skipped * 1000;
+      startedWall += skipped * 1000;
+    }
   }
 }
 
@@ -1043,6 +1109,8 @@ try {
 }
 
 const problems = [];
+// 시작할 때 전원 상태를 한 줄 찍는다. 배터리로 돌면 이 판의 수치는 게임 이야기로 쓸 수 없다(세션 38).
+console.log(`  전원: ${describePower(await readPower())}`);
 const preview = await startPreview(PORT);
 
 try {
