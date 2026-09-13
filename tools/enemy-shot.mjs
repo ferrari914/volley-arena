@@ -6,6 +6,7 @@
  *   npm run shot:enemy -- crowd             # 적이 상한(17마리)까지 찬 화면
  *   npm run shot:enemy -- crowd 13
  *   npm run shot:enemy -- crowd veteran     # 그 자리까지 실제로 싸워 올라간 사람의 화면
+ *   npm run shot:enemy -- crowd map=pillars # 다른 아레나에서 (DESIGN 10번 · `data/maps.ts`)
  *
  * **왜 `npm run qa`로는 안 되는가**: qa는 판을 처음부터 돌려 화면 흐름을 잰다.
  * 그 판에서 특정 적이 화면에 잡히는지는 운이고(방패병은 22m 밖에 서 있다),
@@ -51,6 +52,13 @@ const states = argv.filter((a) => STATES.includes(a));
 const kinds = kind ? [kind] : ['archer', 'charger', 'shield'];
 const wanted = states.length > 0 ? states : ['live'];
 const crowdCount = Number(argv.find((a) => /^\d+$/.test(a)) ?? CROWD_DEFAULT);
+/**
+ * 어느 아레나에서 찍는가 (DESIGN 10번). 기본값은 기본 맵이고, 그때는 파일 이름도 그대로다 —
+ * 지금까지 찍어 둔 장들과 이름이 어긋나면 두 장을 나란히 놓고 견줄 수 없다.
+ */
+const mapId = argv.find((a) => a.startsWith('map='))?.slice(4) || 'open';
+/** 기본 맵이 아닐 때만 파일 이름에 붙인다. */
+const mapSuffix = mapId === 'open' ? '' : `-${mapId}`;
 
 /**
  * 적 앞 5.5m에 플레이어를 붙들어 둔다. 카메라는 플레이어를 따라오므로
@@ -312,15 +320,18 @@ async function openPage(label, probeSource, arg, before) {
     [probeSource, arg],
   );
   await page.goto(preview.url, { waitUntil: 'load' });
-  // 아레나를 고르고 나야 판이 돈다(DESIGN 10번). 기본 맵이라 지금까지의 표와 견줄 수 있다.
-  await startMatch(page);
+  // 아레나를 고르고 나야 판이 돈다(DESIGN 10번). 고르는 맵을 바꾸지 않으면 기본 맵이라
+  // 지금까지의 표와 그대로 견줄 수 있다.
+  await startMatch(page, mapId);
   return page;
 }
 
 try {
   await mkdir(OUT, { recursive: true });
   if (crowd) {
-    const label = veteran ? `crowd-${crowdCount}-veteran` : `crowd-${crowdCount}`;
+    const label = veteran
+      ? `crowd-${crowdCount}-veteran${mapSuffix}`
+      : `crowd-${crowdCount}${mapSuffix}`;
     const openedAt = Date.now();
     if (veteran) console.log('  (판을 실제로 돌려 그 자리까지 간다 — 20초쯤 걸린다)');
     const page = await openPage(

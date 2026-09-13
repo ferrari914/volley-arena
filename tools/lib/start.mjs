@@ -21,6 +21,15 @@ const APPEAR_TIMEOUT = 10000;
  * @param {string} [mapId] 고를 맵의 이름표(`data/maps.ts`). 기본값은 기본 맵.
  */
 export async function startMatch(page, mapId = 'open') {
+  // 세로 화면에서는 `#rotate-notice`가 화면을 덮어 카드가 보이기는 해도 눌리지 않는다
+  // (그것이 이 게임의 세로 화면이다). 여기서 먼저 말해 주지 않으면 30초 뒤에
+  // "element is not stable"만 남아, 다음 사람이 이유를 처음부터 찾게 된다.
+  if (await page.locator('#rotate-notice').isVisible()) {
+    throw new Error(
+      '세로 화면이라 돌려 달라는 안내(#rotate-notice)가 고르는 화면을 덮고 있다 — ' +
+        '판을 열려면 가로 화면으로 열어라',
+    );
+  }
   const card = page.locator(`#map-card-${mapId}`);
   await card.waitFor({ state: 'visible', timeout: APPEAR_TIMEOUT });
   await card.click();

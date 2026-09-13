@@ -1152,11 +1152,19 @@ try {
 
     // 창을 열면 아레나를 고르는 화면이 먼저 뜬다(DESIGN 10번). 판을 열기 전에
     // **그 화면부터 찍고 잰다** — 판이 열리면 사라져서 다시 볼 방법이 없다.
-    await page.screenshot({ path: `${OUT}/${name}-map.png` });
-    for (const problem of await measureSafeArea(page, safe, GUARDED)) {
-      problems.push(`[${name}] 안전 영역(맵 고르기): ${problem}`);
+    //
+    // **세로 화면에서는 건너뛴다.** 거기서는 `#rotate-notice`가 화면을 통째로 덮고
+    // 게임이 "돌려 주세요"만 말한다 — 그것이 이 게임의 세로 화면이고, 고르는 화면은
+    // 그 뒤에 있어 손가락이 닿지 않는다. 세로 화면이 보는 것은 그 안내 하나뿐이다.
+    if (await page.locator('#rotate-notice').isVisible()) {
+      console.log(`  [${name}] 세로 화면 — 돌려 달라는 안내가 덮고 있다. 판을 열지 않는다`);
+    } else {
+      await page.screenshot({ path: `${OUT}/${name}-map.png` });
+      for (const problem of await measureSafeArea(page, safe, GUARDED)) {
+        problems.push(`[${name}] 안전 영역(맵 고르기): ${problem}`);
+      }
+      await startMatch(page);
     }
-    await startMatch(page);
 
     // 자동 조준이 대상을 잡고 화살이 날아가는 장면을 담는다.
     await page.waitForTimeout(1800);
