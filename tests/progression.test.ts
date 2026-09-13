@@ -637,7 +637,7 @@ describe('밸런스 — 움직이면 피하고, 서 있으면 죽는다 (씨앗 
    * 겨누는 예고까지 걷어내도(`aimTime` 0.5 → 0.1) 중앙끼리 4.2배가 남는다 — 걸어 다니는 쪽이
    * 오래 사는 이유의 큰 몫은 피하는 것이 아니라 **코어를 주워 자라는 것**이기 때문이다.
    * 그러니 이 검사는 "이동이 게임을 연다"는 바닥선이지 "피할 수 있다"의 증명이 아니다.
-   * 피하기 자체를 재려면 맞은 횟수를 보는 자가 따로 필요하다(STATUS '다음 할 일').
+   * **피하기 자체는 바로 아래 검사가 잰다**(세션 42 · 날아온 화살 중 몇 발을 맞았는가).
    */
   it('계속 움직이면 서 있을 때보다 세 배 넘게 버틴다', () => {
     const moving = median(results.map((r) => r.elapsed));
@@ -647,6 +647,64 @@ describe('밸런스 — 움직이면 피하고, 서 있으면 죽는다 (씨앗 
         `(${(moving / stood).toFixed(1)}배)`,
     );
     expect(moving).toBeGreaterThan(stood * 3);
+  });
+
+  /**
+   * **피하기 자체를 재는 자**(세션 42). 위 두 검사는 *얼마나 오래 사는가*를 보는데,
+   * 오래 사는 데는 피하기 말고도 길이 있다 — 코어를 주워 자라면 적을 빨리 눕혀
+   * **날아오는 화살 자체가 줄어든다**(같은 30초에 서 있는 사람에게 28발, 걷는 사람에게 17발).
+   * 그래서 맞은 횟수를 그냥 세면 자란 사람이 피한 사람처럼 보인다.
+   *
+   * **날아온 것으로 나눈다**(`arrowHits / enemyShots`). 남는 것은 자란 몫이 빠진
+   * "겨눠서 쏜 화살 중 몇 발이 몸에 꽂혔는가" 하나다. DESIGN 5번이 적 화살을 느리게 하고
+   * (`ENEMY.arrow.speed` 16 — 플레이어 화살의 절반 이하) 쏘기 전에 멈춰 세운
+   * (`aimTime`) 이유가 바로 이 비율이다.
+   *
+   * **같은 30초만 본다.** 위 검사들처럼 쓰러질 때까지 돌리면 서 있는 사람은 40초,
+   * 걷는 사람은 230초를 사는데, 그 둘은 증원도 레벨도 다른 판이라 비율을 견줄 수 없다.
+   * 30초는 서 있는 스무 판이 **모두 살아 있는** 가장 긴 창이다(가장 짧은 판 37초).
+   *
+   * **이가 둘이다**(같은 스무 판으로 잰 것):
+   * - 적이 피할 수 없게 되면 — 화살을 플레이어만큼 빠르게(16 → 34) 하면 배율 3.7 → **2.28배**로
+   *   선이 깨진다. 예고까지 함께 걷어내면(`aimTime` 0.5 → 0.1) 2.03배다.
+   *   (예고만 걷어내는 것은 이 자가 못 잡는다 — 3.12배. 판의 첫머리를 지키는 첫 피격 검사의 몫이다.)
+   * - 적이 무해해지면 — 조준 흔들림을 열 배로(`spread` 0.06 → 0.6) 하면 서 있는 사람의
+   *   피격률이 0.500 → **0.097**로 무너져 서기 선이 깨진다. 맞지 않는 적은 피할 이유도 없다.
+   *
+   * **씨앗 블록을 여섯 번 옮겨 확인했다**: 20판 배율 3.00~3.75 · 60판 2.91~3.87
+   * (서기 쪽은 여섯 블록 모두 0.500이다). 선은 2.5배에 둔다.
+   */
+  describe('피하기 — 날아온 화살 중 몇 발을 맞는가', () => {
+    /** 서 있는 스무 판이 모두 살아 있는 창(s). 가장 짧은 판이 37초다(위 검사). */
+    const WINDOW = 30;
+    /** 같은 창을 같은 씨앗으로 살아 본 뒤, 날아온 화살과 몸에 꽂힌 화살을 돌려준다. */
+    const fly = (seed: number, input: (w: World) => FrameInput) => {
+      const world = new World({ seed });
+      play(world, 60 * WINDOW, input);
+      return { shots: world.enemyShots, hits: world.arrowHits };
+    };
+    const rate = (r: { shots: number; hits: number }) => (r.shots > 0 ? r.hits / r.shots : 0);
+    const stood = SEEDS.map((seed) => fly(seed, () => IDLE));
+    const moved = SEEDS.map((seed) => fly(seed, walkToNearestCore));
+
+    it('서 있으면 날아온 화살의 3분의 1 이상을 맞고, 걸어 다니면 4분의 1도 안 맞는다', () => {
+      const standRate = median(stood.map(rate));
+      const moveRate = median(moved.map(rate));
+      console.log(
+        `${WINDOW}초 스무 판 — 서기: 쏜 ${median(stood.map((r) => r.shots)).toFixed(0)}발 중 ` +
+          `${median(stood.map((r) => r.hits)).toFixed(0)}발(${standRate.toFixed(3)}) · ` +
+          `걷기: 쏜 ${median(moved.map((r) => r.shots)).toFixed(0)}발 중 ` +
+          `${median(moved.map((r) => r.hits)).toFixed(0)}발(${moveRate.toFixed(3)}) · ` +
+          `${(standRate / moveRate).toFixed(2)}배`,
+      );
+      // 한 발도 안 날아온 판이 있으면 그 판의 비율은 0이고, 그것은 '다 피했다'로 읽힌다.
+      expect(Math.min(...stood.map((r) => r.shots), ...moved.map((r) => r.shots))).toBeGreaterThan(0);
+      // 적이 무해하면 여기가 먼저 운다(실측 0.500 · `spread`를 열 배로 하면 0.097).
+      expect(standRate, '서 있는 사람에게도 화살이 잘 빗나간다').toBeGreaterThan(0.35);
+      // 피할 수 없으면 여기가 운다(실측 0.136 · 여섯 블록 최대 0.172).
+      expect(moveRate, '걸어 다녀도 그대로 맞는다').toBeLessThan(0.25);
+      expect(standRate / moveRate, '움직이는 것이 피하는 것이 되지 못한다').toBeGreaterThan(2.5);
+    });
   });
 });
 

@@ -132,6 +132,9 @@ describe('stepArrows', () => {
     );
     expect(enemy.hp).toBe(ENEMY.maxHp);
     expect(result.damageTaken).toBe(7);
+    // 피해량과 발 수를 따로 센다 — 카드가 자라면 한 대의 크기가 달라지므로,
+    // 피하기를 재는 쪽(`밸런스 — 피하기`)은 몇 발을 맞았는가만 본다.
+    expect(result.playerHits).toBe(1);
     expect(player.hp).toBe(PLAYER.maxHp - 7);
   });
 
@@ -144,6 +147,9 @@ describe('stepArrows', () => {
     const second = arrow(-1, 0, 120, 0, 'enemy', 7);
     const result = stepArrows([second], options({ player }));
     expect(result.damageTaken).toBe(0);
+    // 그냥 지나간 화살은 맞은 것이 아니다. 여기를 세면 서 있는 사람의 피격률이
+    // 무적에 막힌 몫만큼 부풀어, 피하기를 재는 자가 거짓으로 커진다.
+    expect(result.playerHits).toBe(0);
     expect(player.hp).toBe(PLAYER.maxHp - 7);
     expect(second.alive).toBe(true);
   });

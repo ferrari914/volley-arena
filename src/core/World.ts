@@ -143,6 +143,18 @@ export class World {
    * 그 차이를 볼 수 없다 — 어느 쪽이든 적은 결국 쓰러지고, 다른 것은 걸린 시간뿐이다.
    */
   blockedShots = 0;
+  /**
+   * 적이 쏜 화살의 수와, 그중 내 몸에 꽂힌 수. **피하기를 재는 한 쌍이다**(DESIGN 5번).
+   *
+   * 맞은 횟수만 세면 자란 사람과 안 자란 사람을 견줄 수 없다 — 잘 자란 사람은 적을 빨리
+   * 눕혀 **날아오는 화살 자체가 적어서** 덜 맞는다. 그것은 피한 것이 아니다.
+   * 쏜 수로 나눠야 "날아온 것 중 몇 발을 맞았는가"가 남는다.
+   *
+   * `bodyHits`·`blockedShots`와 같은 자리의 값이다 — 화면에는 쓰지 않고 밸런스를 재는 쪽만 본다.
+   * 무적인 동안 그냥 지나간 화살은 `arrowHits`에 들어오지 않는다(맞은 것이 아니다).
+   */
+  enemyShots = 0;
+  arrowHits = 0;
   /** 지금 자동 조준이 잡고 있는 적. 없으면 null. */
   lockedEnemy: Enemy | null = null;
 
@@ -257,6 +269,7 @@ export class World {
 
     const acted = this.updateEnemies(dt);
     for (const shot of acted.shots) this.addArrow(shot.pos, shot.dir, 'enemy');
+    this.enemyShots += acted.shots.length;
     // 돌진형이 몸으로 닿힌 몫(DESIGN 9번). 화살과 같은 무적 규칙을 지나므로,
     // 몸통과 화살이 같은 순간에 닿아도 두 대를 한꺼번에 맞지는 않는다.
     for (const damage of acted.contacts) {
@@ -279,6 +292,7 @@ export class World {
     this.hits += result.hits;
     this.kills += result.kills;
     this.blockedShots += result.blocked;
+    this.arrowHits += result.playerHits;
     for (const point of result.killPoints) this.dropCores(point);
 
     this.updateCores(dt);

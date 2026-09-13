@@ -50,6 +50,12 @@ export interface ArrowStepResult {
   killPoints: Vec2[];
   /** 플레이어가 이번 스텝에 받은 피해 총량. */
   damageTaken: number;
+  /**
+   * 적의 화살이 플레이어의 몸에 꽂힌 횟수. `damageTaken`과 따로 세는 이유:
+   * 카드가 자라면 한 대의 크기가 달라져 피해량으로는 **몇 발을 맞았는가**를 알 수 없다.
+   * 피하기를 재는 쪽이 보는 값이다(무적에 그냥 지나간 화살은 여기 들어오지 않는다).
+   */
+  playerHits: number;
   /** 방패에 막힌 화살 수(DESIGN 9번). 몸을 맞힌 것이 아니므로 `hits`와 따로 센다. */
   blocked: number;
 }
@@ -85,6 +91,7 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
     kills: 0,
     killPoints: [],
     damageTaken: 0,
+    playerHits: 0,
     blocked: 0,
   };
 
@@ -147,6 +154,7 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
       damagePlayer(player, arrow.damage, options.invulnerable);
       arrow.alive = false;
       result.damageTaken += arrow.damage;
+      result.playerHits += 1;
     }
 
     if (!arrow.alive) continue;
