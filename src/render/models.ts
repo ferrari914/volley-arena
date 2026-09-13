@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ArrowOwner, EnemyKind } from '../entities/types';
+import type { ArrowOwner, EnemyKind, Obstacle } from '../entities/types';
 import { ARENA, ARROW, CORE, ENEMY, PLAYER, SHIELD } from '../data/config';
 import { CAMERA_TILT } from './camera';
 
@@ -14,6 +14,12 @@ export const PALETTE = {
   groundEdge: 0x2b3a66,
   grid: 0x33457a,
   wall: 0x3a4c85,
+  /**
+   * 기둥(DESIGN 10번). **테두리 벽과 같은 색이다** — 둘 다 "지나갈 수 없는 것"이고,
+   * 색이 갈리면 하나는 지형, 하나는 물건으로 읽힌다. 윗면만 조금 밝게 두어
+   * 비스듬히 내려다보는 화면에서 바닥과 떨어져 선다(`obstacleTop`).
+   */
+  obstacleTop: 0x54699f,
   player: 0x5ec8ff,
   playerDark: 0x2b7fb8,
   arrow: 0xffe6a3,
@@ -90,6 +96,46 @@ export function createArena(): THREE.Group {
 
   return group;
 }
+
+/**
+ * 이 맵의 기둥들(DESIGN 10번). 아레나와 달리 맵마다 다르므로 따로 만들고,
+ * 맵을 바꿀 때 이 그룹만 통째로 갈아 끼운다(`Renderer.setMap`).
+ *
+ * 그림자를 받고 또 드리운다. 기둥이 바닥에 그림자를 떨어뜨려야 **높이가 있는 것**으로
+ * 읽힌다 — 그림자가 없으면 바닥에 그린 원처럼 보여서, 지나갈 수 없다는 것이 화면에 없다.
+ */
+export function createObstacles(obstacles: readonly Obstacle[]): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'obstacles';
+  for (const pillar of obstacles) {
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(pillar.radius, pillar.radius * 1.06, OBSTACLE_HEIGHT, 16),
+      standard(PALETTE.wall, { roughness: 0.7 }),
+    );
+    body.position.set(pillar.x, OBSTACLE_HEIGHT / 2, pillar.y);
+    body.castShadow = true;
+    body.receiveShadow = true;
+
+    // 윗면. 원기둥 뚜껑을 따로 얹어 밝기를 달리 준다 — 위에서 비스듬히 보는 화면이라
+    // 이 면이 가장 넓게 보이고, 여기가 어두우면 기둥이 배경에 묻힌다.
+    const cap = new THREE.Mesh(
+      new THREE.CircleGeometry(pillar.radius, 16),
+      standard(PALETTE.obstacleTop, { roughness: 0.5 }),
+    );
+    cap.rotation.x = -Math.PI / 2;
+    cap.position.set(pillar.x, OBSTACLE_HEIGHT + 0.01, pillar.y);
+    group.add(body);
+    group.add(cap);
+  }
+  return group;
+}
+
+/**
+ * 기둥의 높이(m). 게임은 수평면만 보므로 이 값은 화면에만 있다.
+ * 플레이어 키(1.7m)보다 확실히 높아야 "넘어갈 수 없다"로 읽히고,
+ * 너무 높으면 쿼터뷰에서 그 뒤의 적을 통째로 가린다.
+ */
+const OBSTACLE_HEIGHT = 2.6;
 
 /** 원 안쪽으로 잘라낸 격자. 잘라내지 않으면 벽 밖으로 선이 삐져나온다. */
 function createGrid(): THREE.LineSegments {

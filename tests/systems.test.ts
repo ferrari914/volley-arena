@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { movePlayer } from '../src/systems/movement';
 import { findNearestEnemy } from '../src/systems/autoAim';
-import { segmentPointDistanceSq, stepArrows } from '../src/systems/combat';
+import { stepArrows } from '../src/systems/combat';
+import { segmentPointDistanceSq } from '../src/core/math';
 import { createEnemy, createPlayer, type Arrow, type ArrowOwner } from '../src/entities/types';
 import { ARROW, ENEMY, PLAYER, SHIELD } from '../src/data/config';
 
@@ -43,6 +44,7 @@ function options(overrides: Partial<Parameters<typeof stepArrows>[1]> = {}) {
     respawnDelay: ENEMY.respawnDelay,
     bounceRange: ARROW.bounceRange,
     shieldArc: SHIELD.arc,
+    obstacles: [],
     player: createPlayer(PLAYER.maxHp),
     enemies: [],
     ...overrides,

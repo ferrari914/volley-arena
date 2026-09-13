@@ -832,8 +832,125 @@ body[data-input='touch'] .up-card__key {
   outline-offset: 3px;
 }
 
+/* --- 시작할 때 아레나를 고르는 화면 (DESIGN 10번) --- */
+
+/*
+ * 쓰러진 화면(z-index 6)·광고(7)보다 위에 온다. 판이 시작되기 전에는 이 화면 말고
+ * 아무것도 누를 것이 없어야 한다 — 아래에 가상 스틱이 깔려 있고, 그것이 눌리면
+ * 시작도 안 한 판에서 손가락이 헛돈다.
+ *
+ * 배경은 반투명이다. 뒤에 아레나가 비치는 것이 이 화면의 설명이다.
+ */
+#map-select {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 10px)
+    calc(var(--safe-l) + 12px);
+  background: radial-gradient(circle at 50% 45%, rgba(14, 26, 56, 0.72), rgba(6, 9, 20, 0.92));
+  pointer-events: auto;
+  z-index: 8;
+}
+
+#map-select[data-show='1'] {
+  display: flex;
+  animation: card-in 220ms ease-out both;
+}
+
+#map-select-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--ink);
+}
+
+/*
+ * 맵이 셋 이상이 되어도 이 줄은 고치지 않는다 — 가로로 늘어놓다가 넘치면 접힌다.
+ * 가로 화면의 세로 길이가 390px뿐이라 카드 높이를 먼저 아낀다.
+ */
+#map-select-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.map-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 158px;
+  /* 손가락으로 누를 것이므로 애플이 말하는 44px 최소 크기를 넉넉히 넘긴다. */
+  min-height: 168px;
+  padding: 10px 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(234, 240, 255, 0.22);
+  background: rgba(234, 240, 255, 0.06);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* 지난 판에 고른 맵. 늘 같은 맵을 하는 사람에게 누를 자리를 먼저 알려 준다. */
+.map-card[data-last='1'] {
+  border-color: rgba(123, 255, 207, 0.55);
+  background: rgba(123, 255, 207, 0.12);
+}
+
+.map-card:active {
+  transform: scale(0.97);
+}
+
+.map-card:focus-visible {
+  outline: 2px solid #7bffcf;
+  outline-offset: 3px;
+}
+
+.map-card-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.map-card-blurb {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink-dim);
+  text-align: center;
+}
+
+/* 맵을 위에서 내려다본 그림. 색은 실제 화면과 같은 자리에서 가져온다. */
+.map-thumb {
+  width: 96px;
+  height: 96px;
+}
+
+.map-thumb-floor {
+  fill: #1a2340;
+  stroke: #3a4c85;
+  stroke-width: 2;
+}
+
+.map-thumb-pillar {
+  fill: #54699f;
+}
+
+.map-thumb-start {
+  fill: #5ec8ff;
+}
+
+#map-select-hint {
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  #defeat[data-show='1'] {
+  #defeat[data-show='1'],
+  #map-select[data-show='1'] {
     animation: none;
   }
 

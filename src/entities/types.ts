@@ -69,6 +69,30 @@ export interface Arrow {
  */
 export type EnemyKind = 'archer' | 'charger' | 'shield';
 
+/**
+ * 적이 설 자리 하나. 종류를 적지 않으면 활잡이다(DESIGN 5번의 그 적).
+ * 맵마다 다르므로 값은 `data/maps.ts`가 갖는다.
+ */
+export interface EnemySpawn extends Vec2 {
+  kind?: EnemyKind;
+}
+
+/**
+ * 아레나에 선 기둥 하나 (DESIGN 10번 · 장애물).
+ *
+ * **원 하나가 전부다.** DESIGN이 "물리 엔진을 도입하지 않는다 · 충돌은 수평면 원-원
+ * 판정으로 충분하다"고 못 박았으므로, 기둥도 몸·화살·코어와 같은 판정을 쓴다.
+ * 네모난 벽이나 비스듬한 지형을 두면 그 한 줄이 무너지고, 막히는 규칙이
+ * 종류마다 갈린다(적의 몸 반지름을 하나로 두는 것과 같은 이유다).
+ *
+ * 화면에서는 원기둥으로 선다(`render/models.ts`). 높이는 렌더 쪽 값이다 —
+ * 게임은 수평면만 보므로 화살이 넘어가지 않는다.
+ */
+export interface Obstacle extends Vec2 {
+  /** 기둥의 반지름(m). */
+  radius: number;
+}
+
 /** 적 봇 (DESIGN 5번). 플레이어를 쫓아와 겨누고 쏜다. */
 export interface Enemy {
   kind: EnemyKind;

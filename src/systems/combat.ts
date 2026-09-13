@@ -1,21 +1,7 @@
-import { clamp, length, type Vec2 } from '../core/math';
-import type { Arrow, Enemy, Player } from '../entities/types';
+import { length, segmentPointDistanceSq, type Vec2 } from '../core/math';
+import type { Arrow, Enemy, Obstacle, Player } from '../entities/types';
 import { findNearestEnemy } from './autoAim';
-
-/**
- * 선분 a→b 위에서 점 c까지의 최단 거리의 제곱.
- * 화살은 한 프레임에 자기 몸통보다 멀리 날아가므로, 위치만 비교하면
- * 대상을 통과해도 지나쳐 버린다. 이동 궤적 전체로 판정한다.
- */
-export function segmentPointDistanceSq(a: Vec2, b: Vec2, c: Vec2): number {
-  const abx = b.x - a.x;
-  const aby = b.y - a.y;
-  const lenSq = abx * abx + aby * aby;
-  const t = lenSq < 1e-12 ? 0 : clamp(((c.x - a.x) * abx + (c.y - a.y) * aby) / lenSq, 0, 1);
-  const dx = a.x + abx * t - c.x;
-  const dy = a.y + aby * t - c.y;
-  return dx * dx + dy * dy;
-}
+import { blockedByObstacles } from './obstacles';
 
 export interface ArrowStepOptions {
   dt: number;
@@ -31,6 +17,8 @@ export interface ArrowStepOptions {
   bounceRange: number;
   /** 방패병의 방패가 막는 정면 부채꼴의 반각(rad, DESIGN 9번). */
   shieldArc: number;
+  /** 이 맵에 선 기둥들(DESIGN 10번). 빈 배열이면 아무것도 막지 않는다. */
+  obstacles: readonly Obstacle[];
   /** 적의 화살이 노리는 사람. */
   player: Player;
   /** 플레이어의 화살이 노리는 것들. */
@@ -158,6 +146,14 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
     }
 
     if (!arrow.alive) continue;
+    // 기둥에 막혔다(DESIGN 10번). **적을 맞히는 판정 뒤에 본다** — 기둥 바로 앞에 선
+    // 적을 맞힌 화살은 맞힌 것으로 세야 한다. 순서를 뒤집으면 기둥에 등을 붙인 적이
+    // 무적이 된다. 관통도 튕김도 쓰지 못한다(방패와 같은 규칙): 카드 한 장이
+    // 지형을 무시해 버리면 숨을 자리가 그 판에서만 사라진다.
+    if (blockedByObstacles(from, arrow.pos, arrowRadius, options.obstacles)) {
+      arrow.alive = false;
+      continue;
+    }
     if (arrow.age >= arrow.lifetime || length(arrow.pos) > arenaRadius) {
       arrow.alive = false;
     }

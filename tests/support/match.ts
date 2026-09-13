@@ -2,6 +2,7 @@ import { World } from '../../src/core/World';
 import type { FrameInput } from '../../src/core/World';
 import { clamp, wrapAngle } from '../../src/core/math';
 import { ENEMY, PLAYER, SHIELD } from '../../src/data/config';
+import { DEFAULT_MAP, type ArenaMap } from '../../src/data/maps';
 import type { UpgradeChoice, XpCore } from '../../src/entities/types';
 
 /** 한 스텝의 길이(s). 게임 루프와 같은 60fps. */
@@ -221,8 +222,13 @@ export function playMatch(
   input: (world: World) => FrameInput = walkToNearestCore,
   /** 어떻게 고르는 사람인가. 기본값은 아무거나 고르는 사람이다 — 위와 같은 이유로 옮기지 않는다. */
   choose: Chooser = takeAny,
+  /**
+   * 어느 아레나에서 재는가 (DESIGN 10번). 기본값은 기본 맵이다 —
+   * 지금까지 쌓인 수치가 전부 그 맵의 것이라, 여기를 옮기면 옛 표와 견줄 수 없다.
+   */
+  map: ArenaMap = DEFAULT_MAP,
 ): MatchResult {
-  const world = new World({ seed });
+  const world = new World({ seed, map });
   // 한 스텝씩 돌리며 체력이 처음 줄어드는 순간을 잡는다. `play`를 그대로 쓰는 이유:
   // 카드를 고르는 규칙이 두 벌이 되면 두 자가 서로 다른 사람을 재게 된다.
   let firstHit = Infinity;

@@ -28,6 +28,7 @@ function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
     approachDistance: ENEMY.approachDistance,
     keepDistance: ENEMY.keepDistance,
     strafeRatio: ENEMY.strafeRatio,
+    obstacles: [],
     separation: ENEMY.separation,
     aimTime: ENEMY.aimTime,
     fireCooldown: ENEMY.fireCooldown,

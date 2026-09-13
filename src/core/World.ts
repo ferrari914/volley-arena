@@ -12,6 +12,7 @@ import {
   SHIELD,
   UPGRADE,
 } from '../data/config';
+import { DEFAULT_MAP, type ArenaMap } from '../data/maps';
 import { UPGRADE_CARDS } from '../data/upgrades';
 import {
   createEnemy,
@@ -21,6 +22,7 @@ import {
   type ArrowOwner,
   type Enemy,
   type EnemyKind,
+  type EnemySpawn,
   type Player,
   type PlayerStats,
   type Progress,
@@ -39,7 +41,10 @@ import {
   stepCores,
 } from '../systems/experience';
 import { movePlayer } from '../systems/movement';
+import { insideObstacle } from '../systems/obstacles';
 import { applyUpgrade, rollUpgradeChoices } from '../systems/upgrades';
+
+export type { EnemySpawn };
 
 export interface FrameInput {
   /** 이동 입력. 길이 0~1. y는 월드 Z축(화면 위가 -y). */
@@ -47,40 +52,6 @@ export interface FrameInput {
   /** 수동 조준 방향. 손을 대지 않았으면 null → 자동 조준. */
   aim: Vec2 | null;
 }
-
-/** 적이 설 자리 하나. 종류를 적지 않으면 활잡이다(DESIGN 5번의 그 적). */
-export interface EnemySpawn extends Vec2 {
-  kind?: EnemyKind;
-}
-
-/**
- * 표준 적 배치. 자동 조준이 "가장 가까운" 것을 고르는지 눈으로 보이게 흩어 둔다.
- * 적은 쓰러지면 이 자리로 돌아와 다시 선다 — 플레이어에게서 먼 자리라 숨 돌릴 틈이 생긴다.
- *
- * **다섯 중 하나는 돌진형, 하나는 방패병이다**(DESIGN 9번). 활잡이만 있으면 거리를
- * 벌리는 것 하나로 모든 위협이 풀린다 — 섞어야 "물러날 곳"과 "버틸 곳"이 동시에 사라진다.
- * 셋이 함께 있으면 요구하는 것도 셋이 된다: 계속 움직여라 · 옆으로 비켜라 · 돌아서 쏴라.
- *
- * **방패병은 활잡이 하나를 바꿔 세웠다. 수를 늘리지 않았다** — 적을 하나 더 세우면
- * 한 판 길이가 가장 먼저 움직인다(세션 13이 돌진형 하나로 한 판을 32초 늘렸다).
- * 돌진형(오른쪽)과 마주 보는 자리에 두어, 왼쪽으로 물러나도 오른쪽으로 물러나도
- * 각각 다른 것을 요구받게 했다.
- *
- * **하나인 이유는 재서 정했다.** 둘로 두면 한 판이 105초로 짧아져 3~5분 선(150~330초,
- * `tests/progression.test.ts`) 밑으로 떨어졌다. 돌진형은 화살과 달리 예고를 보고도
- * 발이 묶여 있으면 반드시 맞기 때문에, 한 마리가 활잡이 넷보다 무겁다.
- * 실측: 하나면 한 판 213초 · 서 있기 33초(활잡이만 있을 때의 42초보다 짧다 —
- * 한자리에 서 있는 사람에게 가장 아픈 적이다). 이 수를 늘리려면 그 두 검사부터 다시 볼 것.
- *
- * 자리는 좌우 중간 거리에 둔다 — 시작하자마자 코앞에서 튀어나오면 무슨 일인지 못 본다.
- */
-const ENEMY_LAYOUT: readonly EnemySpawn[] = [
-  { x: 0, y: -13 },
-  { x: 12, y: 6, kind: 'charger' },
-  { x: -12, y: 6, kind: 'shield' },
-  { x: 18, y: -9 },
-  { x: -18, y: -9 },
-];
 
 /**
  * 종류별 최대 체력과 방패 내구도. 적을 세우는 길이 `spawnEnemy` 하나뿐이라 표도 하나면 된다 —
@@ -93,7 +64,15 @@ function bodyOf(kind: EnemyKind): { maxHp: number; shieldHp: number } {
 }
 
 export interface WorldOptions {
-  /** 적이 설 자리. 생략하면 표준 배치. 부하 측정 장면이 여기로 20마리를 세운다. */
+  /**
+   * 어느 아레나에서 도는가 (DESIGN 10번). 생략하면 기본 맵(`빈 뜰`)이다 —
+   * 지금까지 잰 밸런스 수치는 전부 그 맵의 것이므로 기본값을 옮기지 않는다.
+   */
+  map?: ArenaMap;
+  /**
+   * 적이 설 자리. 생략하면 맵이 정한 자리. 부하 측정 장면이 여기로 20마리를 세운다.
+   * (맵을 함께 주면 기둥은 그 맵의 것을 쓰고 자리만 여기 것을 쓴다.)
+   */
   enemies?: readonly EnemySpawn[];
   /**
    * 난수 씨앗. 코어가 생기는 자리에만 쓴다.
@@ -117,6 +96,12 @@ function makeRandom(seed: number): () => number {
  * 렌더러가 없어도 돌아가므로 테스트에서 그대로 쓸 수 있다.
  */
 export class World {
+  /**
+   * 이 판이 도는 아레나 (DESIGN 10번). 판 중간에 바뀌지 않는다 —
+   * 맵을 바꾸는 것은 판을 새로 만드는 것이고, 그 길은 `main.ts` 하나뿐이다.
+   * 렌더러가 기둥을 세울 때(`Renderer.setMap`)도 이 값을 본다.
+   */
+  readonly map: ArenaMap;
   readonly player: Player = createPlayer(PLAYER.maxHp);
   readonly arrows: Arrow[] = [];
   readonly enemies: Enemy[];
@@ -218,7 +203,8 @@ export class World {
   private readonly random: () => number;
 
   constructor(options: WorldOptions = {}) {
-    this.enemies = (options.enemies ?? ENEMY_LAYOUT).map((p) => {
+    this.map = options.map ?? DEFAULT_MAP;
+    this.enemies = (options.enemies ?? this.map.enemies).map((p) => {
       const enemy = this.spawnEnemy(p.kind ?? 'archer', p.x, p.y);
       // 처음 선 적은 잠깐 다가오기만 한다(`ENEMY.startDelay`). 손을 대기도 전에
       // 첫 대를 맞으면 무엇에 맞았는지 알 수 없다 — 일어선 사람에게 적이 기다려 주는 것
@@ -257,6 +243,7 @@ export class World {
       this.stats.moveSpeed,
       ARENA.radius,
       PLAYER.radius,
+      this.map.obstacles,
     );
 
     this.updateAim(input, dt);
@@ -286,6 +273,7 @@ export class World {
       respawnDelay: ENEMY.respawnDelay,
       bounceRange: ARROW.bounceRange,
       shieldArc: SHIELD.arc,
+      obstacles: this.map.obstacles,
       player: this.player,
       enemies: this.enemies,
     });
@@ -399,6 +387,10 @@ export class World {
         farthest = candidate;
       }
       if (dist < REINFORCE.minPlayerDistance) continue;
+      // 기둥에 겹친 자리에는 세우지 않는다(DESIGN 10번). 지금 두 맵에서는 걸리지 않지만
+      // (기둥 뜰의 바깥 끝이 20.2m, 증원은 22m 위에 선다) 새 맵이 기둥을 벽 가까이 두면
+      // 여기가 막는다. 그 여백은 `tests/maps.test.ts`가 맵 데이터 쪽에서도 지킨다.
+      if (insideObstacle(candidate, ENEMY.radius, this.map.obstacles)) continue;
 
       // 가장 가까운 적까지의 각도 거리. 적이 하나도 없으면 아무 후보나 좋다.
       let gap = Math.PI;
@@ -473,6 +465,7 @@ export class World {
       contactRadius: ENEMY.radius + PLAYER.radius,
       charger: CHARGER,
       shield: SHIELD,
+      obstacles: this.map.obstacles,
       random: this.random,
     });
   }
@@ -520,6 +513,7 @@ export class World {
       arenaRadius: ARENA.radius,
       edgeMargin: CORE.ambient.edgeMargin,
       minPlayerDistance: CORE.ambient.minPlayerDistance,
+      obstacles: this.map.obstacles,
     });
     // 맵에 놓인 코어는 스스로 사라지지 않는다. 걸어가는 사이에 없어지면 주우러 갈 이유가 없다.
     this.cores.push(createXpCore(this.nextCoreId++, pos, CORE.ambient.value, 'ambient', Infinity));
@@ -532,6 +526,7 @@ export class World {
       lifetime: CORE.drop.lifetime,
       scatter: CORE.drop.scatter,
       limitRadius: ARENA.radius - 0.6,
+      obstacles: this.map.obstacles,
     });
     this.cores.push(...dropped);
     this.trimCores();

@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import type { World } from '../core/World';
 import { ARENA, ARROW, CHARGER, CORE, ENEMY, SHIELD } from '../data/config';
+import type { ArenaMap } from '../data/maps';
 import type { Vec2 } from '../core/math';
 import type { ArrowOwner, CoreOrigin, Enemy } from '../entities/types';
 import {
   applyShieldLook,
   createArena,
+  createObstacles,
   createArrow,
   createCore,
   createEnemy,
@@ -47,6 +49,8 @@ export class Renderer {
   private readonly coreMeshes = new Map<number, { mesh: THREE.Mesh; origin: CoreOrigin }>();
   private readonly corePools: Record<CoreOrigin, THREE.Mesh[]> = { ambient: [], drop: [] };
 
+  /** 지금 세워 둔 기둥들(DESIGN 10번). 맵이 바뀌면 통째로 갈아 끼운다. */
+  private obstacleGroup: THREE.Group | null = null;
   private readonly cameraFocus = new THREE.Vector3();
   /** `syncCamera`가 매 프레임 쓰는 임시 자리. 프레임마다 새로 만들지 않으려고 둔다. */
   private readonly focusTarget = new THREE.Vector3();
@@ -309,6 +313,26 @@ export class Renderer {
   }
 
   /**
+   * 이 맵의 기둥을 세운다 (DESIGN 10번). 맵을 고를 때와 판을 새로 만들 때 부른다.
+   *
+   * **지오메트리를 반드시 버린다**(`dispose`). 맵을 오갈 때마다 새로 만들어 쌓으면
+   * 화면에는 안 보이는 채로 GPU 메모리만 는다 — 모바일에서 가장 먼저 무너지는 자리다.
+   */
+  setMap(map: ArenaMap): void {
+    if (this.obstacleGroup) {
+      this.scene.remove(this.obstacleGroup);
+      this.obstacleGroup.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.geometry.dispose();
+          (node.material as THREE.Material).dispose();
+        }
+      });
+    }
+    this.obstacleGroup = createObstacles(map.obstacles);
+    this.scene.add(this.obstacleGroup);
+  }
+
+  /**
    * 판을 처음부터 다시 시작할 때 화면을 비운다 — DESIGN 6번의 "리스폰".
    *
    * **World를 새 것으로 갈아 끼울 때 반드시 함께 부른다.** 화살과 코어의 메시는 번호로
@@ -318,6 +342,7 @@ export class Renderer {
    * (적의 메시는 배열 자리로 짝짓고 있어서 이 문제가 없다 — 그래도 수가 줄 수 있으므로 숨긴다.)
    */
   reset(world: World): void {
+    this.setMap(world.map);
     for (const entry of this.arrowMeshes.values()) {
       this.scene.remove(entry.mesh);
       entry.mesh.visible = false;

@@ -154,3 +154,43 @@ function parseRecord(value: unknown): RunRecord | null {
 function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
+
+/* ------------------------------------------------------------------ *
+ * 마지막에 고른 맵 (DESIGN 10번)
+ *
+ * 최고 기록과 아무 상관이 없는 값이지만 **여기 둔다** — 이 파일의 머리말이
+ * "localStorage를 만지는 코드는 이 파일 하나뿐"이라고 정했고, 그 이유(프라이빗
+ * 모드의 예외 · 사람이 고쳐 놓은 값)는 맵 이름표에도 똑같이 걸린다.
+ * 키를 따로 두는 이유: 기록의 형식이 바뀌어 `v2`가 되어도 고른 맵은 남아야 한다.
+ * ------------------------------------------------------------------ */
+
+const MAP_KEY = 'volley-arena:map:v1';
+
+/**
+ * 지난 판에 고른 맵의 이름표. 없거나 읽을 수 없으면 null.
+ * **이 값이 맵을 정하지는 않는다** — 고르는 화면이 어느 쪽을 미리 짚어 둘지만 정한다.
+ * 모르는 이름표가 나와도 `findMap`이 기본 맵으로 받아 준다.
+ */
+export function readLastMap(storage: RecordStorage | null = browserStorage()): string | null {
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(MAP_KEY);
+    return typeof raw === 'string' && raw.length > 0 && raw.length <= 40 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 고른 맵을 적어 둔다. 저장에 실패해도 게임을 세우지 않는다(기록과 같은 규칙). */
+export function writeLastMap(
+  id: string,
+  storage: RecordStorage | null = browserStorage(),
+): boolean {
+  if (!storage) return false;
+  try {
+    storage.setItem(MAP_KEY, id);
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -1,5 +1,12 @@
 import { clamp, distanceSq, type Vec2 } from '../core/math';
-import { createXpCore, type CoreOrigin, type Progress, type XpCore } from '../entities/types';
+import {
+  createXpCore,
+  type CoreOrigin,
+  type Obstacle,
+  type Progress,
+  type XpCore,
+} from '../entities/types';
+import { insideObstacle, pushOutOfObstacles } from './obstacles';
 
 /** 레벨 곡선의 모양. 수치는 `data/config.ts`의 LEVEL이 갖고 있다. */
 export interface LevelCurve {
@@ -107,6 +114,8 @@ export interface AmbientSpawnOptions {
   arenaRadius: number;
   edgeMargin: number;
   minPlayerDistance: number;
+  /** 이 맵에 선 기둥들(DESIGN 10번). 기둥 속에는 코어가 생기지 않는다. */
+  obstacles?: readonly Obstacle[];
 }
 
 /**
@@ -119,7 +128,7 @@ export function pickAmbientSpawn(
   playerPos: Vec2,
   options: AmbientSpawnOptions,
 ): Vec2 {
-  const { arenaRadius, edgeMargin, minPlayerDistance } = options;
+  const { arenaRadius, edgeMargin, minPlayerDistance, obstacles = [] } = options;
   const limit = Math.max(arenaRadius - edgeMargin, 1);
   // 플레이어에서 멀리 떨어진 자리를 몇 번 뽑아 본다. 아레나가 좁아 못 찾을 수도 있으므로
   // 무한히 돌리지 않고, 마지막에 뽑힌 자리를 그냥 쓴다(자리 하나 때문에 프레임을 멈추지 않는다).
@@ -129,9 +138,13 @@ export function pickAmbientSpawn(
     // 반지름에 제곱근을 씌워야 원 안에 고르게 퍼진다(안 씌우면 가운데로 몰린다).
     const radius = Math.sqrt(random()) * limit;
     candidate = { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+    // 기둥 속에 놓인 코어는 영영 못 줍는다(몸이 들어갈 수 없다). 자리를 다시 뽑는다.
+    if (insideObstacle(candidate, edgeMargin, obstacles)) continue;
     if (distanceSq(candidate, playerPos) >= minPlayerDistance * minPlayerDistance) break;
   }
-  return candidate;
+  // 여덟 번을 다 써도 기둥을 피하지 못했으면(기둥이 촘촘한 맵) 밖으로 밀어낸다.
+  // 자리 하나 때문에 프레임을 멈추지 않는다는 규칙은 그대로 두고, 못 줍는 코어만 없앤다.
+  return pushOutOfObstacles(candidate, edgeMargin, obstacles);
 }
 
 export interface DropOptions {
@@ -141,6 +154,8 @@ export interface DropOptions {
   scatter: number;
   /** 코어가 벽 밖으로 튀어나가지 않게 자르는 반지름. */
   limitRadius: number;
+  /** 이 맵에 선 기둥들(DESIGN 10번). 기둥 속에 떨어진 코어는 밖으로 밀어낸다. */
+  obstacles?: readonly Obstacle[];
 }
 
 /**
@@ -154,7 +169,7 @@ export function createDropCores(
   random: () => number,
   options: DropOptions,
 ): XpCore[] {
-  const { count, value, lifetime, scatter, limitRadius } = options;
+  const { count, value, lifetime, scatter, limitRadius, obstacles = [] } = options;
   const out: XpCore[] = [];
   // 뿌리는 방향 전체를 한 번 돌려 둔다. 이것이 없으면 어느 쪽으로 흩어지는지가
   // 세계 축에 고정돼 매번 같은 모양이 되고, 한 알만 떨어질 때는 아예 한쪽 216도
@@ -170,7 +185,10 @@ export function createDropCores(
       pos.x = (pos.x / dist) * limitRadius;
       pos.y = (pos.y / dist) * limitRadius;
     }
-    out.push(createXpCore(nextId(), pos, value, 'drop', lifetime));
+    // 기둥 옆에서 쓰러진 적이 기둥 속에 코어를 흘릴 수 있다. 밖으로 밀어낸다 —
+    // 벽 밖으로 나간 것을 도로 자르는 것(위)과 같은 자리다.
+    const clear = pushOutOfObstacles(pos, 0.4, obstacles);
+    out.push(createXpCore(nextId(), clear, value, 'drop', lifetime));
   }
   return out;
 }

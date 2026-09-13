@@ -52,3 +52,20 @@ export function rotateToward(current: number, target: number, maxStep: number): 
   if (Math.abs(diff) <= maxStep) return wrapAngle(target);
   return wrapAngle(current + Math.sign(diff) * maxStep);
 }
+
+/**
+ * 선분 a→b 위에서 점 c까지의 최단 거리의 제곱.
+ *
+ * 한 프레임에 제 몸통보다 멀리 나아가는 것(화살)은 위치만 비교하면 대상을 통과해도
+ * 지나쳐 버린다. 이동 궤적 전체로 재야 한다 — 화살이 적을 맞히는 판정
+ * (`systems/combat.ts`)과 기둥에 막히는 판정(`systems/obstacles.ts`)이 둘 다 이것을 쓴다.
+ */
+export function segmentPointDistanceSq(a: Vec2, b: Vec2, c: Vec2): number {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const lenSq = abx * abx + aby * aby;
+  const t = lenSq < 1e-12 ? 0 : clamp(((c.x - a.x) * abx + (c.y - a.y) * aby) / lenSq, 0, 1);
+  const dx = a.x + abx * t - c.x;
+  const dy = a.y + aby * t - c.y;
+  return dx * dx + dy * dy;
+}

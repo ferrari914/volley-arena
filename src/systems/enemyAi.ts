@@ -1,5 +1,6 @@
 import { clamp, length, rotateToward, type Vec2 } from '../core/math';
-import type { Enemy } from '../entities/types';
+import type { Enemy, Obstacle } from '../entities/types';
+import { pushOutOfObstacles } from './obstacles';
 
 /**
  * 적 봇의 행동 (DESIGN 5번 · 9번).
@@ -54,6 +55,8 @@ export interface EnemyStepOptions {
   charger: ChargerOptions;
   /** 방패병(DESIGN 9번)의 수치. 활잡이와 같은 이름의 값이라도 값이 달라 여기 따로 둔다. */
   shield: ShieldOptions;
+  /** 이 맵에 선 기둥들(DESIGN 10번). 적의 몸도 플레이어와 같은 규칙으로 막힌다. */
+  obstacles: readonly Obstacle[];
   /** 조준을 흔드는 데 쓴다. World의 씨앗 고정 난수가 들어온다. */
   random: () => number;
 }
@@ -297,13 +300,18 @@ function distanceTo(enemy: Enemy, point: Vec2): number {
   return Math.hypot(point.x - enemy.pos.x, point.y - enemy.pos.y);
 }
 
-/** 방향(정규화하지 않은 것도 받는다)과 속력으로 한 스텝 움직이고 벽 안쪽으로 자른다. */
+/**
+ * 방향(정규화하지 않은 것도 받는다)과 속력으로 한 스텝 움직이고 벽 안쪽으로 자른다.
+ * 기둥에서도 밀려난다(DESIGN 10번) — **플레이어와 같은 함수를 쓴다**(`pushOutOfObstacles`).
+ * 여기서 따로 만들면 적만 기둥을 뚫고 지나가는 고장이 조용히 생긴다.
+ */
 function moveBy(enemy: Enemy, move: Vec2, speed: number, options: EnemyStepOptions): void {
   const moveLen = length(move);
   if (moveLen <= 1e-6) return;
   const step = (speed * options.dt) / moveLen;
   enemy.pos = { x: enemy.pos.x + move.x * step, y: enemy.pos.y + move.y * step };
   clampToArena(enemy, options.arenaRadius - options.bodyRadius);
+  enemy.pos = pushOutOfObstacles(enemy.pos, options.bodyRadius, options.obstacles);
 }
 
 /** 쓰러진 적을 제자리에 다시 세운다. 체력도 방패도 타이머도 함께 되돌린다. */

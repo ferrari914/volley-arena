@@ -5,8 +5,11 @@ import { Renderer } from './render/Renderer';
 import { AdBreak } from './ui/AdBreak';
 import { Defeat } from './ui/Defeat';
 import { Hud } from './ui/Hud';
+import { MapSelect } from './ui/MapSelect';
 import { UpgradeCards } from './ui/UpgradeCards';
 import { IDLE_INPUT } from './input/types';
+import { findMap, type ArenaMap } from './data/maps';
+import { readLastMap } from './data/records';
 
 declare global {
   interface Window {
@@ -74,7 +77,7 @@ function boot(): void {
    * 스며드는데, 그건 화면을 봐도 알아채기 어려운 종류의 고장이다.
    * 아래 콜백들이 전부 이 변수를 그때그때 읽으므로, 갈아 끼우면 다 함께 따라온다.
    */
-  let world = new World();
+  let world = new World({ map: findMap(readLastMap()) });
   const frameProbe = window.__frameProbe;
   const hud = new Hud(uiLayer);
   const cards = new UpgradeCards(uiLayer, (id) => world.chooseUpgrade(id));
@@ -83,7 +86,9 @@ function boot(): void {
     // 부활: 광고를 끝까지 본 사람만 그 자리에서 일어선다. 도중에 닫으면 쓰러진 화면 그대로다.
     onRevive: () => void ad.show().then((rewarded) => rewarded && world.revive()),
     onRestart: () => {
-      world = new World();
+      // 맵은 그대로다. 다시 하는 사람이 원하는 것은 방금 그 판이지 다른 아레나가 아니다
+      // (다른 맵으로 가려면 새로고침 — 고르는 화면은 판을 여는 자리에만 있다).
+      world = new World({ map: world.map });
       // World와 화면을 함께 되돌린다. 렌더러를 비우지 않으면 지난 판의 화살 메시가
       // 새 판의 번호와 겹쳐 허공에 눌러앉는다(Renderer.reset 주석 참고).
       renderer.reset(world);
@@ -92,12 +97,28 @@ function boot(): void {
   });
   const input = new InputManager(app);
 
+  /**
+   * 아레나를 고르는 화면 (DESIGN 10번). 고르는 동안 시뮬레이션은 멈추고
+   * **화면은 계속 그린다** — 고르는 화면 뒤로 아레나가 비치는 것이 그 화면의 설명이다.
+   * 멈췄는지는 `select.open` 하나만 본다(따로 변수를 두면 둘이 어긋날 자리가 생긴다).
+   * `World.isPaused`와 같은 자리에서 다루므로 가상 스틱도 함께 흐려진다.
+   */
+  const select = new MapSelect(uiLayer, (map: ArenaMap) => {
+    // 고른 맵으로 판을 새로 연다. 처음부터 하는 것(`onRestart`)과 같은 길이다 —
+    // 뒤에 비치던 판은 미리 보기였을 뿐이므로 그대로 버린다.
+    world = new World({ map });
+    renderer.reset(world);
+    hud.reset();
+  });
+  // 고르는 화면 뒤에 비칠 아레나. 고르고 나면 `reset`이 다시 세운다.
+  renderer.setMap(world.map);
+
   const ticker = new Ticker(
     (dt) => {
       // 카드를 고르는 동안과 쓰러진 뒤에는 입력을 읽지 않는다. 멈춤 자체는 World가
       // 지키지만(step이 빈다), 화면의 버튼을 누르려고 댄 손가락이 가상 스틱으로 새는 것은
       // 여기서 막아야 한다.
-      if (world.isPaused) return;
+      if (select.open || world.isPaused) return;
 
       const state = document.hidden
         ? IDLE_INPUT
@@ -113,7 +134,7 @@ function boot(): void {
       hud.update(world, ticker.fps);
       cards.sync(world.offer);
       defeat.sync(world);
-      syncPaused(world.isPaused);
+      syncPaused(select.open || world.isPaused);
       frameProbe?.(world);
     },
   );
