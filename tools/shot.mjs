@@ -1156,6 +1156,7 @@ try {
     // **세로 화면에서는 건너뛴다.** 거기서는 `#rotate-notice`가 화면을 통째로 덮고
     // 게임이 "돌려 주세요"만 말한다 — 그것이 이 게임의 세로 화면이고, 고르는 화면은
     // 그 뒤에 있어 손가락이 닿지 않는다. 세로 화면이 보는 것은 그 안내 하나뿐이다.
+    let startedMatch = false;
     if (await page.locator('#rotate-notice').isVisible()) {
       console.log(`  [${name}] 세로 화면 — 돌려 달라는 안내가 덮고 있다. 판을 열지 않는다`);
     } else {
@@ -1164,10 +1165,25 @@ try {
         problems.push(`[${name}] 안전 영역(맵 고르기): ${problem}`);
       }
       await startMatch(page);
+      startedMatch = true;
     }
 
     // 자동 조준이 대상을 잡고 화살이 날아가는 장면을 담는다.
     await page.waitForTimeout(1800);
+    // **판이 열린 순간에는 자동 조준이어야 한다**(DESIGN 1번 — 조준을 건드리지 않으면
+    // 가장 가까운 적을 겨눈다). 여기까지 아무도 조준한 적이 없기 때문이다.
+    // 맵 카드를 누른 마우스 자리가 조준으로 새면 여기가 '수동'으로 뜬다(세션 44).
+    if (startedMatch) {
+      const aimMode = await page.evaluate(
+        () => document.getElementById('hud-debug')?.textContent ?? '',
+      );
+      if (!aimMode.includes('자동')) {
+        problems.push(
+          `[${name}] 판이 열렸는데 자동 조준이 아니다 (${aimMode}) — ` +
+            '아무도 조준하지 않았는데 조준이 잡혀 있다',
+        );
+      }
+    }
     await page.screenshot({ path: `${OUT}/${name}.png` });
 
     // 이동 입력이 실제로 먹는지: 왼쪽 아래를 끌어 본다(터치) / WASD(데스크톱).

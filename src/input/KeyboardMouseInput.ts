@@ -79,8 +79,16 @@ export class KeyboardMouseInput implements InputSource {
 
   private readonly onPointerMove = (event: PointerEvent): void => {
     if (event.pointerType !== 'mouse') return;
-    this.mouse = { x: event.clientX, y: event.clientY };
+    // 마우스가 움직였다는 것만으로 데스크톱임을 안다. 겨누는지와는 별개다.
     document.body.dataset['input'] = 'keyboard';
+    // **아레나를 가리킨 것만 조준이다.** 카드·버튼·고르는 화면 위에서 움직인 것은
+    // 아니다(DESIGN 1번 — 조준을 건드리지 않으면 가장 가까운 적을 자동 조준한다).
+    // 그것까지 받으면 맵을 고르려고 마우스를 옮긴 사람이 판이 열리는 순간부터
+    // 아무도 없는 그 자리를 겨누고 서 있게 된다 — 실제로 `npm run qa`의 데스크톱 화면이
+    // 23초 동안 처치 0으로 그러고 있었다(세션 44).
+    // HUD는 `#ui-layer`가 pointer-events:none이라 그 위를 지나도 여기 target은 캔버스다.
+    if (!(event.target instanceof HTMLCanvasElement)) return;
+    this.mouse = { x: event.clientX, y: event.clientY };
   };
 
   private readonly onPointerLeave = (event: PointerEvent): void => {
