@@ -231,6 +231,11 @@ describe('World — 경험치 코어', () => {
   });
 });
 
+/** 씨앗은 고정한다. 바퀴마다 다른 판을 재면 수치를 비교할 수 없다. */
+const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
+/** 코어만 보고 걷는 사람의 스무 판. 아래 묶음들이 같은 스무 판을 나눠 본다. */
+const results = SEEDS.map((seed) => playMatch(seed));
+
 /**
  * DESIGN 3번: "적을 잡는 쪽이 확실히 빠르게 성장하도록 비율을 잡는다.
  * 코어만 주우며 전투를 피하는 것이 최적해가 되면 안 된다."
@@ -250,35 +255,43 @@ describe('밸런스 — 전투가 채집보다 빠르다', () => {
 
   it('전투 수입이 채집 수입 상한의 3배를 넘는다', () => {
     const seconds = 60;
-    const world = new World();
-    play(world, 60 * seconds, walkToNearestCore);
-
-    const dropRate = world.xpByOrigin.drop / seconds;
+    // 스무 판의 첫 1분을 재서 중앙값을 본다(세션 41이 씨앗 하나에서 넓혔다).
+    // 판마다 만나는 적의 수가 다르므로 한 판은 8.25~12.17 XP/s로 흔들린다 —
+    // 중앙값은 씨앗 블록을 여섯 번 옮겨도 9.4~10.6 XP/s에 머문다.
+    const rates = SEEDS.map((seed) => {
+      const world = new World({ seed });
+      play(world, 60 * seconds, walkToNearestCore);
+      return world.xpByOrigin.drop / seconds;
+    }).sort((a, b) => a - b);
+    const dropRate = median(rates);
     // 눈으로도 볼 수 있게 남긴다. 밸런스를 만질 때 이 수치를 보고 판단한다.
     console.log(
-      `전투 ${dropRate.toFixed(2)} XP/s · 채집 상한 ${ambientCeiling.toFixed(2)} XP/s ` +
-        `(${(dropRate / ambientCeiling).toFixed(1)}배) · 60초에 ${world.kills}처치 ` +
-        `Lv${world.progress.level}`,
+      `전투 수입 스무 판: 중앙 ${dropRate.toFixed(2)} XP/s · ` +
+        `가장 적은 판 ${(rates[0] ?? 0).toFixed(2)} · 가장 많은 판 ${(rates[rates.length - 1] ?? 0).toFixed(2)} · ` +
+        `채집 상한 ${ambientCeiling.toFixed(2)} XP/s (${(dropRate / ambientCeiling).toFixed(1)}배)`,
     );
+    // 실측 27배다. 선이 헐거운 것은 일부러다 — DESIGN이 요구하는 것은 "확실히 빠르게"이고,
+    // 여기가 3배까지 좁혀졌다면 그것은 이미 기획이 뒤집힌 판이다.
     expect(dropRate).toBeGreaterThan(ambientCeiling * 3);
   });
 
   it('한 판이 끝나고 오른 레벨이 남김없이 카드가 된다', () => {
-    const world = new World();
-    // 10분까지 돌려 본다. 그 전에 쓰러지면 거기서 판이 끝난 것이다.
-    play(world, 60 * 600, walkToNearestCore);
+    const levels = results.map((r) => r.level).sort((a, b) => a - b);
     console.log(
-      `한 판 ${world.elapsed.toFixed(0)}초 · Lv${world.progress.level} · ` +
-        `카드 ${world.takenUpgrades.length}장 · ${world.kills}처치 ` +
-        `(고른 카드: ${world.takenUpgrades.join(',')})`,
+      `스무 판의 레벨: 중앙 Lv${median(levels).toFixed(0)} · ` +
+        `가장 낮은 판 Lv${levels[0]} · 가장 높은 판 Lv${levels[levels.length - 1]}`,
     );
 
-    expect(world.defeated).toBe(true);
-    // 레벨업 한 번이 카드 한 장이다(4번). 한 판에 10장 밑이면 심심하다.
-    expect(world.progress.level).toBeGreaterThanOrEqual(10);
-    expect(world.takenUpgrades.length).toBe(world.progress.level - 1);
-    // **"한 판 3~5분"은 여기서 재지 않는다.** 씨앗 하나는 그 선을 증명하지 못한다 —
-    // 아래 '한 판 길이' 묶음이 씨앗 20개로 잰다.
+    // 레벨업 한 번이 카드 한 장이다(4번). **이것은 씨앗과 무관한 불변식이라 스무 판 전부에 건다.**
+    for (const row of results) {
+      expect(row.defeated, `씨앗 ${row.seed}의 판이 10분 안에 끝나지 않았다`).toBe(true);
+      expect(row.cards.length, `씨앗 ${row.seed}: Lv${row.level}인데 카드 ${row.cards.length}장`).toBe(
+        row.level - 1,
+      );
+    }
+    // 자라는 양에는 중앙값으로 건다 — 한 판에 10장 밑이면 심심하다(실측 중앙 Lv16.5 · 가장 낮은 판 Lv11).
+    expect(median(levels)).toBeGreaterThanOrEqual(10);
+    // **"한 판 3~5분"은 여기서 재지 않는다.** 아래 '한 판 길이' 묶음이 같은 스무 판으로 잰다.
   });
 });
 
@@ -303,10 +316,6 @@ const SHORTEST = 150;
 const LONGEST = 330;
 /** 판이 영영 안 끝나는 고장을 잡는 선(초). 흔들리는 극단값이라 관측된 최악보다 한참 위에 둔다. */
 const RUNAWAY = 480;
-/** 씨앗은 고정한다. 바퀴마다 다른 판을 재면 수치를 비교할 수 없다. */
-const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
-/** 코어만 보고 걷는 사람의 스무 판. 아래 묶음들이 같은 스무 판을 나눠 본다. */
-const results = SEEDS.map((seed) => playMatch(seed));
 /** 예고를 보고 비키는 사람의 같은 스무 판(세션 18). 두 번째 자다 — 한 사람만 재면 버릇을 게임으로 오해한다. */
 const dodged = SEEDS.map((seed) => playMatch(seed, 600, dodgeCharger));
 /** 방패병을 옆구리로 도는 사람의 같은 스무 판(세션 24). 세 번째 자다. */
@@ -569,31 +578,75 @@ describe('밸런스 — 옆구리로 돌면 판이 뚫린다 (DESIGN 9번)', () 
  * 적의 화살을 느리게 하고 쏘기 전에 멈춰 서게 한 것이 전부 이것을 위해서다.
  * 여기가 깨지면 (a) 적이 너무 정확해서 피할 방법이 없거나
  * (b) 적이 너무 무해해서 이동할 이유가 없다 — 둘 다 게임이 아니게 된다.
+ *
+ * **세션 41이 자를 씨앗 하나에서 스무 판으로 옮겼다.** 그전까지 이 묶음은 `new World()`로
+ * 기본 씨앗 한 판만 재서 60초 선과 견줬다(그 한 판이 48초였다). 스무 판으로 넓혀 보니
+ * **그 한 판이 위에서 둘째로 오래 버티는 판**이었다 — 같은 게임의 스무 판은 37~52초이고
+ * 중앙값은 40초다. 선까지 남은 여유가 12초인 줄 알았지만 실제로는 20초였고,
+ * 무엇보다 **그 12초는 게임이 아니라 씨앗이 정하고 있었다**(세션 40의 규칙).
  */
-describe('밸런스 — 움직이면 피하고, 서 있으면 죽는다', () => {
-  /** 쓰러질 때까지 걸린 시간(s). 끝까지 살아남으면 돌린 시간을 그대로 돌려준다. */
-  function survive(input: (w: World) => FrameInput, maxSeconds = 600): number {
-    const world = new World();
-    play(world, 60 * maxSeconds, input);
+describe('밸런스 — 움직이면 피하고, 서 있으면 죽는다 (씨앗 20개)', () => {
+  /**
+   * 손을 대지 않은 스무 판. 씨앗은 위 묶음과 같은 자리라(`SEEDS`) `results`와 짝이 맞는다 —
+   * 같은 판을 한 번은 서서, 한 번은 걸어 다니며 산 셈이다.
+   *
+   * 120초에서 끊는다. 서 있는 사람은 실측 최장 52초에 쓰러지므로 두 배 넘는 여유이고,
+   * 만에 하나 영영 안 죽는 판이 생기면 120으로 잡혀 아래 선이 운다.
+   */
+  const standing = SEEDS.map((seed) => {
+    const world = new World({ seed });
+    play(world, 60 * 120, () => IDLE);
     return world.elapsed;
-  }
+  });
+  const sorted = [...standing].sort((a, b) => a - b);
+  const shortestStand = sorted[0] ?? 0;
+  const longestStand = sorted[sorted.length - 1] ?? 0;
 
+  /**
+   * 선은 중앙값에 건다(세션 40의 규칙). **스무 판의 중앙값은 씨앗 블록을 옮겨도 거의 안 움직인다** —
+   * 게임을 한 줄도 바꾸지 않고 블록만 여섯 번 옮겨 재니 중앙값 39~42초 · 가장 긴 판 45~52초였다
+   * (예순 판으로 넓히면 중앙값은 여섯 블록 모두 39초다).
+   *
+   * **이가 있는지 확인했다**: 적 화살의 `damage`를 5 → 3으로 무르게 하면
+   * 중앙 63초 · 최장 83초로 두 선이 함께 깨진다.
+   *
+   * **이 자는 더 이상 `ENEMY.startDelay`를 붙잡지 못한다.** 세션 19는 이 검사를 startDelay의
+   * 천장으로 읽었지만(“3.0 → 서 있기 68초”), 그것도 씨앗 하나의 값이었다. 지금 스무 판으로
+   * 재면 3.0초에서 중앙 42초이고, **15초까지 늘려도 예순 판 중앙값이 58초**다. 판의 첫머리를
+   * 지키는 것은 이 자가 아니라 위의 첫 피격 검사들이다.
+   */
   it('가만히 서 있으면 1분 안에 쓰러진다', () => {
-    const standing = survive(() => IDLE, 120);
-    console.log(`서 있기: ${standing.toFixed(0)}초 만에 쓰러짐`);
-    expect(standing).toBeLessThan(60);
-    // 곧바로 죽지도 않는다. 적이 걸어와 겨눌 시간은 있어야 무슨 일인지 보인다.
-    expect(standing).toBeGreaterThan(10);
+    console.log(
+      `서 있기 스무 판: 중앙값 ${median(standing).toFixed(0)}초 · ` +
+        `가장 짧은 판 ${shortestStand.toFixed(0)}초 · 가장 긴 판 ${longestStand.toFixed(0)}초`,
+    );
+    expect(median(standing), '서 있어도 웬만해선 안 죽는다').toBeLessThan(60);
+    // 운이 좋은 판에도 천장이 있어야 한다. 실측 52초 · 여섯 블록 최장 55초라 23초를 남긴 선이다.
+    expect(longestStand, '가장 운 좋은 판이 너무 오래 버틴다').toBeLessThan(75);
+    // 곧바로 죽지도 않는다. 적이 걸어와 겨눌 시간은 있어야 무슨 일인지 보인다(실측 37초).
+    expect(shortestStand).toBeGreaterThan(10);
   });
 
+  /**
+   * 움직이는 쪽은 이미 스무 판이 있다(`results` — 같은 씨앗을 코어 보고 걷는 사람이 산 판).
+   * **판끼리 나누지 않고 중앙값끼리 견준다**: 같은 씨앗의 두 판을 나눈 배율은 스무 판에서
+   * 2.0~9.6배로 흩어져(중앙 5.6배), 한 판만 집으면 3배 선이 동전 던지기가 된다 —
+   * 스무 판 중 한 판은 실제로 2.0배다. 중앙값끼리는 여섯 블록에서 5.4~6.8배로 붙어 있다.
+   *
+   * **이 선은 헐겁다는 것을 적어 둔다.** 적 화살을 플레이어 화살만큼 빠르게 하고(16 → 34)
+   * 겨누는 예고까지 걷어내도(`aimTime` 0.5 → 0.1) 중앙끼리 4.2배가 남는다 — 걸어 다니는 쪽이
+   * 오래 사는 이유의 큰 몫은 피하는 것이 아니라 **코어를 주워 자라는 것**이기 때문이다.
+   * 그러니 이 검사는 "이동이 게임을 연다"는 바닥선이지 "피할 수 있다"의 증명이 아니다.
+   * 피하기 자체를 재려면 맞은 횟수를 보는 자가 따로 필요하다(STATUS '다음 할 일').
+   */
   it('계속 움직이면 서 있을 때보다 세 배 넘게 버틴다', () => {
-    const standing = survive(() => IDLE, 120);
-    const moving = survive(walkToNearestCore);
+    const moving = median(results.map((r) => r.elapsed));
+    const stood = median(standing);
     console.log(
-      `서 있기 ${standing.toFixed(0)}초 vs 움직이기 ${moving.toFixed(0)}초 ` +
-        `(${(moving / standing).toFixed(1)}배)`,
+      `중앙값끼리 — 서 있기 ${stood.toFixed(0)}초 vs 움직이기 ${moving.toFixed(0)}초 ` +
+        `(${(moving / stood).toFixed(1)}배)`,
     );
-    expect(moving).toBeGreaterThan(standing * 3);
+    expect(moving).toBeGreaterThan(stood * 3);
   });
 });
 

@@ -71,11 +71,24 @@ function line(name: string, rows: readonly MatchResult[]): string {
   );
 }
 
-/** 서 있기. 합격선은 `npm test`가 지킨다 — 여기서는 표에 함께 적기만 한다. */
-function standing(): number {
-  const world = new World();
-  play(world, 60 * 120, () => IDLE);
-  return world.elapsed;
+/**
+ * 서 있기. 합격선은 `npm test`가 지킨다 — 여기서는 표에 함께 적기만 한다.
+ *
+ * **씨앗 하나가 아니라 표와 같은 씨앗 전부를 돌린다**(세션 41). 이 줄이 씨앗 하나였을 때는
+ * 같은 게임의 스무 판이 37~52초인데 48초 한 판만 표에 적혀, 표를 견주는 바퀴가
+ * 그 한 판의 운을 게임의 변화로 읽었다.
+ */
+function standing(): { median: number; shortest: number; longest: number } {
+  const seconds = SEEDS.map((seed) => {
+    const world = new World({ seed });
+    play(world, 60 * 120, () => IDLE);
+    return world.elapsed;
+  }).sort((a, b) => a - b);
+  return {
+    median: median(seconds),
+    shortest: seconds[0] ?? 0,
+    longest: seconds[seconds.length - 1] ?? 0,
+  };
 }
 
 /** 세 사람을 한 벌 돌린다. 발이 바뀌면 사람 셋이 통째로 다른 판을 산다. */
@@ -105,7 +118,14 @@ describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
         ...byPerson.map((p) => line(p.name, p.rows)),
         '',
         line('모두', all),
-        `  서 있기 ${standing().toFixed(0)}초 (합격선 60 · npm test가 지킨다)`,
+        (() => {
+          const stood = standing();
+          return (
+            `  서 있기     중앙 ${stood.median.toFixed(0)}초 · ` +
+            `최단 ${stood.shortest.toFixed(0)} · 최장 ${stood.longest.toFixed(0)} ` +
+            `(합격선 중앙 60 · 최장 75 · npm test가 지킨다)`
+          );
+        })(),
         '',
       ].join('\n'),
     );
