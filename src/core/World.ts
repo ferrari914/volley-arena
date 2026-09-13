@@ -27,7 +27,7 @@ import {
   type UpgradeOffer,
   type XpCore,
 } from '../entities/types';
-import { normalize, rotateToward, type Vec2 } from './math';
+import { normalize, rotateToward, wrapAngle, type Vec2 } from './math';
 import { findNearestEnemy } from '../systems/autoAim';
 import { damagePlayer, healPlayer, stepArrows, stepPlayerRecovery } from '../systems/combat';
 import { stepEnemies } from '../systems/enemyAi';
@@ -325,22 +325,77 @@ export class World {
 
   /**
    * 증원이 걸어 들어올 자리. 벽 가까이에서, 플레이어와 충분히 떨어진 곳을 고른다.
-   * 못 찾으면 마지막에 뽑힌 자리를 그냥 쓴다 — 자리 하나 때문에 프레임을 멈추지 않는다
-   * (맵 코어의 `pickAmbientSpawn`과 같은 규칙이다).
+   *
+   * **무작위 각도 하나를 뽑던 자리다. 그러면 뭉친다**(세션 26이 `shots/crowd-15.png`에서
+   * 눈으로 봤다 — 대여섯이 한쪽에 서고 반대쪽 절반이 빈다). 프레임이 아니라
+   * **읽히는가**의 문제다: 적이 한 덩어리로 서면 어느 쪽을 보고 있어야 하는지가
+   * 화면 한쪽으로 정해져, 반대쪽 절반은 판 내내 볼 이유가 없는 땅이 된다.
+   *
+   * 그래서 두 가지를 바꿨다.
+   *   1. 각도를 **등간격 후보**로 벌려 놓는다(무작위 시작각 + 360/12). 뽑을 때마다 독립인
+   *      무작위는 우연히 몰리는 것을 막지 못한다. 시작각은 그대로 무작위라 판마다 다르다.
+   *   2. 후보 중 **가장 빈 쪽**을 고른다 — 이미 선 적들에게서 각도가 가장 멀리 떨어진
+   *      후보가 이긴다.
+   *
+   * **각도는 아레나 중심이 아니라 플레이어에서 본 방위각으로 잰다.** 화면은 플레이어를
+   * 따라다니므로, 비어 보이는 쪽도 플레이어 기준이다. 쓰러져 있는 적은 **선 자리(`home`)로**
+   * 셈에 넣는다 — 곧 그 자리에 다시 서므로(`enemyAi`의 `revive`) 지금 비었다고 그쪽으로
+   * 부르면 잠시 뒤 둘이 겹친다.
+   *
+   * **중심에서 재는 쪽도 만들어 재 봤다. 더 고르게 서지만 게임이 순해진다**(세션 39).
+   * 선 자리만 보고 중심 기준으로 벌리면 둘레가 거의 균등해지는데(자 37/43도),
+   * 그러면 적이 플레이어를 에워싸는 대신 아레나에 고루 흩어져 잘 하는 사람이 덜 맞는다 —
+   * 180판 p95가 331 → 359초로 벌어졌다(플레이어 기준은 347초). **뭉침을 푸는 것과
+   * 에워싸는 것은 다르다.** 둘 중 화면이 원하는 것은 후자다.
+   *
+   * 플레이어에게 너무 가까운 후보는 버린다. 다 버려지는 일은 기하학적으로 없지만
+   * (벽에 붙어 서도 코앞은 원 둘레의 5분의 1이다), 그래도 비면 가장 먼 후보를 쓴다 —
+   * 자리 하나 때문에 프레임을 멈추지 않는다(맵 코어의 `pickAmbientSpawn`과 같은 규칙).
+   *
+   * 씨앗 20개 실측(열일곱 자리의 가장 넓은 빈 부채꼴 · 고르게 서면 21도):
+   * 무작위 각도 **중앙 63도 · 최악 105도** → 여기 **중앙 47도 · 최악 56도**.
+   * `tests/world.test.ts`의 '증원이 한쪽에 뭉치지 않는다'가 이 수치를 지킨다.
+   *
+   * **이 바퀴가 치른 값은 `REINFORCE.interval`·`maxExtra`에 적어 두었다** —
+   * 뭉치지 않게 되자 위쪽 꼬리가 벌어져 증원을 28초 간격 · 열두 자리로 옮겼다.
    */
   private pickReinforceSpawn(): Vec2 {
-    let candidate: Vec2 = { x: 0, y: 0 };
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const angle = this.random() * Math.PI * 2;
-      candidate = {
+    const base = this.random() * Math.PI * 2;
+    const taken = this.enemies.map((e) => {
+      const at = e.alive ? e.pos : e.home;
+      return Math.atan2(at.y - this.player.pos.y, at.x - this.player.pos.x);
+    });
+
+    let best: Vec2 | null = null;
+    let bestGap = -1;
+    let farthest: Vec2 = { x: 0, y: 0 };
+    let farthestDist = -1;
+
+    for (let i = 0; i < REINFORCE.spawnCandidates; i += 1) {
+      const angle = base + (i * Math.PI * 2) / REINFORCE.spawnCandidates;
+      const candidate = {
         x: Math.cos(angle) * REINFORCE.spawnRadius,
         y: Math.sin(angle) * REINFORCE.spawnRadius,
       };
       const dx = candidate.x - this.player.pos.x;
       const dy = candidate.y - this.player.pos.y;
-      if (Math.hypot(dx, dy) >= REINFORCE.minPlayerDistance) break;
+      const dist = Math.hypot(dx, dy);
+      if (dist > farthestDist) {
+        farthestDist = dist;
+        farthest = candidate;
+      }
+      if (dist < REINFORCE.minPlayerDistance) continue;
+
+      // 가장 가까운 적까지의 각도 거리. 적이 하나도 없으면 아무 후보나 좋다.
+      let gap = Math.PI;
+      const bearing = Math.atan2(dy, dx);
+      for (const other of taken) gap = Math.min(gap, Math.abs(wrapAngle(bearing - other)));
+      if (gap > bestGap) {
+        bestGap = gap;
+        best = candidate;
+      }
     }
-    return candidate;
+    return best ?? farthest;
   }
 
   /**

@@ -375,6 +375,56 @@ describe('World — 증원', () => {
     expect(world.enemies).toHaveLength(layout + REINFORCE.maxExtra);
   });
 
+  /**
+   * **뭉침을 재는 자다** (세션 39 · `shots/crowd-15.png`에서 눈으로 본 것이다).
+   *
+   * 증원 자리를 무작위 각도 하나로만 뽑으면, 열 자리가 우연히 한쪽에 몰린다 —
+   * 화면에서는 대여섯이 한 덩어리로 서고 반대쪽 절반이 빈다. 프레임이 아니라
+   * **읽히는가**의 문제다(어디서 오는지가 한쪽만 보고도 짐작되면 안 된다).
+   *
+   * 자는 이렇다: 다 들어온 뒤 **자리 전부**(처음 배치 다섯 + 증원 `maxExtra`개)의 방위각을
+   * 아레나 중심에서 재어 정렬하고, 그중 **가장 넓은 빈 부채꼴**을 잰다.
+   * 열일곱이 고르게 서면 360/17 ≒ 21도다. 씨앗 20개 실측:
+   * 무작위 각도 **중앙 63도 · 최악 105도**(한 판은 반대쪽 절반이 통째로 비었다)
+   * → 빈 쪽부터 채우게 한 뒤 **중앙 47도 · 최악 56도**.
+   *
+   * **플레이어가 가만히 선 판에서 잰다.** 고르는 쪽은 플레이어에서 본 방위각을 쓰는데
+   * (`pickReinforceSpawn`), 플레이어가 한가운데 서 있으면 그 각과 중심에서 본 각이
+   * 같아진다 — 자가 흔들리지 않는 조건을 만들어 두고 재는 것이다.
+   *
+   * **처음 배치까지 함께 세는 이유**: 화면에 서는 것은 열다섯이지 열이 아니다.
+   * 증원끼리만 고르게 서도 고정 배치와 겹치면 화면에서는 그대로 뭉쳐 보인다.
+   *
+   * 자리는 쓰러져도 그대로 남으므로(`home`으로 돌아와 다시 선다) 판 내내 이 값이다.
+   */
+  it('증원이 한쪽에 뭉치지 않는다 — 빈 쪽부터 채운다', () => {
+    const TAU = Math.PI * 2;
+    /** 정렬한 방위각 사이의 가장 넓은 빈 부채꼴(도). */
+    function widestGap(angles: readonly number[]): number {
+      const sorted = angles.map((a) => ((a % TAU) + TAU) % TAU).sort((a, b) => a - b);
+      let widest = 0;
+      for (let i = 0; i < sorted.length; i += 1) {
+        const next = i + 1 < sorted.length ? sorted[i + 1]! : sorted[0]! + TAU;
+        widest = Math.max(widest, next - sorted[i]!);
+      }
+      return (widest * 180) / Math.PI;
+    }
+
+    const gaps: number[] = [];
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const world = new World({ seed });
+      survive(world, REINFORCE.firstDelay + REINFORCE.interval * REINFORCE.maxExtra);
+      expect(world.enemies).toHaveLength(layout + REINFORCE.maxExtra);
+      gaps.push(widestGap(world.enemies.map((e) => Math.atan2(e.home.y, e.home.x))));
+    }
+    const sorted = [...gaps].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)]!;
+    const worst = sorted[sorted.length - 1]!;
+    const show = `중앙 ${median.toFixed(0)}도 · 최악 ${worst.toFixed(0)}도`;
+    expect(median, show).toBeLessThanOrEqual(55);
+    expect(worst, show).toBeLessThanOrEqual(70);
+  });
+
   it('증원은 플레이어 코앞이 아니라 벽 가까이에서 걸어 들어온다', () => {
     // **플레이어를 벽에 붙여 세우고 잰다.** 가운데 서 있으면 벽 쪽 어디에 나타나도
     // 멀어서, 코앞에 나타나는 고장을 잡지 못한다. 벽에 붙으면 증원이 설 자리의

@@ -3,7 +3,7 @@
  *
  *   npm run shot:enemy                      # 세 종류를 한 마리씩 가까이서
  *   npm run shot:enemy -- shield calm worn flash aim
- *   npm run shot:enemy -- crowd             # 적이 상한(15마리)까지 찬 화면
+ *   npm run shot:enemy -- crowd             # 적이 상한(17마리)까지 찬 화면
  *   npm run shot:enemy -- crowd 13
  *   npm run shot:enemy -- crowd veteran     # 그 자리까지 실제로 싸워 올라간 사람의 화면
  *
@@ -33,7 +33,7 @@ const OUT = 'shots';
 /** 붙들 수 있는 상태들. 종류마다 해당 없는 것은 조용히 지나간다. */
 const STATES = ['live', 'calm', 'aim', 'worn', 'flash'];
 /** 무리 화면의 기본 목표 수. `REINFORCE`의 상한(5 + maxExtra)과 같은 값이다. */
-const CROWD_DEFAULT = 15;
+const CROWD_DEFAULT = 17;
 /**
  * **다 모인 뒤 찍기까지 기다리는 시간(ms).** 창을 연 시각이 아니라 화면이 제 모양을 갖춘
  * 시각에서 잰다 — 다 채우는 데 걸리는 시간은 목표 수마다 다르고, `veteran`은 판을 실제로
