@@ -36,6 +36,7 @@
 import { chromium, devices } from 'playwright';
 import { startPreview } from './lib/preview.mjs';
 import { acquireBrowserLock, LOCK_BUSY_EXIT } from './lib/lock.mjs';
+import { startMatch } from './lib/start.mjs';
 
 const PORT = 4184;
 
@@ -258,6 +259,9 @@ try {
 
   await page.addInitScript(installProbe);
   await page.goto(preview.url, { waitUntil: 'load' });
+  // 아레나를 고르고 나야 판이 돈다(DESIGN 10번). 고르기 전에는 입력이 게임에 닿지 않아
+  // 여기서 재는 지연이 전부 무한대로 나온다.
+  await startMatch(page);
 
   const cdp = await context.newCDPSession(page);
   await waitFrames(page, 10);

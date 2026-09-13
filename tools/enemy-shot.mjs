@@ -26,6 +26,7 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { startPreview } from './lib/preview.mjs';
 import { acquireBrowserLock, LOCK_BUSY_EXIT } from './lib/lock.mjs';
+import { startMatch } from './lib/start.mjs';
 
 const PORT = 4187;
 const OUT = 'shots';
@@ -311,6 +312,8 @@ async function openPage(label, probeSource, arg, before) {
     [probeSource, arg],
   );
   await page.goto(preview.url, { waitUntil: 'load' });
+  // 아레나를 고르고 나야 판이 돈다(DESIGN 10번). 기본 맵이라 지금까지의 표와 견줄 수 있다.
+  await startMatch(page);
   return page;
 }
 

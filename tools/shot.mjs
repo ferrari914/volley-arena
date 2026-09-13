@@ -47,6 +47,7 @@ import { execFile } from 'node:child_process';
 import { chromium, devices } from 'playwright';
 import { startPreview } from './lib/preview.mjs';
 import { acquireBrowserLock, LOCK_BUSY_EXIT } from './lib/lock.mjs';
+import { startMatch } from './lib/start.mjs';
 import {
   createSleepWatch,
   describeClock,
@@ -167,6 +168,11 @@ const GUARDED = [
   ['이동 스틱', '.stick--move'],
   ['조준 스틱', '.stick--aim'],
   ['세로 안내 문구', '#rotate-notice p'],
+  // 아레나를 고르는 화면(DESIGN 10번). 판이 열리면 사라지므로, 이 셋은 고르기 전에
+  // 한 번 재는 자리에서만 걸린다(아래 `-map` 화면) — 나머지 두 자리에서는 그냥 지나간다.
+  ['맵 고르기 제목', '#map-select-title'],
+  ['맵 카드', '.map-card'],
+  ['맵 고르기 안내', '#map-select-hint'],
 ];
 
 /** 안전 영역 여백을 :root 인라인 스타일로 주입한다(스타일시트의 env() 값을 덮는다). */
@@ -1143,6 +1149,15 @@ try {
       await page.reload({ waitUntil: 'load' });
     }
     await applySafeArea(page, safe);
+
+    // 창을 열면 아레나를 고르는 화면이 먼저 뜬다(DESIGN 10번). 판을 열기 전에
+    // **그 화면부터 찍고 잰다** — 판이 열리면 사라져서 다시 볼 방법이 없다.
+    await page.screenshot({ path: `${OUT}/${name}-map.png` });
+    for (const problem of await measureSafeArea(page, safe, GUARDED)) {
+      problems.push(`[${name}] 안전 영역(맵 고르기): ${problem}`);
+    }
+    await startMatch(page);
+
     // 자동 조준이 대상을 잡고 화살이 날아가는 장면을 담는다.
     await page.waitForTimeout(1800);
     await page.screenshot({ path: `${OUT}/${name}.png` });
