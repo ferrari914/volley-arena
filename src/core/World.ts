@@ -140,6 +140,15 @@ export class World {
    */
   enemyShots = 0;
   arrowHits = 0;
+  /**
+   * **기둥이 먹은 화살의 수**(DESIGN 10번). 주인별로 따로 센다 —
+   * 내 쪽은 이 맵이 하는 일이고, 적 쪽은 고장의 신호다(`systems/combat.ts`의 주석).
+   *
+   * `eatenTheirs`는 `enemyShots`의 부분집합이다. 적은 맞힐 수 없는 곳에 쏘지 않으므로
+   * 거기 남는 것은 **겨누는 0.5초 사이에 사람이 기둥 뒤로 몸을 숨긴 몫**뿐이고, 그것은 피한 것이다.
+   */
+  eatenMine = 0;
+  eatenTheirs = 0;
   /** 지금 자동 조준이 잡고 있는 적. 없으면 null. */
   lockedEnemy: Enemy | null = null;
 
@@ -281,6 +290,8 @@ export class World {
     this.kills += result.kills;
     this.blockedShots += result.blocked;
     this.arrowHits += result.playerHits;
+    this.eatenMine += result.eatenMine;
+    this.eatenTheirs += result.eatenTheirs;
     for (const point of result.killPoints) this.dropCores(point);
 
     this.updateCores(dt);
@@ -466,6 +477,9 @@ export class World {
       charger: CHARGER,
       shield: SHIELD,
       obstacles: this.map.obstacles,
+      // 화살이 막히는 판정(`updateCombat`)과 같은 굵기다. 시야를 그보다 후하게 재면
+      // 적이 "보인다"고 믿고 쏜 화살이 기둥에 박힌다.
+      arrowRadius: ARROW.radius,
       random: this.random,
     });
   }

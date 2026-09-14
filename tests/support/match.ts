@@ -195,6 +195,15 @@ export interface MatchResult {
   bodyHits: number;
   /** 방패병의 판에 막힌 내 화살의 수. **도는 사람과 안 도는 사람을 가르는 값이다**(`circleShield`). */
   blocked: number;
+  /** 내 화살이 적의 몸에 꽂힌 횟수(쓰러뜨리지 못한 것도 센다). `eatenMine`의 짝이다. */
+  hits: number;
+  /** 기둥이 먹은 내 화살의 수(DESIGN 10번). **그 맵이 게임에 닿아 있는지를 재는 값이다.** */
+  eatenMine: number;
+  /** 기둥이 먹은 적의 화살 수. 여기가 쌓이면 적이 기둥에 대고 쏘고 있다는 뜻이다. */
+  eatenTheirs: number;
+  /** 적이 쏜 화살의 수와, 그중 내 몸에 꽂힌 수. 피하기를 재는 한 쌍(세션 42). */
+  enemyShots: number;
+  arrowHits: number;
   /**
    * 체력이 처음 줄어든 시각(s). 한 번도 안 맞았으면 Infinity.
    * **판의 첫머리를 재는 값이다** — 손을 대기도 전에 맞으면 무엇에 맞았는지 알 수 없다
@@ -247,6 +256,11 @@ export function playMatch(
     cards: [...world.takenUpgrades],
     bodyHits: world.bodyHits,
     blocked: world.blockedShots,
+    hits: world.hits,
+    eatenMine: world.eatenMine,
+    eatenTheirs: world.eatenTheirs,
+    enemyShots: world.enemyShots,
+    arrowHits: world.arrowHits,
     firstHit,
   };
 }

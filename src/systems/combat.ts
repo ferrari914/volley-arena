@@ -46,6 +46,20 @@ export interface ArrowStepResult {
   playerHits: number;
   /** 방패에 막힌 화살 수(DESIGN 9번). 몸을 맞힌 것이 아니므로 `hits`와 따로 센다. */
   blocked: number;
+  /**
+   * **기둥이 먹은 화살의 수**(DESIGN 10번). 주인별로 따로 센다 — 같은 숫자가 두 가지
+   * 다른 이야기를 하기 때문이다.
+   *
+   * - `eatenMine`(플레이어) — **이 맵이 게임에 닿아 있다는 증거다.** 기둥 뜰에서는 내가 쏜
+   *   화살의 일곱 중 다섯이 기둥에 박힌다. 여기가 0에 가까워지면 그 맵은 그림만 다른 맵이다.
+   * - `eatenTheirs`(적) — **고장의 신호다.** 적은 맞힐 수 없는 곳에 쏘지 않는다
+   *   (`enemyAi.ts`의 시야 판정). 여기가 쌓인다는 것은 기둥 뒤에 선 사람에게 적이
+   *   화살을 먹이며 제자리에 서 있다는 뜻이고, 그 자리는 손을 놓고도 오래 버티는 자리가 된다.
+   *
+   * 둘 다 `tests/maps.test.ts`가 선을 긋는다.
+   */
+  eatenMine: number;
+  eatenTheirs: number;
 }
 
 /**
@@ -81,6 +95,8 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
     damageTaken: 0,
     playerHits: 0,
     blocked: 0,
+    eatenMine: 0,
+    eatenTheirs: 0,
   };
 
   for (const arrow of arrows) {
@@ -152,6 +168,8 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
     // 지형을 무시해 버리면 숨을 자리가 그 판에서만 사라진다.
     if (blockedByObstacles(from, arrow.pos, arrowRadius, options.obstacles)) {
       arrow.alive = false;
+      if (arrow.owner === 'enemy') result.eatenTheirs += 1;
+      else result.eatenMine += 1;
       continue;
     }
     if (arrow.age >= arrow.lifetime || length(arrow.pos) > arenaRadius) {

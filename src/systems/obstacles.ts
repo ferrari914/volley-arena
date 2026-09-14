@@ -8,6 +8,9 @@ import type { Obstacle } from '../entities/types';
  *   2. **화살은 막힌다** (`blockedByObstacles`) — 주인이 누구든 똑같이 막힌다.
  *   3. **아무것도 기둥 속에 놓이지 않는다** (`insideObstacle`) — 코어·증원 자리.
  *
+ * 적이 "지금 플레이어가 보이는가"를 묻는 자(`sightBlocker`)도 여기 있다. 2번과 같은 선을
+ * 같은 굵기로 재되 **누가 막았는지**까지 돌려준다 — 돌아설 쪽을 정하는 데 그것이 필요하다.
+ *
  * **세 규칙이 한 파일에 있어야 하는 이유**: 하나라도 빠지면 기둥이 거짓말을 한다.
  * 몸만 막고 화살을 안 막으면 숨을 곳이 아니라 걸리적거리는 것이 되고,
  * 화살만 막고 자리 고르기를 안 보면 기둥 속에 코어가 생겨 영영 못 줍는다.
@@ -68,6 +71,40 @@ export function blockedByObstacles(
     if (segmentPointDistanceSq(from, to, pillar) <= limit * limit) return true;
   }
   return false;
+}
+
+/**
+ * from→to 사이를 막고 있는 기둥 중 **from에 가장 가까운 것**. 막는 것이 없으면 null.
+ *
+ * `blockedByObstacles`가 "막혔는가"만 돌려주는 데 반해 이것은 **누가 막았는지**를 돌려준다.
+ * 적이 시야를 되찾으려면 어느 쪽으로 돌아야 하는지를 알아야 하고, 그것을 정하는 것이
+ * 막은 기둥의 자리이기 때문이다(`systems/enemyAi.ts`의 `clearSightMove`).
+ *
+ * **가장 가까운 것을 고르는 이유**: 둘이 겹쳐 막고 있으면 뒤엣것을 돌아 봐야 앞엣것에
+ * 여전히 막힌다. 앞엣것부터 벗어나야 한 걸음이 실제로 시야를 연다.
+ *
+ * 화살이 막히는 판정(`blockedByObstacles`)과 **같은 자와 같은 굵기로 잰다** —
+ * 여기서 다르게 재면 적이 "보인다"고 믿고 쏜 화살이 기둥에 박히거나, 그 반대가 된다.
+ */
+export function sightBlocker(
+  from: Vec2,
+  to: Vec2,
+  arrowRadius: number,
+  obstacles: readonly Obstacle[],
+): Obstacle | null {
+  let nearest: Obstacle | null = null;
+  let nearestSq = Infinity;
+  for (const pillar of obstacles) {
+    const limit = pillar.radius + arrowRadius;
+    if (segmentPointDistanceSq(from, to, pillar) > limit * limit) continue;
+    const dx = pillar.x - from.x;
+    const dy = pillar.y - from.y;
+    const distSq = dx * dx + dy * dy;
+    if (distSq >= nearestSq) continue;
+    nearestSq = distSq;
+    nearest = pillar;
+  }
+  return nearest;
 }
 
 /**

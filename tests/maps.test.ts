@@ -343,16 +343,99 @@ describe('기둥이 선 판 — 한 판을 돌려서 본다', () => {
     }
   });
 
-  it('기둥이 화살을 실제로 먹는다 — 같은 씨앗의 처치가 줄어든다', () => {
-    // 기둥이 게임에 닿아 있다는 증거. 여기가 같아지면 이 맵은 그림만 다른 맵이다.
+  /**
+   * 기둥이 게임에 닿아 있다는 증거. 여기가 0에 가까워지면 이 맵은 그림만 다른 맵이다.
+   *
+   * **세션 48이 재는 자를 바꿨다 — 처치 수에서 화살 그 자체로.** 그전까지 이 검사는
+   * "같은 씨앗의 처치가 빈 뜰보다 5% 넘게 줄어든다"였는데, 세션 48이 적의 시야를 고치자
+   * **처치가 191 → 207로 올라 빈 뜰(206)과 같아졌다.** 재 보니 갈린 것은 기둥이 아니었다:
+   * 내 화살이 기둥에 박히는 몫은 **0.683 → 0.696으로 그대로**이고, 늘어난 처치는
+   * **기둥 뒤에 서서 쏘던 적이 걸어 나와 서게 된 몫**이다. 즉 그 5%는 이 맵이 하는 일이
+   * 아니라 적의 버릇이었고, 처치 수는 그것까지 함께 재고 있었다.
+   *
+   * 화살을 직접 세면 그 둘이 섞이지 않는다. 실측 — 빈 뜰 0.000 · 기둥 뜰 0.696 · 그늘 뜰 0.486
+   * (그늘 뜰이 절반쯤인 것은 기둥이 셋이라 그렇다. 맵의 모양이 그대로 값에 나온다).
+   */
+  it('기둥이 내 화살을 실제로 먹는다', () => {
     const seeds = Array.from({ length: 20 }, (_, i) => 20260909 + i);
-    const kills = (m: ArenaMap): number =>
-      median(seeds.map((seed) => playMatch(seed, 600, walkToNearestCore, undefined, m).kills));
-    const open = kills(DEFAULT_MAP);
-    const withPillars = kills(map);
-    console.log(`처치 중앙값 — 빈 뜰 ${open.toFixed(0)} · 기둥 뜰 ${withPillars.toFixed(0)}`);
-    expect(withPillars).toBeLessThan(open * 0.95);
+    const eatenShare = (m: ArenaMap): number =>
+      median(
+        seeds.map((seed) => {
+          const r = playMatch(seed, 600, walkToNearestCore, undefined, m);
+          return r.eatenMine / (r.eatenMine + r.hits);
+        }),
+      );
+    const open = eatenShare(DEFAULT_MAP);
+    const withPillars = eatenShare(map);
+    const shade = eatenShare(findMap('shade'));
+    console.log(
+      `내 화살이 기둥에 박힌 몫 — 빈 뜰 ${open.toFixed(3)} · ` +
+        `기둥 뜰 ${withPillars.toFixed(3)} · 그늘 뜰 ${shade.toFixed(3)}`,
+    );
+    expect(open, '기둥이 없는 맵에서 화살이 먹혔다').toBe(0);
+    expect(withPillars, '기둥이 화살을 먹지 않는다 — 그림만 다른 맵이다').toBeGreaterThan(0.25);
+    expect(shade, '그늘 뜰의 기둥이 화살을 먹지 않는다').toBeGreaterThan(0.15);
   });
+});
+
+/**
+ * **기둥 뒤에 숨어 서도 화살은 몸에 꽂힌다** (DESIGN 5번 · 10번).
+ *
+ * 세션 47이 찾은 고장이다: 기둥 뒤에 서면 활잡이가 기둥에 화살을 먹이며 제자리에 서서,
+ * 손을 놓고도 **120~134초**를 버텼다(트인 자리 40초). 맵 하나가 그 자리에서만
+ * DESIGN 5번("가만히 서 있으면 쓰러진다")을 세 배로 무디게 만든 셈이다.
+ * 고친 것은 적 쪽이다 — 보이지 않으면 겨누지 않고 **보이는 자리로 걸어간다**
+ * (`systems/enemyAi.ts`). 한 프레임의 규칙은 `tests/enemies.test.ts`가 지킨다.
+ *
+ * **시간이 아니라 피격률에 선을 긋는다.** "여기 숨으면 몇 초 사는가"는 자리를 1cm만 옮겨도
+ * 41 → 120초로 튀고(세션 48이 밟았다), 오래 사는 큰 몫은 숨은 것이 아니라 **몰려온 적을
+ * 눕혀 자란 것**이다. `arrowHits / enemyShots`는 "겨눠서 쏜 것 중 몇 발이 몸에 꽂혔는가"만
+ * 남기므로 자란 몫이 섞이지 않는다(세션 42가 세운 자와 같은 자다).
+ */
+describe('가림 — 기둥 뒤에 숨어 서도 화살은 몸에 꽂힌다 (씨앗 20개)', () => {
+  const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
+
+  /** 기둥 바로 뒤(벽 쪽)에 몸을 붙여 선 자리. 가장 깊은 그늘이 거기 있다. */
+  const behind = (pillar: Obstacle): { x: number; y: number } => {
+    const away = Math.hypot(pillar.x, pillar.y);
+    const reach = (away + pillar.radius + PLAYER.radius + 0.7) / away;
+    return { x: pillar.x * reach, y: pillar.y * reach };
+  };
+
+  /** 그 자리에 손을 놓고 서 있는 스무 판. */
+  const standAt = (map: ArenaMap, at: { x: number; y: number }) =>
+    SEEDS.map((seed) => {
+      const world = new World({ seed, map });
+      world.player.pos = { x: at.x, y: at.y };
+      play(world, 60 * 180, () => IDLE);
+      return {
+        elapsed: world.elapsed,
+        rate: world.enemyShots > 0 ? world.arrowHits / world.enemyShots : 1,
+        eaten: world.enemyShots > 0 ? world.eatenTheirs / world.enemyShots : 0,
+      };
+    });
+
+  for (const map of MAPS.filter((m) => m.obstacles.length > 0)) {
+    it(`${map.name} — 어느 기둥 뒤에 서도 트인 자리만큼 맞는다`, () => {
+      const openGround = median(standAt(map, { x: 0, y: 0 }).map((r) => r.rate));
+      for (const pillar of map.obstacles) {
+        const at = behind(pillar);
+        const rows = standAt(map, at);
+        const rate = median(rows.map((r) => r.rate));
+        const eaten = median(rows.map((r) => r.eaten));
+        console.log(
+          `  ${map.name} 기둥(${pillar.x},${pillar.y}) 뒤 — 피격률 ${rate.toFixed(3)} ` +
+            `(한복판 ${openGround.toFixed(3)}) · 기둥이 먹은 적 화살 ${eaten.toFixed(3)} · ` +
+            `버틴 시간 ${median(rows.map((r) => r.elapsed)).toFixed(0)}초`,
+        );
+        // 실측 0.80~0.95(한복판 0.59). 고치기 전 같은 자리가 0.27~0.54였다.
+        // 선은 세션 42가 트인 자리에 그어 둔 것과 같은 0.35다 — 숨어도 그만큼은 맞는다.
+        expect(rate, `${map.id}의 기둥(${pillar.x},${pillar.y}) 뒤가 요새다`).toBeGreaterThan(0.35);
+        // 적이 기둥에 대고 쏘고 있으면 여기가 쌓인다. 실측 0.000(고치기 전 0.25~0.50).
+        expect(eaten, `${map.id}에서 적이 기둥에 화살을 먹이고 있다`).toBeLessThan(0.15);
+      }
+    });
+  }
 });
 
 /**

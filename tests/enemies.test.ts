@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA, CHARGER, ENEMY, PLAYER, SHIELD } from '../src/data/config';
-import { createEnemy, type Enemy } from '../src/entities/types';
+import { ARENA, ARROW, CHARGER, ENEMY, PLAYER, SHIELD } from '../src/data/config';
+import { createEnemy, type Enemy, type Obstacle } from '../src/entities/types';
 import { stepEnemies, type EnemyStepOptions } from '../src/systems/enemyAi';
+import { sightBlocker } from '../src/systems/obstacles';
 
 const DT = 1 / 60;
 
@@ -29,6 +30,7 @@ function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
     keepDistance: ENEMY.keepDistance,
     strafeRatio: ENEMY.strafeRatio,
     obstacles: [],
+    arrowRadius: ARROW.radius,
     separation: ENEMY.separation,
     aimTime: ENEMY.aimTime,
     fireCooldown: ENEMY.fireCooldown,
@@ -510,5 +512,70 @@ describe('방패병', () => {
     run([enemy], ENEMY.respawnDelay + 0.1, NEVER_AIMS);
     expect(enemy.alive).toBe(true);
     expect(enemy.shieldHp).toBe(SHIELD.shieldHp);
+  });
+});
+
+/**
+ * **적은 맞힐 수 없는 곳에 쏘지 않는다** (DESIGN 10번 · 기둥).
+ *
+ * 세션 47이 찾은 고장이다: 기둥 뒤에 서면 활잡이가 **기둥에 화살을 먹이며 제자리에 서서**,
+ * 손을 놓고도 120~134초를 버텼다(트인 자리 40초). DESIGN 5번("가만히 서 있으면 쓰러진다")이
+ * 그 자리에서만 세 배로 무뎌지는 셈이다.
+ *
+ * 여기 있는 검사는 **한 프레임의 규칙**을 못 박는다. 그 규칙이 한 판에서도 통하는지는
+ * `tests/maps.test.ts`가 씨앗 스무 판으로 잰다 — 아레나에는 적이 여럿이고 벽이 있어서,
+ * 한 마리에게 되는 일이 판에서도 된다는 보장이 없다.
+ */
+describe('가림 — 적은 맞힐 수 없는 곳에 쏘지 않는다', () => {
+  /** 플레이어(한복판)와 적 사이를 막고 선 기둥. */
+  const between: Obstacle[] = [{ x: 6, y: 0, radius: 2 }];
+
+  it('기둥에 가려 있으면 겨누지도 쏘지도 않는다', () => {
+    // 발을 묶어 둔다(speed 0). 그러지 않으면 옆으로 돌아 나가 시야를 되찾아서,
+    // 이 검사가 "쏘지 않는다"가 아니라 "늦게 쏜다"를 재게 된다.
+    const enemy = enemyAt(12, 0);
+    const shots = run([enemy], 5, { obstacles: between, speed: 0 });
+    expect(shots.length, '기둥에 대고 쐈다').toBe(0);
+    expect(enemy.aimTimer, '보이지도 않는데 겨누고 있다').toBe(0);
+  });
+
+  it('같은 자리라도 기둥이 없으면 쏜다 (자에 이가 있다)', () => {
+    const enemy = enemyAt(12, 0);
+    expect(run([enemy], 5, { speed: 0 }).length).toBeGreaterThan(0);
+  });
+
+  it('가려 있으면 보이는 자리로 걸어가 쏜다', () => {
+    const enemy = enemyAt(12, 0);
+    const shots = run([enemy], 6, { obstacles: between });
+    expect(shots.length, '자리를 옮기지 않아 끝내 쏘지 못했다').toBeGreaterThan(0);
+    // **첫 발이 떠난 자리**에서 실제로 보여야 한다 — 걸어 나와 쏜 것이지
+    // 기둥에 대고 쏜 것이 아니다. 마지막 자리만 보면 "쏘고 나서 걸어 나온" 것도 통과한다.
+    expect(
+      sightBlocker(shots[0]?.pos ?? enemy.pos, { x: 0, y: 0 }, ARROW.radius, between),
+      '가린 채로 쐈다',
+    ).toBe(null);
+  });
+
+  it('겨누기 시작한 뒤에 가려지면 그 한 발은 놓는다 (예고는 약속이다)', () => {
+    // 겨눔은 "지금 너를 노린다"는 약속이고, 그 0.5초 사이에 기둥 뒤로 몸을 숨긴 사람은
+    // 약속을 보고 피한 것이다. 여기서 거둬들이면 예고가 거짓이 되고,
+    // 숨어서 피한 것이 피한 것으로 세어지지 않는다.
+    const enemy = enemyAt(12, 0);
+    for (let i = 0; i < Math.round(10 / DT) && enemy.aimTimer <= 0; i += 1) {
+      stepEnemies([enemy], options());
+    }
+    expect(enemy.aimTimer).toBeGreaterThan(0);
+    // 이제 사이에 기둥이 선다(사람이 몸을 숨긴 것과 같다).
+    const shots = run([enemy], ENEMY.aimTime + 0.1, { obstacles: between });
+    expect(shots.length, '겨누던 화살을 거둬들였다').toBe(1);
+  });
+
+  it('방패병도 가려 있으면 버티지 않고 자리를 옮긴다', () => {
+    // 이 적은 평소 옆으로 돌지 않고 버티고 선다(위 검사). 그것은 플레이어가 돌아야 할
+    // 상대이기 때문인데, 서로가 서로를 못 보는 동안에는 버틸 정면이 아예 없다.
+    const enemy = shieldAt(7, 0);
+    const before = { ...enemy.pos };
+    run([enemy], 3, { obstacles: between });
+    expect(Math.hypot(enemy.pos.x - before.x, enemy.pos.y - before.y)).toBeGreaterThan(1);
   });
 });

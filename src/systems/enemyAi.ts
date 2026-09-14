@@ -1,6 +1,6 @@
 import { clamp, length, rotateToward, type Vec2 } from '../core/math';
 import type { Enemy, Obstacle } from '../entities/types';
-import { pushOutOfObstacles } from './obstacles';
+import { insideObstacle, pushOutOfObstacles, sightBlocker } from './obstacles';
 
 /**
  * 적 봇의 행동 (DESIGN 5번 · 9번).
@@ -26,6 +26,11 @@ import { pushOutOfObstacles } from './obstacles';
  *   가깝다(< keep)          → 물러난다
  *   사이                    → 옆으로 돈다
  * 두 경계 사이를 벌려 두지 않으면 적이 한 발짝마다 앞뒤로 떨린다.
+ *
+ * **거리보다 먼저 보는 것이 하나 있다: 보이는가**(DESIGN 10번의 기둥이 생기고부터).
+ * 기둥에 가려 화살이 닿지 못하면 겨누지 않고 **옆으로 돌아 시야를 되찾는다**
+ * (`clearSightMove`). 이것이 없으면 기둥 뒤에 선 사람에게 적이 화살을 기둥에
+ * 먹이며 제자리에 서 있어, 손을 놓고도 세 배를 버티는 자리가 맵마다 생긴다.
  * **돌진형에는 이 구간이 없다.** 물러나지도 옆으로 돌지도 않고 곧장 온다 —
  * 그것이 활잡이와 정반대인 지점이고, 둘이 함께 있어야 하는 이유다.
  */
@@ -57,6 +62,11 @@ export interface EnemyStepOptions {
   shield: ShieldOptions;
   /** 이 맵에 선 기둥들(DESIGN 10번). 적의 몸도 플레이어와 같은 규칙으로 막힌다. */
   obstacles: readonly Obstacle[];
+  /**
+   * 화살의 굵기(m). **시야를 재는 데 쓴다** — 적이 "보인다"고 판단하는 선과 화살이
+   * 실제로 기둥에 막히는 선(`combat.ts`)이 같아야, 쏜 화살이 기둥에 박히는 일이 없다.
+   */
+  arrowRadius: number;
   /** 조준을 흔드는 데 쓴다. World의 씨앗 고정 난수가 들어온다. */
   random: () => number;
 }
@@ -161,11 +171,15 @@ export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyS
       options.turnRate * dt,
     );
 
-    const shot = updateFiring(enemy, dist, options, options);
+    // 지금 기둥에 가려 있는가. 겨눌지 말지와 어디로 움직일지를 둘 다 이것이 가른다.
+    const blocker = sightBlocker(enemy.pos, playerPos, sightWidth(dist, options), options.obstacles);
+
+    const shot = updateFiring(enemy, dist, options, options, blocker !== null);
     if (shot) result.shots.push(shot);
 
     // 겨누는 동안에는 멈춰 선다. 이것이 "지금 나를 노리고 있다"는 유일한 예고다.
-    const move = enemy.aimTimer > 0 ? { x: 0, y: 0 } : desiredMove(enemy, dir, dist, options);
+    const move =
+      enemy.aimTimer > 0 ? { x: 0, y: 0 } : desiredMove(enemy, dir, dist, options, blocker);
     addSeparation(move, enemy, enemies, options.separation);
     moveBy(enemy, move, options.speed, options);
   }
@@ -273,16 +287,37 @@ function stepShield(
 
   enemy.facing = rotateToward(enemy.facing, Math.atan2(dir.y, dir.x), shield.turnRate * dt);
 
-  const shot = updateFiring(enemy, dist, options, shield);
+  const blocker = sightBlocker(
+    enemy.pos,
+    options.playerPos,
+    sightWidth(dist, options),
+    options.obstacles,
+  );
+  const shot = updateFiring(enemy, dist, options, shield, blocker !== null);
 
   // 겨누는 동안에는 멈춰 선다. 활잡이와 같은 예고다.
+  //   보이지 않는다 → 옆으로 돌아 시야를 되찾는다 (아래 `clearSightMove`)
   //   approach 바깥 → 다가온다
   //   keep 안쪽     → 물러난다 (몸에 붙어 서면 플레이어가 적에게 가린다)
   //   그 사이       → 버티고 선다
   // 두 경계를 벌려 두지 않으면 그 선 위에서 한 발짝마다 앞뒤로 떤다.
+  //
+  // **가려 있을 때만 이 적이 옆으로 움직인다.** 평소에 버티고 서는 것은 플레이어가
+  // 돌아야 할 상대이기 때문이지만(위 주석), 서로가 서로를 못 보는 동안에는 버틸 정면이
+  // 아예 없다 — 기둥만 마주 보고 선 방패병은 방패병이 아니라 기둥의 일부다.
   const move = { x: 0, y: 0 };
   if (enemy.aimTimer <= 0) {
-    if (dist > shield.approachDistance) {
+    if (blocker) {
+      const around = clearSightMove(
+        enemy,
+        dir,
+        blocker,
+        options,
+        (shield.keepDistance + shield.approachDistance) / 2,
+      );
+      move.x = around.x;
+      move.y = around.y;
+    } else if (dist > shield.approachDistance) {
       move.x = dir.x;
       move.y = dir.y;
     } else if (dist < shield.keepDistance) {
@@ -345,6 +380,14 @@ function updateFiring(
   dist: number,
   options: EnemyStepOptions,
   timing: FiringTiming,
+  /**
+   * 기둥에 가려 화살이 닿지 못하는가(DESIGN 10번). 가려 있으면 **겨누기를 시작하지 않는다.**
+   *
+   * **이미 겨누고 있던 것은 끝까지 놓는다.** 겨눔은 "지금 너를 노린다"는 약속이고,
+   * 그 0.5초 사이에 기둥 뒤로 몸을 숨긴 사람은 **약속을 보고 피한 것**이다 —
+   * 여기서 거둬들이면 예고가 거짓이 되고, 숨어서 피하는 것이 피한 것으로 세어지지 않는다.
+   */
+  sightBlocked: boolean,
 ): EnemyShot | null {
   if (enemy.aimTimer > 0) {
     enemy.aimTimer -= options.dt;
@@ -364,7 +407,7 @@ function updateFiring(
   }
 
   if (enemy.fireCooldown > 0) enemy.fireCooldown -= options.dt;
-  if (enemy.fireCooldown <= 0 && options.playerAlive && dist <= timing.fireRange) {
+  if (!sightBlocked && enemy.fireCooldown <= 0 && options.playerAlive && dist <= timing.fireRange) {
     enemy.aimTimer = timing.aimTime;
   }
   return null;
@@ -376,13 +419,121 @@ function desiredMove(
   dir: Vec2,
   dist: number,
   options: EnemyStepOptions,
+  /** 시야를 막고 있는 기둥. null이면 보인다. */
+  blocker: Obstacle | null,
 ): Vec2 {
   if (dist > options.approachDistance) return { x: dir.x, y: dir.y };
+  // **보이지 않으면 거리 구간보다 이것이 먼저다.** 가려 있는데 물러나거나 느릿느릿 도는 것은
+  // 그 자리에 눌러앉는 것과 같다 — 기둥 뒤가 요새가 되는 것이 바로 거기서 온다.
+  // 옆걸음은 `strafeRatio`를 쓰지 않고 **전속력**이다. 시야를 되찾는 동안에는 쏘지 못하므로,
+  // 여기서 굼뜨면 그 시간만큼 아무 일도 일어나지 않는다.
+  if (blocker)
+    return clearSightMove(
+      enemy,
+      dir,
+      blocker,
+      options,
+      (options.keepDistance + options.approachDistance) / 2,
+    );
   if (dist < options.keepDistance) return { x: -dir.x, y: -dir.y };
   // 사이 구간: 플레이어를 중심으로 옆으로 돈다. 도는 방향은 적마다 갈라 두어
   // 전부 같은 쪽으로 돌면서 한 줄로 뭉치는 것을 막는다.
   const side = enemy.id % 2 === 0 ? 1 : -1;
   return { x: -dir.y * side * options.strafeRatio, y: dir.x * side * options.strafeRatio };
+}
+
+/**
+ * 시야를 잴 때 쓰는 **화살이 지나갈 길의 굵기**(m).
+ *
+ * 화살의 몸(`arrowRadius`)만으로는 좁다. 조준이 `spread`만큼 흔들리므로(`updateFiring`)
+ * 겨우 기둥 끝을 스치는 각에서 쏘면 **흔들린 쪽 절반이 기둥에 박힌다** — 실측으로 그 자리의
+ * 적은 쏜 화살의 25~50%를 기둥에 먹였다. 그것은 쏜 것이 아니라 버린 것이다.
+ *
+ * 그래서 거리가 멀수록 넓게 본다(`dist * spread` = 그 거리에서 흔들림이 벌어지는 폭).
+ * 적은 **흔들림까지 지나갈 길이 보일 때** 겨누기 시작하고, 그 전에는 한 걸음 더 돌아 나온다.
+ */
+function sightWidth(dist: number, options: EnemyStepOptions): number {
+  return options.arrowRadius + dist * options.spread;
+}
+
+/**
+ * 가려 있을 때 어디로 걷는가 — **보이는 자리 중 가장 먼 고리로 간다.**
+ *
+ * 플레이어를 둘러싼 고리 위에 열두 자리를 놓고, 그중 **지금 자리에서 가장 가까우면서
+ * 플레이어가 보이는 자리**로 걷는다. 고리는 평소 서는 거리(물러나는 선과 다가오는 선의
+ * 가운데)에서 시작해 **보이는 자리가 하나도 없으면 한 칸씩 좁힌다.**
+ *
+ * **고리를 좁히는 것이 이 함수의 전부다.** 기둥에 몸을 붙이고 선 사람은 평소 거리에서는
+ * 어느 방향에서도 보이지 않는다 — 실측으로 그 자리의 10m 고리는 열둘 중 **다섯이 벽 밖,
+ * 일곱이 가림**이고, 보이는 자리가 처음 나오는 것은 6m다. 거기까지 들어가야 쏠 수 있고,
+ * 들어간 만큼 플레이어의 화살에도 가까워진다 — **가려 선다는 것은 그 거래를 거는 것**이지
+ * 안전을 사는 것이 아니어야 한다.
+ *
+ * **왜 방향만 정해서는 안 되는가**(세 번 재서 알았다). 셋 다 도착점이 없어서 실패했다:
+ * - 거리를 지킨 채 옆으로 돌기 — 그 자리는 대개 벽 앞이라 고리의 대부분이 아레나 밖이다.
+ *   적이 벽에 눌려 제자리를 긁는다(실측 **초당 0.08발** · 트인 자리 0.86발).
+ * - 기둥 옆구리로 가기 — 기둥에 붙어 선 사람은 기둥 옆에서도 안 보인다(원을 낀 두 점).
+ * - 비스듬히 파고들기 — 모퉁이는 돌지만, 보이는 자리를 목표로 삼지 않아 그냥 걸어 들어와
+ *   플레이어의 화살에 눕는다(초당 0.13발).
+ *
+ * 열두 자리는 각도로 못 박혀 있어(적마다 돌리지 않는다) 적이 여럿이어도 고르는 자리가
+ * 같고, 겹친 몸은 밀어내기가 흩는다(`addSeparation`). 결정적이라 같은 판은 늘 같은 그림이다.
+ *
+ * 가장 좁은 고리에도 자리가 없으면(요새가 생긴 맵) 비스듬히 파고든다 — 곧장 다가가기만
+ * 하면 기둥에 코를 박고 멈춘다(`pushOutOfObstacles`는 중심 밖으로만 민다).
+ */
+const VANTAGE_COUNT = 12;
+/** 고리를 좁혀 가는 비율(평소 서는 거리에 대한). 마지막 0.3은 몸이 닿기 직전이다. */
+const VANTAGE_RINGS = [1, 0.8, 0.6, 0.4, 0.3] as const;
+
+function clearSightMove(
+  enemy: Enemy,
+  dir: Vec2,
+  blocker: Obstacle,
+  options: EnemyStepOptions,
+  standRing: number,
+): Vec2 {
+  const { playerPos, obstacles } = options;
+  const limit = options.arenaRadius - options.bodyRadius;
+  for (const scale of VANTAGE_RINGS) {
+    const ring = standRing * scale;
+    const width = sightWidth(ring, options);
+    let best: Vec2 | null = null;
+    let bestSq = Infinity;
+    for (let i = 0; i < VANTAGE_COUNT; i += 1) {
+      const a = (i * Math.PI * 2) / VANTAGE_COUNT;
+      const at = { x: playerPos.x + Math.cos(a) * ring, y: playerPos.y + Math.sin(a) * ring };
+      if (length(at) > limit) continue;
+      if (insideObstacle(at, options.bodyRadius, obstacles)) continue;
+      if (sightBlocker(at, playerPos, width, obstacles)) continue;
+      const dx = at.x - enemy.pos.x;
+      const dy = at.y - enemy.pos.y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq >= bestSq) continue;
+      bestSq = distSq;
+      best = { x: dx, y: dy };
+    }
+    if (best) return best;
+  }
+  const side = clearSide(enemy, dir, blocker);
+  return { x: dir.x - dir.y * side, y: dir.y + dir.x * side };
+}
+
+/**
+ * 기둥을 **어느 쪽으로 끼고 돌 것인가**(+1 = 왼쪽 · -1 = 오른쪽).
+ *
+ * 막은 기둥이 시선의 왼쪽에 있으면 오른쪽으로 돈다 — 그래야 시선과 기둥 사이가 벌어진다.
+ * 반대로 돌면 기둥의 몸통을 가로질러야 해서 그 지름만큼(6.4m) 더 걷는다.
+ *
+ * 기둥이 시선 위에 정확히 놓였을 때만 고를 근거가 없다. 그때는 `desiredMove`가 옆으로 돌 때
+ * 쓰는 것과 **같은 쪽**(적마다 갈라 둔 `id` 짝수/홀수)을 쓴다 — 여기서 따로 정하면
+ * 시야가 열리고 닫힐 때마다 도는 쪽이 뒤집혀 제자리에서 떤다.
+ */
+function clearSide(enemy: Enemy, dir: Vec2, blocker: Obstacle): number {
+  // 기둥이 시선에서 얼마나 옆으로 비켜 있는가(왼쪽이 양수).
+  const offset = -dir.y * (blocker.x - enemy.pos.x) + dir.x * (blocker.y - enemy.pos.y);
+  if (Math.abs(offset) < 1e-6) return enemy.id % 2 === 0 ? 1 : -1;
+  return offset > 0 ? -1 : 1;
 }
 
 /**
