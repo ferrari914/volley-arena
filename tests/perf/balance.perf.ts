@@ -4,6 +4,7 @@ import { World } from '../../src/core/World';
 import type { FrameInput } from '../../src/core/World';
 import {
   IDLE,
+  backOffBomber,
   circleShield,
   median,
   play,
@@ -100,8 +101,16 @@ const table = (input: (world: World) => FrameInput): { name: string; rows: Match
 
 /** 코어만 보고 걷는 사람들. 세션 15부터 이 표로 밸런스를 재 왔다. */
 const walking = table(walkToNearestCore);
-/** 방패병을 도는 사람들(세션 24). 같은 씨앗·같은 고르기, 발만 다르다. */
-const circling = table(circleShield);
+/**
+ * 방패병을 돌고 터질 원에서는 물러나는 사람들(세션 24·51). 같은 씨앗·같은 고르기, 발만 다르다.
+ *
+ * **왜 도는 사람만 물러날 줄 아는가.** 위의 `walking`은 **아무 답도 모르는 사람**이고,
+ * 3~5분 선은 그 사람으로 잰다(그 자리를 흔들면 세션 15부터의 표와 견줄 수 없다).
+ * 여기 표가 묻는 것은 "방패병의 답이 통하는가" 하나인데, 돌기만 하는 사람은 **터질 원 안에서
+ * 돌다가 반드시 맞는다**(돌기는 거리를 그대로 둔다 — `data/config.ts`의 `BOMBER`).
+ * 그 사람으로 재면 방패병이 아니라 그 사람의 빈 구멍이 찍힌다.
+ */
+const circling = table(backOffBomber(circleShield));
 
 describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
   it('180판이 밸런스 선 안에 든다', () => {
@@ -188,6 +197,12 @@ describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
     const plain = walking.flatMap((p) => p.rows);
     const blocked = (rows: readonly MatchResult[]): number =>
       rows.reduce((s, r) => s + r.blocked, 0);
+    /** 방패병에게 **닿은** 화살 중 판이 먹은 몫. 1에 가까울수록 정면으로만 쏜 것이다. */
+    const eatenRate = (rows: readonly MatchResult[]): number => {
+      const eaten = blocked(rows);
+      const body = rows.reduce((s, r) => s + r.shieldBodyHits, 0);
+      return eaten / Math.max(eaten + body, 1);
+    };
     const shortest = (rows: readonly MatchResult[]): number =>
       Math.min(...rows.map((r) => r.elapsed));
 
@@ -201,17 +216,30 @@ describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
         line('모두', all),
         `  안 도는 사람과 견주어: 선 안 ${inRange(plain)} → ${inRange(all)}/${all.length}판 · ` +
           `가장 짧은 판 ${shortest(plain).toFixed(0)} → ${shortest(all).toFixed(0)}초(씨앗을 타는 값이다) · ` +
-          `막힘 ${blocked(plain)} → ${blocked(all)}발`,
+          `막힘 ${blocked(plain)} → ${blocked(all)}발 · ` +
+          `**먹힌 비율 ${eatenRate(plain).toFixed(3)} → ${eatenRate(all).toFixed(3)}**`,
         '',
       ].join('\n'),
     );
 
     // ① 도는 사람은 실제로 돌았다. 이 선이 깨지면 표가 아니라 자가 고장 난 것이다 —
-    // 판에 막힌 화살이 줄지 않았다면 `circleShield`는 그냥 다르게 걷는 사람일 뿐이다.
-    // 실측 2만 발 언저리에서 한 자릿수 퍼센트가 아니라 눈에 보이게 줄어야 한다.
-    expect(blocked(all), `막힘 ${blocked(plain)} → ${blocked(all)}발`).toBeLessThan(
-      blocked(plain) * 0.9,
-    );
+    // 판이 먹는 몫이 줄지 않았다면 `circleShield`는 그냥 다르게 걷는 사람일 뿐이다.
+    //
+    // **막힌 발 수가 아니라 먹힌 비율로 잰다(세션 51).** 막힌 수는 *얼마나 쐈는가*와
+    // *얼마나 막혔는가*를 한꺼번에 담은 값이다 — 방패병 곁에 오래 서 있기만 해도 커진다.
+    // 적이 넷이 되어 자동 조준이 갈려 나가자 그 차이가 눈에 보이게 벌어졌다(세션 51의 실측):
+    //   | 잰 것 | 세션 50의 게임 | 폭탄병을 넣고 |
+    //   |---|---|---|
+    //   | 막힌 발 수의 비 | 0.867 | **0.942** (선 0.9를 넘는다) |
+    //   | 먹힌 비율 | 0.518 → 0.384 | 0.518 → **0.436** |
+    // 왼쪽 자로 보면 "돌아도 소용없어졌다"이고 오른쪽 자로 보면 "여전히 통한다"인데,
+    // **옳은 쪽은 오른쪽이다** — 방패병 하나와의 듀얼(`tests/progression.test.ts`)에서
+    // 돌기의 값은 한 글자도 움직이지 않았다. 세션 48이 처치 수에서 화살 그 자체로
+    // 자를 옮긴 것과 같은 일이다. **선(0.9)은 그대로 두고 자만 바꿨다.**
+    expect(
+      eatenRate(all),
+      `먹힌 비율 ${eatenRate(plain).toFixed(3)} → ${eatenRate(all).toFixed(3)}`,
+    ).toBeLessThan(eatenRate(plain) * 0.9);
 
     // ② 그리고 아래쪽 끝이 올라간다. 세션 23이 "방패병이 벌렸다"고 적은 그 끝이다.
     //

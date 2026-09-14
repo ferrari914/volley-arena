@@ -1,7 +1,7 @@
 import { World } from '../../src/core/World';
 import type { FrameInput } from '../../src/core/World';
 import { clamp, wrapAngle } from '../../src/core/math';
-import { ENEMY, PLAYER, SHIELD } from '../../src/data/config';
+import { BOMBER, ENEMY, PLAYER, SHIELD } from '../../src/data/config';
 import { DEFAULT_MAP, type ArenaMap } from '../../src/data/maps';
 import type { UpgradeChoice, XpCore } from '../../src/entities/types';
 
@@ -180,6 +180,48 @@ export function circleShield(world: World): FrameInput {
   return { move: { x: move.x / len, y: move.y / len }, aim: null };
 }
 
+/**
+ * 터질 원에서 걸어 나가는 사람. 물러날 일이 없는 프레임에는 `inner`가 걷는다.
+ *
+ * **DESIGN 9번이 폭탄병에게 요구하는 단 하나의 대응이 이것이다** — "물러나라"
+ * (`data/config.ts`의 `BOMBER`). 앞의 두 사람은 이 한 가지를 하지 않는다:
+ * `dodgeCharger`는 옆으로 비키고 `circleShield`는 옆으로 도는데, **둘 다 거리를
+ * 그대로 둔다.** 터질 원은 붙어 선 자리보다 넓으므로(5.5 > 3.5m) 그 둘은 반드시 맞는다.
+ *
+ * **이 사람만 감싸는 꼴로 만든 이유 — 적이 넷이 되면서 한 사람이 답을 두 개 해야 한다.**
+ * 앞의 셋은 저마다 `walkToNearestCore`로 떨어지는 독립된 사람이었다. 그래도 됐던 것은
+ * 각자가 재는 적이 다른 적의 답을 망가뜨리지 않았기 때문이다. 폭탄병은 다르다 —
+ * **방패병을 도는 사람은 돌기만 해서는 반드시 터진다**(거리를 그대로 두므로). 그 사람으로
+ * 방패병을 재면 재는 것은 방패병이 아니라 그 사람의 빈 구멍이다(세션 51에 실제로 걸렸다:
+ * `circleShield` 혼자의 가장 짧은 판이 108초로 **안 도는 사람보다 짧아졌다**).
+ * 그래서 방패병·돌진형을 재는 자리에서는 `backOffBomber(circleShield)`처럼 씌워서 쓴다.
+ *
+ * **보는 것은 화면에 있는 것뿐이다**(`dodgeCharger`·`circleShield`와 같은 규칙).
+ * 심지가 타는 폭탄병은 멈춰 서서 달아오르고 발밑에 터질 원이 그려져 있다
+ * (`render/Renderer.ts`) — 그 원이 여기서 재는 원과 같은 원이다.
+ *
+ * **원 밖으로 나가는 것까지만 한다.** 이미 밖이면 물러날 이유가 없다 —
+ * 겁먹고 계속 달아나는 사람은 코어를 줍지 못해 아래쪽 꼬리를 만들고,
+ * 그것은 게임의 성질이 아니라 그 사람의 버릇이다(세션 18이 돌진형에서 밟았다).
+ */
+export function backOffBomber(
+  inner: (world: World) => FrameInput = walkToNearestCore,
+): (world: World) => FrameInput {
+  return (world) => {
+    for (const enemy of world.enemies) {
+      if (!enemy.alive || enemy.kind !== 'bomber' || enemy.aimTimer <= 0) continue;
+      const dx = world.player.pos.x - enemy.pos.x;
+      const dy = world.player.pos.y - enemy.pos.y;
+      const dist = Math.hypot(dx, dy);
+      // 이미 원 밖이다. 남은 심지 동안 더 벌어질 만큼만 여유를 둔다(0.4m).
+      if (dist > BOMBER.blastRadius + 0.4) continue;
+      if (dist < 1e-6) return { move: { x: 1, y: 0 }, aim: null };
+      return { move: { x: dx / dist, y: dy / dist }, aim: null };
+    }
+    return inner(world);
+  };
+}
+
 /** 한 판을 끝까지 돌리고 남은 것. 씨앗 하나에 판 하나다. */
 export interface MatchResult {
   seed: number;
@@ -193,8 +235,19 @@ export interface MatchResult {
   cards: readonly string[];
   /** 돌진형의 몸에 닿힌 횟수. 한 대가 12점이라 판 길이를 가장 크게 흔든다. */
   bodyHits: number;
-  /** 방패병의 판에 막힌 내 화살의 수. **도는 사람과 안 도는 사람을 가르는 값이다**(`circleShield`). */
+  /**
+   * 폭탄병이 터진 횟수와, 그중 몸에 닿힌 횟수(DESIGN 9번).
+   * **한 쌍이라야 뜻이 있다** — 터진 수는 "얼마나 붙게 뒀는가", 맞은 수는 "물러났는가"다.
+   */
+  blastsFired: number;
+  blastHits: number;
+  /** 방패병의 판에 막힌 내 화살의 수. `shieldBodyHits`와 짝을 이뤄야 뜻이 있다. */
   blocked: number;
+  /**
+   * 방패병의 **몸에** 꽂힌 내 화살의 수. `blocked`의 짝이다 —
+   * **도는 사람과 안 도는 사람을 가르는 것은 둘의 비다**(`core/World.ts`의 주석).
+   */
+  shieldBodyHits: number;
   /** 내 화살이 적의 몸에 꽂힌 횟수(쓰러뜨리지 못한 것도 센다). `eatenMine`의 짝이다. */
   hits: number;
   /** 기둥이 먹은 내 화살의 수(DESIGN 10번). **그 맵이 게임에 닿아 있는지를 재는 값이다.** */
@@ -255,7 +308,10 @@ export function playMatch(
     kills: world.kills,
     cards: [...world.takenUpgrades],
     bodyHits: world.bodyHits,
+    blastsFired: world.blastsFired,
+    blastHits: world.blastHits,
     blocked: world.blockedShots,
+    shieldBodyHits: world.shieldBodyHits,
     hits: world.hits,
     eatenMine: world.eatenMine,
     eatenTheirs: world.eatenTheirs,

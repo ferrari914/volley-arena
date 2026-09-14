@@ -35,7 +35,7 @@ import type { EnemySpawn, Obstacle } from '../entities/types';
  * 자리는 좌우 중간 거리에 둔다 — 시작하자마자 코앞에서 튀어나오면 무슨 일인지 못 본다.
  */
 const OPEN_LAYOUT: readonly EnemySpawn[] = [
-  { x: 0, y: -13 },
+  { x: 0, y: -13, kind: 'bomber' },
   { x: 12, y: 6, kind: 'charger' },
   { x: -12, y: 6, kind: 'shield' },
   { x: 18, y: -9 },

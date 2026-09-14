@@ -62,12 +62,16 @@ export interface Arrow {
  * - `archer` — 거리를 지키며 화살을 쏜다(DESIGN 5번의 그 적). → 계속 움직여라
  * - `charger` — 거리를 지우며 몸으로 부딪는다. 화살을 쏘지 않는다. → 옆으로 비켜라
  * - `shield` — 앞을 막고 걸어와 쏜다. 정면으로 온 화살은 방패가 받는다. → 돌아서 쏴라
+ * - `bomber` — 붙어서 제 몸을 터뜨린다. 터지는 원이 붙어 선 자리보다 넓다. → 물러나라
  *
- * 종류마다 다른 수치는 `data/config.ts`의 `ENEMY`·`CHARGER`·`SHIELD`에 있고,
+ * **넷의 요구가 겹치지 않는다.** 앞의 셋에 대한 답은 전부 "거리를 둔 채 방향을 바꾸는 것"이라
+ * 폭탄병에게는 하나도 통하지 않는다(`data/config.ts`의 `BOMBER`).
+ *
+ * 종류마다 다른 수치는 `data/config.ts`의 `ENEMY`·`CHARGER`·`SHIELD`·`BOMBER`에 있고,
  * 행동이 갈리는 곳은 `systems/enemyAi.ts` 한 곳뿐이다
  * (방패가 화살을 받는 자리만 `systems/combat.ts`에 있다 — 판정은 화살 쪽 일이다).
  */
-export type EnemyKind = 'archer' | 'charger' | 'shield';
+export type EnemyKind = 'archer' | 'charger' | 'shield' | 'bomber';
 
 /**
  * 적이 설 자리 하나. 종류를 적지 않으면 활잡이다(DESIGN 5번의 그 적).
@@ -120,9 +124,10 @@ export interface Enemy {
   /** 피격 연출용. 1에서 0으로 줄어든다. */
   hitFlash: number;
   /**
-   * 겨누는(돌진형은 웅크리는) 중이면 남은 시간(s). 0보다 크면 멈춰 서 있고,
-   * 0이 되는 순간 저지른다 — 활잡이는 화살을 놓고, 돌진형은 몸을 던진다.
-   * 두 종류가 이 타이머 하나를 함께 쓰는 덕분에 "멈춰 선 적은 곧 무언가 한다"는
+   * 겨누는(돌진형은 웅크리는 · 폭탄병은 심지가 타는) 중이면 남은 시간(s).
+   * 0보다 크면 멈춰 서 있고, 0이 되는 순간 저지른다 — 활잡이는 화살을 놓고,
+   * 돌진형은 몸을 던지고, 폭탄병은 터진다.
+   * 네 종류가 이 타이머 하나를 함께 쓰는 덕분에 "멈춰 선 적은 곧 무언가 한다"는
    * 예고의 규칙이 종류를 가리지 않고 같다.
    */
   aimTimer: number;
@@ -187,6 +192,26 @@ export function createEnemy(
     shieldFlash: 0,
     dashTimer: 0,
   };
+}
+
+/**
+ * 터진 자국 하나 (DESIGN 9번 · 폭탄병). **화면에만 쓰는 것이 아니다** —
+ * 판정도 이 원 하나로 끝난다(`core/World.ts`가 중심에서 `radius` 안을 맞힌다).
+ * 그리는 원과 맞히는 원이 갈리면 "원 밖에 있었는데 맞았다"가 되고, 그러면
+ * 이 적이 요구하는 것(물러나라)을 화면에서 배울 수 없다.
+ *
+ * 화살·코어와 달리 게임 상태를 바꾸지 않고 시간만 흐른다 — 터지는 순간 한 번에
+ * 다 일어나고, 남는 것은 자국뿐이다.
+ */
+export interface Blast {
+  /** 렌더러가 메시를 짝지을 때 쓰는 고유 번호. */
+  id: number;
+  pos: Vec2;
+  /** 터진 원의 반지름(m). `BOMBER.blastRadius`가 그대로 들어온다. */
+  radius: number;
+  /** 터진 뒤 지난 시간(s). `BOMBER.flashTime`이 지나면 사라진다. */
+  age: number;
+  alive: boolean;
 }
 
 /** 경험치 코어가 어디서 나왔는지. 밸런스를 재는 쪽(테스트·HUD)이 둘을 구분한다. */

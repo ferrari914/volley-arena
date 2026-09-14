@@ -145,8 +145,14 @@ describe('World', () => {
     expect(world.hits).toBeGreaterThanOrEqual(ENEMY.maxHp);
   });
 
+  /**
+   * **활잡이 하나만 세워 잰다.** 표준 배치로 재던 검사인데, 재는 것이 "화살 한 대의 크기"라
+   * 배치에 몸으로 오는 적(돌진형·폭탄병)이 있으면 그 적이 먼저 닿아 자가 흔들린다 —
+   * 세션 51에 실제로 걸렸다(폭탄병을 넣자 첫 피격이 화살 5점이 아니라 몸통 12점이 됐다).
+   * 어느 적이 먼저 닿는가는 배치의 성질이고, 여기서 재려는 것은 **화살의 성질**이다.
+   */
   it('적의 화살이 플레이어의 체력을 깎는다', () => {
-    const world = new World();
+    const world = new World({ enemies: [{ x: 0, y: -13 }] });
     // 가만히 서 있으면 적이 다가와 겨누고 쏜다. 그것이 이 게임의 유일한 위협이다.
     for (let i = 0; i < 60 * 30 && world.player.hp === PLAYER.maxHp; i += 1) world.step(idle, DT);
     expect(world.player.hp).toBeLessThan(PLAYER.maxHp);

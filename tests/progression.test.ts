@@ -7,6 +7,7 @@ import { isOffScreen, makeProjector } from './support/camera';
 import {
   DT,
   IDLE,
+  backOffBomber,
   circleShield,
   dodgeCharger,
   median,
@@ -316,10 +317,21 @@ const SHORTEST = 150;
 const LONGEST = 330;
 /** 판이 영영 안 끝나는 고장을 잡는 선(초). 흔들리는 극단값이라 관측된 최악보다 한참 위에 둔다. */
 const RUNAWAY = 480;
-/** 예고를 보고 비키는 사람의 같은 스무 판(세션 18). 두 번째 자다 — 한 사람만 재면 버릇을 게임으로 오해한다. */
-const dodged = SEEDS.map((seed) => playMatch(seed, 600, dodgeCharger));
-/** 방패병을 옆구리로 도는 사람의 같은 스무 판(세션 24). 세 번째 자다. */
-const circled = SEEDS.map((seed) => playMatch(seed, 600, circleShield));
+/**
+ * 예고를 보고 비키는 사람의 같은 스무 판(세션 18). 두 번째 자다 —
+ * 한 사람만 재면 버릇을 게임으로 오해한다.
+ *
+ * **폭탄병이 들어오면서 이 둘은 물러날 줄도 알아야 한다**(세션 51 · `backOffBomber`).
+ * 비키기도 돌기도 **거리를 그대로 둔 채 방향만 바꾸는 답**이라 터질 원 안에서는 통하지 않고,
+ * 그대로 두면 이 자들이 재는 것이 돌진형·방패병이 아니라 **제 빈 구멍**이 된다.
+ * 실제로 그랬다: 감싸기 전 `circleShield`의 가장 짧은 판이 108초로 **안 도는 사람(132초)보다
+ * 짧아져**, "돌면 아래쪽 꼬리가 사라진다"는 이 파일의 결론이 뒤집혔다.
+ * 맨 앞의 `results`(코어만 보고 걷는 사람)는 그대로 둔다 — 그 사람은 **아무 답도 모르는 사람**이고,
+ * 3~5분 선은 그 사람으로 재는 것이 이 파일의 규칙이다.
+ */
+const dodged = SEEDS.map((seed) => playMatch(seed, 600, backOffBomber(dodgeCharger)));
+/** 방패병을 옆구리로 돌고 터질 원에서는 물러나는 사람의 같은 스무 판(세션 24·51). 세 번째 자다. */
+const circled = SEEDS.map((seed) => playMatch(seed, 600, backOffBomber(circleShield)));
 
 describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
   const lengths = results.map((r) => r.elapsed);

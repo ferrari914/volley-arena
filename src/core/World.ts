@@ -2,6 +2,7 @@ import {
   AIM,
   ARENA,
   ARROW,
+  BOMBER,
   CHARGER,
   CORE,
   ENEMY,
@@ -21,6 +22,7 @@ import {
   createXpCore,
   type Arrow,
   type ArrowOwner,
+  type Blast,
   type Enemy,
   type EnemyKind,
   type EnemySpawn,
@@ -33,7 +35,7 @@ import {
 import { length, normalize, rotateToward, wrapAngle, type Vec2 } from './math';
 import { findNearestEnemy } from '../systems/autoAim';
 import { damagePlayer, healPlayer, stepArrows, stepPlayerRecovery } from '../systems/combat';
-import { stepEnemies } from '../systems/enemyAi';
+import { stepEnemies, type EnemyBlast } from '../systems/enemyAi';
 import {
   createDropCores,
   createProgress,
@@ -61,6 +63,7 @@ export interface FrameInput {
 function bodyOf(kind: EnemyKind): { maxHp: number; shieldHp: number } {
   if (kind === 'charger') return { maxHp: CHARGER.maxHp, shieldHp: 0 };
   if (kind === 'shield') return { maxHp: SHIELD.maxHp, shieldHp: SHIELD.shieldHp };
+  if (kind === 'bomber') return { maxHp: BOMBER.maxHp, shieldHp: 0 };
   return { maxHp: ENEMY.maxHp, shieldHp: 0 };
 }
 
@@ -107,6 +110,12 @@ export class World {
   readonly arrows: Arrow[] = [];
   readonly enemies: Enemy[];
   readonly cores: XpCore[] = [];
+  /**
+   * 터진 자국들 (DESIGN 9번 · 폭탄병). 화면이 잠깐 보여 주고 스스로 사라진다
+   * (`BOMBER.flashTime`). 게임 상태를 바꾸지 않는 유일한 목록이다 —
+   * 폭발이 하는 일은 터지는 그 프레임에 다 끝나고, 여기 남는 것은 자국뿐이다.
+   */
+  readonly blasts: Blast[] = [];
 
   /** 살아온 시간(s). */
   elapsed = 0;
@@ -121,14 +130,31 @@ export class World {
    */
   bodyHits = 0;
   /**
+   * 폭탄병이 터진 횟수와, 그중 실제로 몸에 닿힌 횟수(DESIGN 9번).
+   * **한 쌍이라야 뜻이 있다** — 터진 수만 세면 "물러났는가"를 볼 수 없고,
+   * 맞은 수만 세면 잘 쏴서 터지기 전에 눕힌 사람과 물러나서 피한 사람이 섞인다.
+   * `bodyHits`와 같은 자리의 값이다(화면에는 쓰지 않고 밸런스를 재는 쪽만 본다).
+   */
+  blastsFired = 0;
+  blastHits = 0;
+  /**
    * 방패가 받아 낸 내 화살의 수(DESIGN 9번). `bodyHits`와 같은 자리에 있는 값이다 —
    * 화면에는 쓰지 않고 밸런스를 재는 쪽만 본다.
    *
-   * **이 값 하나가 "돌았는가"를 말한다.** 방패병에게 정면으로만 쏘면 여기가 쌓이고,
-   * 옆구리로 돌아 쏘면 같은 화살이 몸에 꽂혀 여기가 늘지 않는다. 판 길이나 처치 수로는
-   * 그 차이를 볼 수 없다 — 어느 쪽이든 적은 결국 쓰러지고, 다른 것은 걸린 시간뿐이다.
+   * **"돌았는가"는 이 값 하나가 아니라 `shieldBodyHits`와의 비가 말한다.** 방패병에게
+   * 정면으로만 쏘면 여기가 쌓이고, 옆구리로 돌아 쏘면 같은 화살이 몸에 꽂혀 저쪽이 쌓인다.
+   * 판 길이나 처치 수로는 그 차이를 볼 수 없다 — 어느 쪽이든 적은 결국 쓰러지고,
+   * 다른 것은 걸린 시간뿐이다.
    */
   blockedShots = 0;
+  /**
+   * 방패병의 **몸에** 꽂힌 내 화살의 수(DESIGN 9번). `blockedShots`의 짝이다.
+   *
+   * **둘을 나눠야 "돌았는가"가 남는다**(`systems/combat.ts`의 주석). 막힌 수만 세면
+   * 방패병 곁에 오래 서 있는 사람이 잘 도는 사람처럼 보이거나 그 반대가 된다 —
+   * 그 값은 *얼마나 쐈는가*와 *얼마나 막혔는가*를 한꺼번에 담고 있다.
+   */
+  shieldBodyHits = 0;
   /**
    * 적이 쏜 화살의 수와, 그중 내 몸에 꽂힌 수. **피하기를 재는 한 쌍이다**(DESIGN 5번).
    *
@@ -209,6 +235,7 @@ export class World {
   /** 지금까지 들어온 증원의 수. 다음 증원 시각과 상한을 여기 하나로 센다. */
   private joinedEnemies = 0;
   private nextCoreId = 1;
+  private nextBlastId = 1;
   private ambientTimer = CORE.ambient.spawnInterval;
   private readonly random: () => number;
 
@@ -272,6 +299,7 @@ export class World {
     for (const damage of acted.contacts) {
       if (damagePlayer(this.player, damage, PLAYER.invulnerable)) this.bodyHits += 1;
     }
+    for (const blast of acted.blasts) this.detonate(blast);
 
     const result = stepArrows(this.arrows, {
       dt,
@@ -290,6 +318,7 @@ export class World {
     this.hits += result.hits;
     this.kills += result.killed.length;
     this.blockedShots += result.blocked;
+    this.shieldBodyHits += result.shieldBodyHits;
     this.arrowHits += result.playerHits;
     this.eatenMine += result.eatenMine;
     this.eatenTheirs += result.eatenTheirs;
@@ -302,6 +331,7 @@ export class World {
     }
 
     this.updateCores(dt);
+    this.updateBlasts(dt);
     this.removeDeadArrows();
 
     // 체력이 다하면 여기서 판이 끝난다. 스텝의 나머지를 다 돌린 뒤에 판정하는 이유:
@@ -583,6 +613,7 @@ export class World {
       contactRadius: ENEMY.radius + PLAYER.radius,
       charger: CHARGER,
       shield: SHIELD,
+      bomber: BOMBER,
       obstacles: this.map.obstacles,
       // 적이 겨누기를 시작해도 되는 창(`data/config.ts`의 `VIEW`). 게임이 화면을 아는
       // 유일한 자리다 — 화면 밖에서 시작된 예고는 아무도 볼 수 없다.
@@ -641,6 +672,54 @@ export class World {
     });
     // 맵에 놓인 코어는 스스로 사라지지 않는다. 걸어가는 사이에 없어지면 주우러 갈 이유가 없다.
     this.cores.push(createXpCore(this.nextCoreId++, pos, CORE.ambient.value, 'ambient', Infinity));
+  }
+
+  /**
+   * 폭탄병 하나가 터졌다 (DESIGN 9번). 여기서 하는 일은 셋이다 —
+   * **원 안을 맞히고 · 자국을 남기고 · 다시 설 자리를 잡아 둔다.**
+   *
+   * **맞히는 원과 그리는 원이 같다**(`blast.radius`). 화면의 고리 밖으로 나간 사람은
+   * 반드시 안 맞아야 한다 — 그 약속이 어긋나면 이 적이 요구하는 것(물러나라)을
+   * 화면에서 배울 수 없다. 재는 것은 **몸의 중심**이다(고리는 바닥에 그려진다).
+   *
+   * **화살과 같은 무적 규칙을 지난다**(`PLAYER.invulnerable`) — 터지는 순간 화살까지
+   * 함께 꽂혀 한 프레임에 두 대를 맞는 일이 없어야 한다.
+   *
+   * **처치로 세지 않고 코어도 떨구지 않는다.** 그 둘은 `result.killed`가 하는 일이고
+   * (`step`), 스스로 터진 폭탄병은 거기 들어가지 않는다 — 가만히 서서 맞아 주는 것이
+   * 경험치를 버는 길이 되면 안 된다.
+   */
+  private detonate(blast: EnemyBlast): void {
+    this.blastsFired += 1;
+    this.blasts.push({
+      id: this.nextBlastId++,
+      pos: { x: blast.at.x, y: blast.at.y },
+      radius: blast.radius,
+      age: 0,
+      alive: true,
+    });
+    // 다시 설 자리는 화살에 쓰러진 적과 같은 규칙으로 **눕는 그 순간** 잡아 둔다
+    // (`pickRespawnSpot`). 그래야 그동안 증원이 "곧 저기에 선다"를 보고 다른 쪽으로 온다.
+    blast.from.standAt = this.pickRespawnSpot(blast.from);
+
+    // 쓰러진 사람은 더 맞지 않는다(적이 쏘지 않는 것과 같은 규칙).
+    if (this.player.hp <= 0) return;
+    const dx = this.player.pos.x - blast.at.x;
+    const dy = this.player.pos.y - blast.at.y;
+    if (dx * dx + dy * dy > blast.radius * blast.radius) return;
+    if (damagePlayer(this.player, blast.damage, PLAYER.invulnerable)) this.blastHits += 1;
+  }
+
+  /** 터진 자국은 시간만 흐르다 사라진다. 게임 규칙에 닿는 것이 없다. */
+  private updateBlasts(dt: number): void {
+    if (this.blasts.length === 0) return;
+    for (const blast of this.blasts) {
+      blast.age += dt;
+      if (blast.age >= BOMBER.flashTime) blast.alive = false;
+    }
+    for (let i = this.blasts.length - 1; i >= 0; i -= 1) {
+      if (!this.blasts[i]?.alive) this.blasts.splice(i, 1);
+    }
   }
 
   private dropCores(at: Vec2): void {

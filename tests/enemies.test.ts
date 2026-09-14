@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA, ARROW, CHARGER, ENEMY, PLAYER, SHIELD, VIEW } from '../src/data/config';
+import { ARENA, ARROW, BOMBER, CHARGER, ENEMY, PLAYER, SHIELD, VIEW } from '../src/data/config';
 import { createEnemy, type Enemy, type Obstacle } from '../src/entities/types';
 import { stepEnemies, type EnemyStepOptions } from '../src/systems/enemyAi';
 import { sightBlocker } from '../src/systems/obstacles';
@@ -39,6 +39,7 @@ function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
     contactRadius: ENEMY.radius + PLAYER.radius,
     charger: CHARGER,
     shield: SHIELD,
+    bomber: BOMBER,
     view: VIEW,
     // 흔들림 없이 곧장 겨눈다. 판정을 볼 때 난수가 끼면 무엇을 보고 있는지 흐려진다.
     random: () => 0.5,

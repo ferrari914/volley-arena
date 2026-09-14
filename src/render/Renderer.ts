@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import type { World } from '../core/World';
-import { ARENA, ARROW, CHARGER, CORE, ENEMY, SHIELD } from '../data/config';
+import { ARENA, ARROW, BOMBER, CHARGER, CORE, ENEMY, SHIELD } from '../data/config';
 import type { ArenaMap } from '../data/maps';
 import type { Vec2 } from '../core/math';
 import type { ArrowOwner, CoreOrigin, Enemy } from '../entities/types';
 import {
   applyShieldLook,
   createArena,
+  createBlast,
   createObstacles,
   createArrow,
   createCore,
@@ -48,6 +49,9 @@ export class Renderer {
   /** 코어 메시. 출처를 함께 들고 있어야 회수할 때 맞는 쪽 풀로 돌려보낼 수 있다. */
   private readonly coreMeshes = new Map<number, { mesh: THREE.Mesh; origin: CoreOrigin }>();
   private readonly corePools: Record<CoreOrigin, THREE.Mesh[]> = { ambient: [], drop: [] };
+  /** 터진 자국(DESIGN 9번 · 폭탄병). 화살·코어와 같은 풀 방식이다. */
+  private readonly blastMeshes = new Map<number, THREE.Mesh>();
+  private readonly blastPool: THREE.Mesh[] = [];
 
   /** 지금 세워 둔 기둥들(DESIGN 10번). 맵이 바뀌면 통째로 갈아 끼운다. */
   private obstacleGroup: THREE.Group | null = null;
@@ -126,6 +130,7 @@ export class Renderer {
     this.syncEnemies(world, dt);
     this.syncArrows(world);
     this.syncCores(world);
+    this.syncBlasts(world);
     this.syncCamera(player.pos, dt);
   }
 
@@ -166,10 +171,19 @@ export class Renderer {
       // 두 종류가 같은 예고를 쓰므로 처음 하는 사람이 한 번만 배우면 된다.
       const charger = enemy.kind === 'charger';
       const shield = enemy.kind === 'shield';
+      const bomber = enemy.kind === 'bomber';
       const aiming = enemy.aimTimer > 0;
       const dashing = enemy.dashTimer > 0;
       view.aimRing.visible = aiming;
-      if (aiming) {
+      if (aiming && bomber) {
+        // **폭탄병의 고리는 좁혀지지 않는다.** 그 원이 곧 닿는 자리라(`BOMBER.blastRadius`),
+        // 크기를 흔들면 어디까지 나가야 하는지를 화면이 거짓으로 말한다.
+        // 남은 시간은 대신 **깜빡임**이 말한다 — 세 번 깜빡이면 터진다.
+        const charge = 1 - enemy.aimTimer / BOMBER.fuse;
+        view.ringMaterial.opacity = 0.35 + 0.55 * Math.abs(Math.sin(charge * Math.PI * 3));
+        view.bodyMaterial.emissive.setHex(PALETTE.bomberFuse);
+        view.bodyMaterial.emissiveIntensity = 0.2 + charge * 0.9;
+      } else if (aiming) {
         const aimTime = charger ? CHARGER.windup : shield ? SHIELD.aimTime : ENEMY.aimTime;
         const charge = 1 - enemy.aimTimer / aimTime;
         view.aimRing.scale.setScalar(2.1 - charge * 1.1);
@@ -298,6 +312,39 @@ export class Renderer {
       entry.mesh.visible = false;
       this.coreMeshes.delete(id);
       this.corePools[entry.origin].push(entry.mesh);
+    }
+  }
+
+  /**
+   * 터진 자국 (DESIGN 9번 · 폭탄병). 코어·화살과 같은 풀 방식이다.
+   *
+   * **원의 크기는 처음부터 끝까지 터진 원 그대로다**(`blast.radius`). 퍼져 나가게 하면
+   * 자국이 실제로 닿은 곳보다 넓어져서, 원 밖에 서 있던 사람이 "맞을 뻔했다"고 읽는다.
+   * 사라지는 것은 크기가 아니라 **투명도**다.
+   */
+  private syncBlasts(world: World): void {
+    const seen = new Set<number>();
+    for (const blast of world.blasts) {
+      seen.add(blast.id);
+      let mesh = this.blastMeshes.get(blast.id);
+      if (!mesh) {
+        mesh = this.blastPool.pop() ?? createBlast();
+        mesh.visible = true;
+        mesh.position.set(blast.pos.x, 0.06, blast.pos.y);
+        mesh.scale.setScalar(blast.radius);
+        this.scene.add(mesh);
+        this.blastMeshes.set(blast.id, mesh);
+      }
+      const left = 1 - Math.min(blast.age / BOMBER.flashTime, 1);
+      (mesh.material as THREE.MeshBasicMaterial).opacity = 0.62 * left;
+    }
+
+    for (const [id, mesh] of this.blastMeshes) {
+      if (seen.has(id)) continue;
+      this.scene.remove(mesh);
+      mesh.visible = false;
+      this.blastMeshes.delete(id);
+      this.blastPool.push(mesh);
     }
   }
 

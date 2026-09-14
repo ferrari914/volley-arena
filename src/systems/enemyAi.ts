@@ -8,11 +8,12 @@ import { insideObstacle, pushOutOfObstacles, sightBlocker } from './obstacles';
  * 규칙은 셋뿐이다 — **다가온다 · 예고한다 · 저지른다.**
  * 상태를 따로 두지 않고 타이머로만 굴린다(`aimTimer`·`fireCooldown`, 돌진형은 `dashTimer`).
  *
- * 종류가 셋으로 늘었지만(DESIGN 9번) 이 문법은 그대로다. 갈리는 것은 마지막 한 칸,
+ * 종류가 넷으로 늘었지만(DESIGN 9번) 이 문법은 그대로다. 갈리는 것은 마지막 한 칸,
  * **무엇을 저지르는가**뿐이다:
  *   활잡이(archer)   — 멈춰 서서 겨눈 뒤 → 화살을 놓는다
  *   돌진형(charger)  — 멈춰 서서 웅크린 뒤 → 몸을 던진다
  *   방패병(shield)   — 멈춰 서서 겨눈 뒤 → 화살을 놓는다 (활잡이와 같다)
+ *   폭탄병(bomber)   — 멈춰 서서 달아오른 뒤 → 제 몸을 터뜨린다
  * 예고 칸을 종류마다 다시 만들지 않은 이유: 예고 없이 아픈 적은 피할 방법이 없고,
  * 예고의 모양이 종류마다 다르면 처음 하는 사람이 매번 새로 배워야 한다.
  *
@@ -38,8 +39,9 @@ import { insideObstacle, pushOutOfObstacles, sightBlocker } from './obstacles';
  * 멈춰 겨누고 쏘았다.** 기둥에 가린 것과 같은 종류의 일이다 — 예고를 볼 수 없으면
  * 피할 방법이 없다. 다른 것은 그다음 걸음뿐이다: 가려 있으면 시야를 되찾으러 돌고,
  * 화면 밖이면 그냥 다가온다(화면 밖은 언제나 `approachDistance` 밖이다).
- * **돌진형에는 이 구간이 없다.** 물러나지도 옆으로 돌지도 않고 곧장 온다 —
+ * **돌진형과 폭탄병에는 이 구간이 없다.** 물러나지도 옆으로 돌지도 않고 곧장 온다 —
  * 그것이 활잡이와 정반대인 지점이고, 둘이 함께 있어야 하는 이유다.
+ * 그 둘은 가림도 화면도 묻지 않는다(저지르는 자리가 코앞이라 언제나 보인다).
  */
 /**
  * 화면이 플레이어 앞뒤로 보여 주는 거리(m). 값은 `data/config.ts`의 `VIEW`에서 온다.
@@ -76,6 +78,8 @@ export interface EnemyStepOptions {
   charger: ChargerOptions;
   /** 방패병(DESIGN 9번)의 수치. 활잡이와 같은 이름의 값이라도 값이 달라 여기 따로 둔다. */
   shield: ShieldOptions;
+  /** 폭탄병(DESIGN 9번)의 수치. 이 적만 쓰는 값이라 전부 여기 있다. */
+  bomber: BomberOptions;
   /** 이 맵에 선 기둥들(DESIGN 10번). 적의 몸도 플레이어와 같은 규칙으로 막힌다. */
   obstacles: readonly Obstacle[];
   /**
@@ -123,6 +127,21 @@ export interface ShieldOptions {
 }
 
 /**
+ * 폭탄병만 쓰는 수치. 시작값은 `data/config.ts`의 `BOMBER`에서 온다.
+ * **`blastRadius`와 `damage`는 이 파일에서 쓰이지 않고 그대로 나간다**(`EnemyBlast`) —
+ * 터진 원이 누구에게 닿았는지는 받는 쪽(World)이 판단한다. 쏜 화살의 피해를
+ * 여기서 정하지 않는 것과 같은 이유다.
+ */
+export interface BomberOptions {
+  speed: number;
+  turnRate: number;
+  triggerRange: number;
+  fuse: number;
+  blastRadius: number;
+  damage: number;
+}
+
+/**
  * 겨누고 쏘는 박자. 활잡이와 방패병이 같은 코드를 쓰되 값만 갈린다 —
  * 종류마다 겨눔을 새로 만들면 "멈춰 선 적은 곧 무언가 한다"는 예고의 규칙이 갈라진다.
  */
@@ -139,7 +158,21 @@ export interface EnemyShot {
 }
 
 /**
- * 이번 스텝에 적이 한 일. 화살도 몸통 박치기도 여기서 만들지 않고 돌려주기만 한다 —
+ * 이번 스텝에 터진 폭탄병 하나 (DESIGN 9번). **누구에게 닿았는지는 여기서 정하지 않는다** —
+ * 원과 그 안에 무엇이 있었는지를 가르는 것은 받는 쪽(World)의 일이고, 여기서 하면
+ * 무적 시간(`PLAYER.invulnerable`)을 이 파일이 알아야 한다.
+ */
+export interface EnemyBlast {
+  /** 터진 자리. **몸이 서 있던 그 자리다** — 화면의 고리도 같은 중심이다. */
+  at: Vec2;
+  radius: number;
+  damage: number;
+  /** 터진 그 폭탄병. 다시 설 자리를 잡아 두려고 World가 본다. */
+  from: Enemy;
+}
+
+/**
+ * 이번 스텝에 적이 한 일. 화살도 몸통 박치기도 폭발도 여기서 만들지 않고 돌려주기만 한다 —
  * 화살의 id·속도·수명과 플레이어의 무적 규칙은 World와 `combat.ts`가 쥐고 있고,
  * 그래야 이 함수가 그것들을 몰라도 되어 테스트에서 적만 따로 돌려볼 수 있다.
  */
@@ -147,12 +180,14 @@ export interface EnemyStepResult {
   shots: EnemyShot[];
   /** 돌진형이 몸으로 닿힌 피해량들. 무적 판정은 받는 쪽이 한다. */
   contacts: number[];
+  /** 이번 스텝에 터진 폭탄병들. 비어 있는 경우가 대부분이다. */
+  blasts: EnemyBlast[];
 }
 
 /** 적을 한 스텝 움직이고, 이번에 저지른 것들을 돌려준다. */
 export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyStepResult {
   const { dt, playerPos } = options;
-  const result: EnemyStepResult = { shots: [], contacts: [] };
+  const result: EnemyStepResult = { shots: [], contacts: [], blasts: [] };
 
   for (const enemy of enemies) {
     if (enemy.hitFlash > 0) enemy.hitFlash = Math.max(0, enemy.hitFlash - dt * 2.5);
@@ -181,6 +216,11 @@ export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyS
     if (enemy.kind === 'shield') {
       const shot = stepShield(enemy, enemies, dir, dist, options);
       if (shot) result.shots.push(shot);
+      continue;
+    }
+
+    if (enemy.kind === 'bomber') {
+      stepBomber(enemy, enemies, dir, dist, options, result);
       continue;
     }
 
@@ -365,6 +405,71 @@ function stepShield(
   moveBy(enemy, move, shield.speed, options);
 
   return shot;
+}
+
+/**
+ * 폭탄병 한 마리 (DESIGN 9번). **돌진형의 박자를 그대로 쓴다** —
+ * 곧장 다가온다 → 멈춰 서서 달아오른다 → 터진다. 갈리는 것은 마지막 칸뿐이다.
+ *
+ * - **곧장 온다.** 물러나지도 옆으로 돌지도 않는다(돌진형과 같다). 거리를 지키는 적이
+ *   아니라 지우는 적이라, 거리 구간을 나눌 자리가 없다.
+ * - **가림도 화면 밖도 보지 않는다**(돌진형과 같다). 이 적의 예고는 화살이 닿는지와
+ *   상관이 없고, 불을 붙이는 자리(3.5m)는 언제나 화면 안이다
+ *   (`VIEW.back` 12.3m — `tests/camera.test.ts`가 그 관계를 지킨다).
+ * - **한 번 붙은 불은 꺼지지 않는다.** 플레이어가 달아나도 그 자리에서 터진다 —
+ *   따라가며 터지면 물러나는 것이 답이 아니게 되고, 그러면 이 적은 피할 수 없는 적이다.
+ *
+ * **쓰러뜨리면 터지지 않는다.** 심지가 타는 동안 체력이 다하면 `combat.ts`가 눕히고,
+ * 여기 오지 않으므로 폭발도 없다. 그것이 "물러나거나 쏘거나"의 쏘는 쪽이다.
+ */
+function stepBomber(
+  enemy: Enemy,
+  enemies: readonly Enemy[],
+  dir: Vec2,
+  dist: number,
+  options: EnemyStepOptions,
+  result: EnemyStepResult,
+): void {
+  const { dt, bomber } = options;
+
+  if (enemy.aimTimer > 0) {
+    enemy.aimTimer -= dt;
+    if (enemy.aimTimer > 0) return; // 타는 동안에는 발이 멎는다. 그 멈춤이 예고다.
+    enemy.aimTimer = 0;
+    result.blasts.push({
+      at: { x: enemy.pos.x, y: enemy.pos.y },
+      radius: bomber.blastRadius,
+      damage: bomber.damage,
+      from: enemy,
+    });
+    // 제 몸이 폭탄이므로 여기서 눕는다. 화살에 쓰러진 것과 같은 자리로 보내되
+    // (`respawnDelay` 뒤에 다시 선다), **처치로 세지 않고 코어도 떨구지 않는다** —
+    // 그 둘은 World가 `result.killed`를 보고 하는 일이고, 여기는 그 목록에 들어가지 않는다.
+    enemy.alive = false;
+    enemy.hp = 0;
+    enemy.respawnTimer = options.respawnDelay;
+    return;
+  }
+
+  // 달아오르는 동안에도 몸은 돈다 — 도는 것이 뜻을 갖지는 않지만(터지는 것은 원이다),
+  // 멈춰 선 적이 등을 돌린 채 굳어 있으면 화면에서 고장으로 읽힌다.
+  enemy.facing = rotateToward(enemy.facing, Math.atan2(dir.y, dir.x), bomber.turnRate * dt);
+
+  // **불을 붙일 수 없는 동안이 있다**(`fireCooldown`) — 판이 열린 직후(`ENEMY.startDelay`)와
+  // 일어선 사람 앞에서 기다리는 동안(`REVIVE.enemyDelay`)이다. 활잡이가 겨누지 않고
+  // 돌진형이 웅크리지 않는 그 시간에 이 적만 터지면, 기다려 주기로 한 것이 헛것이 된다.
+  if (enemy.fireCooldown > 0) enemy.fireCooldown -= dt;
+  else if (options.playerAlive && dist <= bomber.triggerRange) {
+    enemy.aimTimer = bomber.fuse;
+    return;
+  }
+
+  // 기다리는 동안에는 붙어 선 자리에서 멈춘다. 계속 걸어가면 몸이 플레이어에 겹쳐
+  // 서서 비비는 그림이 되고(돌진형이 `backoff`로 막아 둔 그것이다), 기다림이 끝나는
+  // 순간 코앞에서 터진다 — 물러날 자리가 이미 없다.
+  const move = dist <= bomber.triggerRange ? { x: 0, y: 0 } : { x: dir.x, y: dir.y };
+  addSeparation(move, enemy, enemies, options.separation);
+  moveBy(enemy, move, bomber.speed, options);
 }
 
 function distanceTo(enemy: Enemy, point: Vec2): number {

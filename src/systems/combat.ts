@@ -49,6 +49,17 @@ export interface ArrowStepResult {
   /** 방패에 막힌 화살 수(DESIGN 9번). 몸을 맞힌 것이 아니므로 `hits`와 따로 센다. */
   blocked: number;
   /**
+   * **방패병의 몸에 꽂힌 화살 수**(DESIGN 9번). `blocked`의 짝이다 —
+   * 둘을 더하면 **방패병에게 날아가 닿은 화살 전부**이고, 그 둘의 비가
+   * "옆구리로 돌면 판이 열린다"를 재는 값이다(`tests/perf/balance.perf.ts`).
+   *
+   * **막힌 수만으로는 그것을 잴 수 없다.** 막힌 수는 *얼마나 쐈는가*와 *얼마나 막혔는가*를
+   * 한꺼번에 담은 값이라, 방패병 곁에 오래 서 있기만 해도 커진다 — 세션 48이 처치 수에서
+   * 겪은 것과 같은 종류의 값이다. 적이 넷으로 늘어 자동 조준이 갈려 나가면
+   * 그 차이가 눈에 보이게 벌어진다(세션 51의 표).
+   */
+  shieldBodyHits: number;
+  /**
    * **기둥이 먹은 화살의 수**(DESIGN 10번). 주인별로 따로 센다 — 같은 숫자가 두 가지
    * 다른 이야기를 하기 때문이다.
    *
@@ -96,6 +107,7 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
     damageTaken: 0,
     playerHits: 0,
     blocked: 0,
+    shieldBodyHits: 0,
     eatenMine: 0,
     eatenTheirs: 0,
   };
@@ -127,6 +139,7 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
         enemy.hp -= arrow.damage;
         enemy.hitFlash = 1;
         result.hits += 1;
+        if (enemy.kind === 'shield') result.shieldBodyHits += 1;
         if (enemy.hp <= 0) {
           enemy.alive = false;
           enemy.hp = 0;

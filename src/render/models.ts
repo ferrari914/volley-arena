@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { ArrowOwner, EnemyKind, Obstacle } from '../entities/types';
-import { ARENA, ARROW, CORE, ENEMY, PLAYER, SHIELD } from '../data/config';
+import { ARENA, ARROW, BOMBER, CORE, ENEMY, PLAYER, SHIELD } from '../data/config';
 import { CAMERA_TILT } from './camera';
 
 /**
@@ -54,6 +54,21 @@ export const PALETTE = {
    * 성한 판(`shieldDark`)과 한 화면에 있을 때 어느 쪽을 마저 부술지 눈으로 갈린다.
    */
   shieldSpent: 0x3a4356,
+  /**
+   * 폭탄병(DESIGN 9번). **앞의 셋과 갈려야 하는데 따뜻한 쪽은 활잡이가 이미 쓰고 있다** —
+   * 그래서 색상이 아니라 **밝기**로 갈랐다. 붉은 활잡이·보라 돌진형·청록 방패병은 전부
+   * 어두운 남색 바닥에서 중간 밝기인데, 이 적만 모래빛으로 밝다. 둥근 몸과 함께
+   * 멀리서도 "저 흰 공"으로 먼저 읽힌다.
+   */
+  bomber: 0xd9cfb0,
+  /** 몸에 두른 띠와 심지의 밑동. 몸보다 어두워야 둥근 몸이 납작해 보이지 않는다. */
+  bomberDark: 0x8a7c56,
+  /**
+   * 심지가 타는 빛(`BOMBER.fuse`). **터질 원의 고리도 같은 색이다** —
+   * 달아오르는 몸과 바닥의 고리가 같은 색이어야 "저 몸이 저 원을 터뜨린다"로 읽힌다.
+   * 적의 화살(주황)보다 노랗고 밝다.
+   */
+  bomberFuse: 0xffb03a,
   accent: 0xffd479,
   core: 0x7bffcf,
   coreDrop: 0xa6ff5e,
@@ -279,8 +294,13 @@ export interface EnemyView {
   hpFill: THREE.Mesh;
   /** 체력바 전체. 가득 찼을 때는 숨긴다. */
   hpBar: THREE.Group;
-  /** 겨누는 동안 발밑에서 좁혀지는 고리. */
+  /**
+   * 겨누는 동안 발밑에서 좁혀지는 고리.
+   * **폭탄병만 좁혀지지 않고 터질 원 그대로 서서 깜빡인다**(`createEnemy`).
+   */
   aimRing: THREE.Mesh;
+  /** 고리의 재질. 폭탄병의 깜빡임이 여기 투명도를 흔든다. */
+  ringMaterial: THREE.MeshBasicMaterial;
   /**
    * 방패병이 앞세운 판이 매달린 돌쩌귀(DESIGN 9번). 다른 종류는 null이다.
    * 겨누는 동안 눕혀 내리고, 방패가 다 부서지면 통째로 숨긴다.
@@ -299,7 +319,12 @@ export interface EnemyView {
  *   활잡이  — 길쭉한 붉은 기둥에 겨누는 팔. 멀리서 쏜다.
  *   돌진형  — 낮고 넓은 보라 덩어리에 앞으로 뻗은 뿔. 부딪으러 온다.
  *   방패병  — 청록 기둥 앞에 정면을 두른 곡면 판. 그 판이 곧 규칙이다.
+ *   폭탄병  — 바닥에 놓인 모래빛 공에 심지 하나. 둥근 것은 이것뿐이다.
  * 낮고 넓게 만든 이유: 같은 반지름이라도 무게가 실려 보여야 "저건 달려온다"로 읽힌다.
+ *
+ * **폭탄병에게는 팔도 뿔도 없다.** 앞의 셋은 정면이 뜻을 갖지만(겨누는 쪽 · 달려갈 쪽 ·
+ * 막는 쪽) 이 적이 저지르는 것은 방향이 없는 원이다 — 정면을 가리키는 부품을 달면
+ * 화면이 "저쪽으로 무언가 한다"는 거짓말을 한다.
  *
  * **방패병만 부품 하나가 몸 앞에 따로 선다**(`shieldPlate`). 화살을 막는 것이
  * 몸이 아니라 그 판이고, 그 판이 **어느 각을 두르고 있는지**가 화면에 그대로 적혀 있어야
@@ -313,37 +338,45 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
 
   const charger = kind === 'charger';
   const shield = kind === 'shield';
-  const height = charger ? ENEMY.height * 0.62 : shield ? SHIELD_BODY_HEIGHT : ENEMY.height;
-  const bodyMaterial = standard(
-    charger ? PALETTE.charger : shield ? PALETTE.shield : PALETTE.enemy,
-    { roughness: charger ? 0.35 : 0.5 },
-  );
-  const body = new THREE.Mesh(
-    charger
-      ? new THREE.BoxGeometry(ENEMY.radius * 1.7, height, ENEMY.radius * 1.5)
-      : new THREE.CylinderGeometry(
-          ENEMY.radius * (shield ? 0.8 : 1),
-          ENEMY.radius * 0.85,
-          height,
-          shield ? 8 : 6,
-        ),
-    bodyMaterial,
-  );
+  const bomber = kind === 'bomber';
+  const look = BODY_LOOK[kind];
+  const height = look.height;
+  const bodyMaterial = standard(look.color, { roughness: look.roughness });
+  const body = new THREE.Mesh(bodyGeometry(kind, height), bodyMaterial);
+  // 어느 모양이든 중심이 절반 높이에 오면 바닥에 닿는다(공은 반지름이 곧 절반 높이다).
   body.position.y = height / 2;
   body.castShadow = true;
   pivot.add(body);
 
-  const cap = new THREE.Mesh(
-    new THREE.SphereGeometry(ENEMY.radius * 0.55, 10, 6),
-    standard(
-      charger ? PALETTE.chargerDark : shield ? PALETTE.shieldDark : PALETTE.enemyHit,
-      { roughness: 0.35 },
-    ),
-  );
-  cap.position.y = height + ENEMY.radius * 0.25;
-  pivot.add(cap);
+  if (bomber) {
+    // 심지. **이 적의 유일한 부품이고, 방향이 아니라 성질을 말한다** —
+    // 몸 한가운데 똑바로 서 있어서 어느 쪽에서 봐도 같게 보인다.
+    // 끝의 불씨는 늘 켜져 있다(`bomberFuse`) — 달아오르는 것은 몸이고(Renderer),
+    // 여기는 "저건 터지는 것"이라는 표지다.
+    const wick = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.07, 0.09, 0.32, 6),
+      standard(PALETTE.bomberDark, { roughness: 0.4 }),
+    );
+    wick.position.y = height + 0.14;
+    pivot.add(wick);
+    const spark = new THREE.Mesh(
+      new THREE.SphereGeometry(0.13, 8, 6),
+      new THREE.MeshBasicMaterial({ color: PALETTE.bomberFuse }),
+    );
+    spark.position.y = height + 0.34;
+    pivot.add(spark);
+  } else {
+    const cap = new THREE.Mesh(
+      new THREE.SphereGeometry(ENEMY.radius * 0.55, 10, 6),
+      standard(look.cap, { roughness: 0.35 }),
+    );
+    cap.position.y = height + ENEMY.radius * 0.25;
+    pivot.add(cap);
+  }
 
-  if (charger) {
+  if (bomber) {
+    // 부품 없음 — 위 주석을 보라. 정면을 가리키는 것을 달지 않는다.
+  } else if (charger) {
     // 앞으로 뻗은 뿔. 돌진 방향이 몸의 정면이라는 것을 화면에 적어 준다
     // (활잡이의 팔·플레이어의 코와 같은 역할이다).
     const horn = new THREE.Mesh(
@@ -365,14 +398,26 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
     pivot.add(arm);
   }
 
+  // **예고 고리. 폭탄병만 크기가 다르고, 그 크기가 곧 규칙이다.**
+  // 앞의 셋에게 고리는 "나를 노린다"는 표지라 몸 둘레면 되지만(Renderer가 좁혀 온다),
+  // 폭탄병의 고리는 **터질 원 그 자체**다(`BOMBER.blastRadius`). 그래서 좁히지 않고
+  // 처음부터 닿는 자리를 그대로 그린다 — 그 밖으로 나가는 것이 유일한 답이기 때문이다.
+  const ringOuter = bomber ? BOMBER.blastRadius : ENEMY.radius * 1.35;
+  const ringMaterial = new THREE.MeshBasicMaterial({
+    color: charger
+      ? PALETTE.charger
+      : shield
+        ? PALETTE.shield
+        : bomber
+          ? PALETTE.bomberFuse
+          : PALETTE.enemyArrow,
+    transparent: true,
+    opacity: 0.9,
+    side: THREE.DoubleSide,
+  });
   const aimRing = new THREE.Mesh(
-    new THREE.RingGeometry(ENEMY.radius * 1.1, ENEMY.radius * 1.35, 24),
-    new THREE.MeshBasicMaterial({
-      color: charger ? PALETTE.charger : shield ? PALETTE.shield : PALETTE.enemyArrow,
-      transparent: true,
-      opacity: 0.9,
-      side: THREE.DoubleSide,
-    }),
+    new THREE.RingGeometry(ringOuter * (bomber ? 0.93 : 0.81), ringOuter, bomber ? 48 : 24),
+    ringMaterial,
   );
   aimRing.rotation.x = -Math.PI / 2;
   aimRing.position.y = 0.05;
@@ -392,9 +437,61 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
     hpFill: fill,
     hpBar: bar,
     aimRing,
+    ringMaterial,
     shieldPlate: plate?.pivot ?? null,
     shieldMaterial: plate?.material ?? null,
   };
+}
+
+/** 방패병의 몸 키. 방패의 자세가 이 값에서 나오므로 상수로 빼 둔다. */
+const SHIELD_BODY_HEIGHT = ENEMY.height * 0.88;
+
+/** 폭탄병의 몸 키(m). 바닥에 놓인 공이라 **지름이 곧 키**다(`bodyGeometry`). */
+const BOMBER_BODY_HEIGHT = ENEMY.radius * 1.7;
+
+/**
+ * 종류별 몸의 색·머리 색·키·거칠기. **종류를 하나 더 넣을 때 손대는 자리를 한곳에 모은다** —
+ * 전에는 `kind === 'charger' ? ... : kind === 'shield' ? ...`가 네 군데에 흩어져 있어서,
+ * 넷째 종류를 넣으려면 그 네 줄을 전부 찾아 고쳐야 했다(하나를 빠뜨리면 새 적이
+ * 조용히 활잡이의 색을 입는다).
+ *
+ * **모양은 여기 없다**(`bodyGeometry`). 색은 값이지만 모양은 지오메트리라 표에 담기지 않는다.
+ */
+const BODY_LOOK: Record<EnemyKind, { color: number; cap: number; height: number; roughness: number }> =
+  {
+    archer: { color: PALETTE.enemy, cap: PALETTE.enemyHit, height: ENEMY.height, roughness: 0.5 },
+    charger: {
+      color: PALETTE.charger,
+      cap: PALETTE.chargerDark,
+      height: ENEMY.height * 0.62,
+      roughness: 0.35,
+    },
+    shield: {
+      color: PALETTE.shield,
+      cap: PALETTE.shieldDark,
+      height: SHIELD_BODY_HEIGHT,
+      roughness: 0.5,
+    },
+    bomber: {
+      color: PALETTE.bomber,
+      cap: PALETTE.bomberDark,
+      height: BOMBER_BODY_HEIGHT,
+      roughness: 0.45,
+    },
+  };
+
+/** 종류별 몸의 모양. 반지름은 어느 것도 `ENEMY.radius`를 넘지 않는다(판정이 하나다). */
+function bodyGeometry(kind: EnemyKind, height: number): THREE.BufferGeometry {
+  if (kind === 'charger')
+    return new THREE.BoxGeometry(ENEMY.radius * 1.7, height, ENEMY.radius * 1.5);
+  // 바닥에 놓인 공. 각진 몸 셋 사이에서 이것만 둥글어 멀리서도 먼저 갈린다.
+  if (kind === 'bomber') return new THREE.SphereGeometry(height / 2, 14, 10);
+  return new THREE.CylinderGeometry(
+    ENEMY.radius * (kind === 'shield' ? 0.8 : 1),
+    ENEMY.radius * 0.85,
+    height,
+    kind === 'shield' ? 8 : 6,
+  );
 }
 
 /**
@@ -402,9 +499,6 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
  * **막는 각은 여기 없다.** 그것은 `SHIELD.arc` 하나뿐이고, 판은 그 값을 두르기만 한다.
  */
 const SHIELD_PLATE = { radiusScale: 1.3, heightScale: 0.46 } as const;
-
-/** 방패병의 몸 키. 방패의 자세가 이 값에서 나오므로 상수로 빼 둔다. */
-const SHIELD_BODY_HEIGHT = ENEMY.height * 0.88;
 
 /**
  * 방패의 두 자세 — 돌쩌귀의 높이(m)와 기울기(rad). Renderer가 그 사이를 오간다.
@@ -568,6 +662,34 @@ export function createLockMarker(): THREE.Mesh {
   marker.position.y = 0.04;
   marker.visible = false;
   return marker;
+}
+
+/**
+ * 터진 자국 (DESIGN 9번 · 폭탄병). **채워진 원 하나다.**
+ *
+ * 고리가 아니라 원을 채우는 이유: 예고는 고리였고(`createEnemy`의 `aimRing`),
+ * 터지는 것은 그 안쪽 전부다. 같은 자리에 고리를 한 번 더 그리면 "아직 예고 중"으로
+ * 읽혀, 이미 끝난 일이 다시 위협으로 보인다.
+ *
+ * 반지름 1로 만들어 두고 `scale`로 키운다 — 터질 원의 크기는 게임 쪽 값이라
+ * (`BOMBER.blastRadius`) 그리는 쪽이 따로 알 필요가 없다.
+ */
+export function createBlast(): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 40),
+    new THREE.MeshBasicMaterial({
+      color: PALETTE.bomberFuse,
+      transparent: true,
+      opacity: 0.6,
+      side: THREE.DoubleSide,
+      // 바닥과 겹쳐 깜빡이지 않게 깊이 기록을 끈다(바닥 위에 얹는 그림이다).
+      depthWrite: false,
+    }),
+  );
+  mesh.rotation.x = -Math.PI / 2;
+  // 예고 고리(0.05)보다 살짝 위에 얹는다 — 터지는 순간 둘이 함께 있는 프레임이 있다.
+  mesh.position.y = 0.06;
+  return mesh;
 }
 
 /**
