@@ -349,7 +349,7 @@ function moveBy(enemy: Enemy, move: Vec2, speed: number, options: EnemyStepOptio
   enemy.pos = pushOutOfObstacles(enemy.pos, options.bodyRadius, options.obstacles);
 }
 
-/** 쓰러진 적을 제자리에 다시 세운다. 체력도 방패도 타이머도 함께 되돌린다. */
+/** 쓰러진 적을 `standAt`에 다시 세운다. 체력도 방패도 타이머도 함께 되돌린다. */
 function revive(enemy: Enemy, options: EnemyStepOptions): void {
   enemy.alive = true;
   enemy.hp = enemy.maxHp;
@@ -357,7 +357,7 @@ function revive(enemy: Enemy, options: EnemyStepOptions): void {
   // 그냥 느린 활잡이가 되어, 이 적이 요구하는 것이 한 번 쓰고 사라진다.
   enemy.shieldHp = enemy.kind === 'shield' ? options.shield.shieldHp : 0;
   enemy.shieldFlash = 0;
-  enemy.pos = { x: enemy.home.x, y: enemy.home.y };
+  enemy.pos = { x: enemy.standAt.x, y: enemy.standAt.y };
   enemy.respawnTimer = 0;
   enemy.aimTimer = 0;
   enemy.fireCooldown = 0;

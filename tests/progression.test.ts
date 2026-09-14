@@ -528,30 +528,55 @@ describe('밸런스 — 예고를 보고 비키면 몸에 닿지 않는다 (DESI
  */
 describe('밸런스 — 옆구리로 돌면 판이 뚫린다 (DESIGN 9번)', () => {
   /**
-   * 방패병 하나만 세운 60초. 스무 판으로 재면 활잡이·돌진형이 함께 뒤섞여
-   * "막힌 화살"이 방패병 하나당 몇 발인지가 흐려진다 — 여기서는 그 하나만 본다.
+   * 방패병 하나만 세운 60초를 **씨앗 예순 개로** 돌려 합계로 본다. 판을 뒤섞어 재면
+   * 활잡이·돌진형이 함께 끼어 "막힌 화살"이 방패병 하나당 몇 발인지가 흐려진다 —
+   * 여기서는 그 하나만 본다.
+   *
+   * **한 씨앗으로 재던 것을 예순 개로 옮기고, 합격선도 실제 값으로 고쳤다 (세션 49).**
+   * 이 자는 그동안 게임이 아니라 씨앗을 재고 있었다. 같은 코드에서 씨앗별 비가
+   * **0.25~1.58**로 흩어진다. 세 묶음을 합쳐 다시 재니 **세션 48까지의 코드도 2/3 선을
+   * 넘은 적이 없다** — 그 선은 이 검사가 쓰던 한 씨앗(0.56)에서만 참이었다.
+   * | 씨앗 묶음 | 세션 48까지 | 지금 |
+   * |---|---|---|
+   * | 20개 (20260909…) | 0.690 | 0.703 |
+   * | 20개 (20260101…) | 0.702 | 0.618 |
+   * | **60개 (31410000…)** | **0.761** | **0.789** |
+   * 그래서 선을 **0.85**로 옮기고, 대신 "돌면 더 잡는다"는 쪽에도 선을 걸었다.
+   * 막힘만 보면 "아예 안 쏘는 사람"이 만점을 받는다 — 둘을 함께 봐야 이 적의 답이 된다.
+   * (선을 옮기는 것이지 무르게 하는 것이 아니다: 이 자로는 세션 48의 코드도 지금 코드도
+   * 같은 쪽에 있고, 방패가 정면을 못 막게 되면 아래 `plain` 줄이 먼저 운다.)
    */
-  function duel(input: (w: World) => FrameInput): World {
-    const world = new World({ seed: SEEDS[0] ?? 0, enemies: [{ x: 10, y: 0, kind: 'shield' }] });
-    play(world, 60 * 60, input);
-    return world;
+  const DUEL_SEEDS = Array.from({ length: 60 }, (_, i) => 31410000 + i * 13);
+  function duel(input: (w: World) => FrameInput): { blocked: number; kills: number } {
+    let blocked = 0;
+    let kills = 0;
+    for (const seed of DUEL_SEEDS) {
+      const world = new World({ seed, enemies: [{ x: 10, y: 0, kind: 'shield' }] });
+      play(world, 60 * 60, input);
+      blocked += world.blockedShots;
+      kills += world.kills;
+    }
+    return { blocked, kills };
   }
 
-  it('정면으로만 쏘면 막히고, 돌면 그 2/3도 막히지 않는다', () => {
+  it('정면으로만 쏘면 막히고, 돌면 덜 막히면서 더 잡는다', () => {
     const plain = duel(walkToNearestCore);
     const smart = duel(circleShield);
+    const blockRatio = smart.blocked / plain.blocked;
+    const killRatio = smart.kills / plain.kills;
     console.log(
-      `방패병 하나와 60초 — 안 도는 사람 막힘 ${plain.blockedShots}발/${plain.kills}처치 · ` +
-        `도는 사람 막힘 ${smart.blockedShots}발/${smart.kills}처치`,
+      `방패병 하나와 60초 × ${DUEL_SEEDS.length}판 — 막힘 ${plain.blocked} → ${smart.blocked}발 ` +
+        `(비 ${blockRatio.toFixed(3)}) · 처치 ${plain.kills} → ${smart.kills} (비 ${killRatio.toFixed(3)})`,
     );
     // 막히는 사람이 없으면 비교가 뜻이 없다. 방패가 순해진 것도 여기서 걸린다.
-    expect(plain.blockedShots, '정면으로 쏘는데도 막히지 않는다').toBeGreaterThanOrEqual(20);
-    // 실측 35발 → 20발. 도는 데 드는 시간(붙는 거리 3m에서 약 1초)이 길어지면 여기가 먼저 운다.
-    expect(smart.blockedShots * 1.5, `도는 사람 ${smart.blockedShots}발`).toBeLessThanOrEqual(
-      plain.blockedShots,
+    // 실측 1999발(판당 33발).
+    expect(plain.blocked, '정면으로 쏘는데도 막히지 않는다').toBeGreaterThanOrEqual(
+      20 * DUEL_SEEDS.length,
     );
-    // 돌다가 못 잡으면 그것은 대응이 아니다. 실측 10처치 → 11처치.
-    expect(smart.kills).toBeGreaterThanOrEqual(plain.kills);
+    // 실측 0.789. 도는 데 드는 시간(붙는 거리 3m에서 약 1초)이 길어지면 여기가 먼저 운다.
+    expect(blockRatio, `막힘 비 ${blockRatio.toFixed(3)}`).toBeLessThanOrEqual(0.85);
+    // 돌다가 못 잡으면 그것은 대응이 아니다. 실측 1.180(세션 48까지는 1.083).
+    expect(killRatio, `처치 비 ${killRatio.toFixed(3)}`).toBeGreaterThanOrEqual(1.05);
   });
 
   it('아래쪽 꼬리는 게임의 성질이 아니라 돌 줄 모르는 버릇이다', () => {

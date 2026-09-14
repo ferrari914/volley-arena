@@ -102,19 +102,18 @@ describe('stepArrows', () => {
     expect(enemy.hp).toBe(ENEMY.maxHp - 1);
   });
 
-  it('체력을 다 깎아야 쓰러지고, 그때만 코어 자리를 돌려준다', () => {
+  it('체력을 다 깎아야 쓰러지고, 그때만 쓰러진 적을 돌려준다', () => {
     const enemy = enemyAt(0.4, 0);
     let result = stepArrows([arrow(-1, 0, 120, 0)], options({ enemies: [enemy] }));
-    expect(result.kills).toBe(0);
-    expect(result.killPoints).toHaveLength(0);
+    expect(result.killed).toHaveLength(0);
     expect(enemy.alive).toBe(true);
 
     for (let i = 1; i < ENEMY.maxHp; i += 1) {
       result = stepArrows([arrow(-1, 0, 120, 0)], options({ enemies: [enemy] }));
     }
     expect(enemy.alive).toBe(false);
-    expect(result.kills).toBe(1);
-    expect(result.killPoints).toHaveLength(1);
+    // 코어가 떨어질 자리(3번)와 다시 설 자리를 정하는 쪽이 적 자신을 받아야 한다.
+    expect(result.killed).toEqual([enemy]);
     expect(enemy.respawnTimer).toBe(ENEMY.respawnDelay);
   });
 

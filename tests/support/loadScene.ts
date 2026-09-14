@@ -82,7 +82,7 @@ export class LoadScene {
       if (enemy.alive) continue;
       enemy.alive = true;
       enemy.hp = enemy.maxHp;
-      enemy.pos = { x: enemy.home.x, y: enemy.home.y };
+      enemy.pos = { x: enemy.standAt.x, y: enemy.standAt.y };
       enemy.respawnTimer = 0;
       enemy.aimTimer = 0;
     }

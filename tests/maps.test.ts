@@ -439,6 +439,58 @@ describe('가림 — 기둥 뒤에 숨어 서도 화살은 몸에 꽂힌다 (씨
 });
 
 /**
+ * **벽을 등지고 서도 요새가 되지 않는다** (세션 49 · DESIGN 5번 "가만히 서 있으면 쓰러진다").
+ *
+ * 기둥 그늘을 닫고 나서(세션 48) 남아 있던 마지막 요새다. **기둥이 하나도 없는 빈 뜰에서도**
+ * 벽 앞 한 자리에 손을 놓고 서면 120초를 버텼다(한복판 40초). 가림이 아니었다 —
+ * 벽을 등지면 적이 반쪽에서만 오고, **쓰러진 적이 맵에 못 박힌 제자리로 돌아가느라**
+ * 한 번 눕힐 때마다 20~30m를 걸어야 했다. 고친 자리는 `World.pickRespawnSpot`이다.
+ *
+ * **자는 시간이 아니라 `초당 날아오는 적 화살`이다.** 세션 47·48이 두 번 확인했듯이
+ * 버틴 시간은 자리를 1cm만 옮겨도 세 배로 튄다(같은 고리에서 30도 120초 · 36도 78초).
+ * 날아온 화살 수는 한 판 내내 쌓이는 값이라 판을 가로질러 평균이 난다.
+ * 실측(한복판 대비 · 씨앗 12개 중앙값): 여섯 방향 열여덟 자리 중 **가장 순한 자리가
+ * 고치기 전 0.40(빈 뜰 90도) · 고친 뒤 0.69**다. 전체 폭은 0.40~0.76 → 0.69~0.86.
+ *
+ * **여섯 방향을 다 재는 이유**: 맵마다 적이 처음 서는 쪽이 다르므로 어느 한 방향만 재면
+ * 그 맵에서 가장 순한 자리를 고르게 된다. 고리는 벽에 붙어 선 자리(`RETREAT` 23m)다.
+ */
+describe('벽 — 등지고 서도 적이 오는 양이 반으로 줄지 않는다 (씨앗 12개)', () => {
+  const SEEDS = Array.from({ length: 12 }, (_, i) => 20260909 + i);
+  const BEARINGS = [30, 90, 150, 210, 270, 330];
+
+  /** 그 자리에 손을 놓고 서서, 초당 몇 발이 날아왔는지. */
+  const incoming = (map: ArenaMap, at: { x: number; y: number }): number =>
+    median(
+      SEEDS.map((seed) => {
+        const world = new World({ seed, map });
+        world.player.pos = { x: at.x, y: at.y };
+        play(world, 60 * 180, () => IDLE);
+        return world.enemyShots / world.elapsed;
+      }),
+    );
+
+  for (const map of MAPS) {
+    it(`${map.name} — 어느 방향으로 물러나도 한복판만큼 날아온다`, () => {
+      const open = incoming(map, { x: 0, y: 0 });
+      const rows = BEARINGS.map((deg) => {
+        const a = (deg * Math.PI) / 180;
+        const at = { x: Math.cos(a) * RETREAT, y: Math.sin(a) * RETREAT };
+        return { deg, ratio: incoming(map, at) / open };
+      });
+      console.log(
+        `  ${map.name.padEnd(6)} 한복판 초당 ${open.toFixed(2)}발 · 벽 앞 비 ` +
+          rows.map((r) => `${r.deg}도 ${r.ratio.toFixed(2)}`).join(' · '),
+      );
+      for (const row of rows) {
+        // 선은 0.6이다. 고치기 전이면 세 맵이 전부 걸린다(가장 순한 자리 0.40 · 0.52 · 0.51).
+        expect(row.ratio, `${map.id}의 ${row.deg}도 벽 앞이 요새다`).toBeGreaterThan(0.6);
+      }
+    });
+  }
+});
+
+/**
  * **맵이 게임의 성질을 무르게 만들지 않는다.**
  *
  * 여기 있는 두 선은 `tests/progression.test.ts`가 기본 맵에 걸어 둔 것과 같은 선이고,

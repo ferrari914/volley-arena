@@ -29,7 +29,7 @@ import {
   type UpgradeOffer,
   type XpCore,
 } from '../entities/types';
-import { normalize, rotateToward, wrapAngle, type Vec2 } from './math';
+import { length, normalize, rotateToward, wrapAngle, type Vec2 } from './math';
 import { findNearestEnemy } from '../systems/autoAim';
 import { damagePlayer, healPlayer, stepArrows, stepPlayerRecovery } from '../systems/combat';
 import { stepEnemies } from '../systems/enemyAi';
@@ -287,12 +287,18 @@ export class World {
       enemies: this.enemies,
     });
     this.hits += result.hits;
-    this.kills += result.kills;
+    this.kills += result.killed.length;
     this.blockedShots += result.blocked;
     this.arrowHits += result.playerHits;
     this.eatenMine += result.eatenMine;
     this.eatenTheirs += result.eatenTheirs;
-    for (const point of result.killPoints) this.dropCores(point);
+    for (const enemy of result.killed) {
+      this.dropCores(enemy.pos);
+      // 다시 설 자리는 **눕는 그 순간** 정한다(`pickRespawnSpot`). 3.6초 뒤 일어설 때가
+      // 아니라 지금 정해 두어야, 그동안 `pickReinforceSpawn`이 "곧 저기에 선다"를 보고
+      // 증원을 다른 쪽으로 부를 수 있다 — 그 함수는 쓰러진 적을 `standAt`으로 셈에 넣는다.
+      enemy.standAt = this.pickRespawnSpot(enemy);
+    }
 
     this.updateCores(dt);
     this.removeDeadArrows();
@@ -374,10 +380,7 @@ export class World {
    */
   private pickReinforceSpawn(): Vec2 {
     const base = this.random() * Math.PI * 2;
-    const taken = this.enemies.map((e) => {
-      const at = e.alive ? e.pos : e.home;
-      return Math.atan2(at.y - this.player.pos.y, at.x - this.player.pos.x);
-    });
+    const taken = this.enemyBearings();
 
     let best: Vec2 | null = null;
     let bestGap = -1;
@@ -413,6 +416,91 @@ export class World {
       }
     }
     return best ?? farthest;
+  }
+
+  /**
+   * 쓰러진 적이 다시 설 자리 (DESIGN 5번의 "가만히 서 있으면 쓰러진다").
+   *
+   * **여기가 아레나 가장자리를 요새로 만들던 자리다**(세션 49). 전에는 처음 선 자리
+   * (`home`)로 그냥 돌아갔다. 그 자리들은 맵에 못 박혀 있으므로, **거기서 가장 먼 곳에
+   * 서면 한 번 눕힐 때마다 적이 걸어 돌아오는 20~30m를 벌었다** — 손을 놓고도 112초를
+   * 버티는 자리가 세 맵 모두에 있었다(한복판 42초). 그 자리의 활잡이는 제 사거리(15m)에
+   * 닿아 보지도 못하고 평균 21.4m에서 눕는다. 벽이 가려 준 것이 아니라 **걷느라 싸우지
+   * 못한 것**이다(사거리 밖에서 보낸 몫 — 한복판 0.09 · 요새 자리 0.32~0.47).
+   *
+   * 그래서 **플레이어를 둘러싼 고리 위**(`ENEMY.respawnDistance` 16m)에서 고른다.
+   * 어디에 서 있든 다시 서는 적은 같은 거리에서 온다. 벽 앞이 안전해지는 길이 하나
+   * 줄어드는 것이지, 벽을 등지는 것 자체가 막히는 것은 아니다 — 여전히 적은 반쪽에서만 온다.
+   *
+   * **자리를 고르는 규칙은 증원과 같다**(위 `pickReinforceSpawn`): 등간격 후보 열둘 ·
+   * 무작위 시작각 · 이미 선 적들에게서 방위각이 가장 먼 후보. 여기서 따로 만들면
+   * "적이 어디서 오는가"가 두 규칙이 되고, 한쪽만 고치는 바퀴가 반드시 나온다.
+   * 다른 것은 고리의 중심(플레이어)과 반지름뿐이다.
+   *
+   * **한 번 눕는 데 두 번 고른다 — 눕는 순간의 예약과 일어서기 직전의 확정이다.**
+   * 확정이 필요한 이유는 `placeRisingEnemies`에 적었다(움직이는 사람에게서 자리가 뒤처진다).
+   * 예약을 그래도 남겨 두는 이유는 그 3.6초 동안 `enemyBearings`가 "곧 저기에 선다"를
+   * 읽어야 하기 때문이다 — 안 그러면 그사이 걸어 들어온 증원이 같은 쪽에 겹쳐 선다.
+   *
+   * 벽 밖이나 기둥 속으로는 세우지 않는다. 고리가 16m라 벽 앞에 바짝 붙어 서도 아레나
+   * 안쪽 후보가 반드시 남지만(가장 안쪽 후보가 중심에서 10.8m), 새 맵이 기둥을 넓게 두면
+   * 전부 버려질 수 있다 — 그때는 **아레나 중심에 가장 가까운 후보**를 쓴다.
+   * 자리 하나 때문에 프레임을 멈추지 않는 것은 `pickReinforceSpawn`과 같은 규칙이다.
+   */
+  private pickRespawnSpot(fallen: Enemy): Vec2 {
+    const base = this.random() * Math.PI * 2;
+    // 눕는 본인은 셈에서 뺀다. 지금 그 자리에 누워 있다고 해서 다시 설 자리를
+    // 그 반대쪽으로 밀 이유가 없다 — 그러면 눕힐 때마다 아레나를 가로질러 오간다.
+    const taken = this.enemyBearings(fallen);
+    const limit = ARENA.radius - ENEMY.radius;
+
+    let best: Vec2 | null = null;
+    let bestGap = -1;
+    let inmost: Vec2 = { x: this.player.pos.x, y: this.player.pos.y };
+    let inmostDist = Infinity;
+
+    for (let i = 0; i < REINFORCE.spawnCandidates; i += 1) {
+      const bearing = base + (i * Math.PI * 2) / REINFORCE.spawnCandidates;
+      const candidate = {
+        x: this.player.pos.x + Math.cos(bearing) * ENEMY.respawnDistance,
+        y: this.player.pos.y + Math.sin(bearing) * ENEMY.respawnDistance,
+      };
+      const fromCenter = length(candidate);
+      if (fromCenter < inmostDist) {
+        inmostDist = fromCenter;
+        inmost = candidate;
+      }
+      if (fromCenter > limit) continue;
+      if (insideObstacle(candidate, ENEMY.radius, this.map.obstacles)) continue;
+
+      let gap = Math.PI;
+      for (const other of taken) gap = Math.min(gap, Math.abs(wrapAngle(bearing - other)));
+      if (gap > bestGap) {
+        bestGap = gap;
+        best = candidate;
+      }
+    }
+    if (best) return best;
+    // 후보가 전부 버려졌다. 가장 안쪽 후보를 벽 안으로 당겨 쓴다.
+    const scale = inmostDist > limit ? limit / inmostDist : 1;
+    return { x: inmost.x * scale, y: inmost.y * scale };
+  }
+
+  /**
+   * 지금 서 있는 적들을 **플레이어에서 본 방위각**으로. 자리를 고르는 둘이 함께 쓴다.
+   *
+   * 화면은 플레이어를 따라다니므로 비어 보이는 쪽도 플레이어 기준이다(위 `pickReinforceSpawn`).
+   * 쓰러져 있는 적은 **다시 설 자리(`standAt`)로** 셈에 넣는다 — 곧 그 자리에 서므로
+   * (`enemyAi`의 `revive`) 지금 비었다고 그쪽으로 부르면 잠시 뒤 둘이 겹친다.
+   */
+  private enemyBearings(exclude?: Enemy): number[] {
+    const bearings: number[] = [];
+    for (const e of this.enemies) {
+      if (e === exclude) continue;
+      const at = e.alive ? e.pos : e.standAt;
+      bearings.push(Math.atan2(at.y - this.player.pos.y, at.x - this.player.pos.x));
+    }
+    return bearings;
   }
 
   /**
@@ -453,8 +541,26 @@ export class World {
     return true;
   }
 
+  /**
+   * **일어서기 직전에 설 자리를 다시 고른다.** 눕는 순간에 잡아 둔 자리(`standAt`)는
+   * 3.6초 동안 굳어 있는데, 플레이어는 그동안 최대 25m를 간다(속도 7.2m/s).
+   * 그대로 쓰면 "플레이어에게서 16m"라는 규칙이 **움직이는 사람에게만 거짓**이 된다 —
+   * 뛰어다니는 사람 뒤로 적이 계속 뒤처져 서고, 판이 길어진다.
+   * 실측(예순 판 p90 · `tests/progression.test.ts`): 눕는 순간에만 고르면 **344초**,
+   * 여기서 다시 고르면 **304초**다(고치기 전 310초).
+   *
+   * 눕는 순간의 예약을 버리지 않는 이유는 `pickRespawnSpot`에 적어 두었다.
+   */
+  private placeRisingEnemies(dt: number): void {
+    for (const enemy of this.enemies) {
+      // `stepEnemies`가 이번 스텝에 타이머를 0 밑으로 내리고 세울 적들이다.
+      if (!enemy.alive && enemy.respawnTimer <= dt) enemy.standAt = this.pickRespawnSpot(enemy);
+    }
+  }
+
   /** 적을 한 스텝 움직인다. 돌려받은 것은 이번에 적이 쏜 화살들이다. */
   private updateEnemies(dt: number) {
+    this.placeRisingEnemies(dt);
     return stepEnemies(this.enemies, {
       dt,
       playerPos: this.player.pos,

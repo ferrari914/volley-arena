@@ -28,14 +28,16 @@ export interface ArrowStepOptions {
 export interface ArrowStepResult {
   /** 적을 맞힌 횟수(쓰러뜨리지 못한 것도 센다). */
   hits: number;
-  /** 이번 스텝에 쓰러진 적의 수. */
-  kills: number;
   /**
-   * 쓰러진 자리들. 경험치 코어가 여기에 떨어진다(3번).
-   * 위치를 여기서 돌려주지 않으면 World가 "어느 적이 방금 죽었는지"를
-   * 다시 훑어야 한다 — 판정은 이미 이 안에서 끝났으므로 그 자리에서 알려 준다.
+   * 이번 스텝에 쓰러진 적들. **수가 아니라 적 자신을 돌려준다** —
+   * 부르는 쪽이 쓰러진 자리에 코어를 떨어뜨리고(3번) 다시 설 자리를 정해 준다
+   * (`World.pickRespawnSpot`). 판정은 이미 이 안에서 끝났으므로 그 자리에서 알려 준다.
+   * 그러지 않으면 World가 "어느 적이 방금 죽었는지"를 매 프레임 다시 훑어야 한다.
+   *
+   * **쓰러진 자리는 `enemy.pos`다.** 적은 죽은 프레임에 더 움직이지 않고
+   * (`stepEnemies`가 건너뛴다) 다시 설 때 비로소 자리가 바뀐다(`revive`).
    */
-  killPoints: Vec2[];
+  killed: Enemy[];
   /** 플레이어가 이번 스텝에 받은 피해 총량. */
   damageTaken: number;
   /**
@@ -90,8 +92,7 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
   const playerHitSq = (arrowRadius + playerRadius) ** 2;
   const result: ArrowStepResult = {
     hits: 0,
-    kills: 0,
-    killPoints: [],
+    killed: [],
     damageTaken: 0,
     playerHits: 0,
     blocked: 0,
@@ -131,8 +132,7 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
           enemy.hp = 0;
           enemy.aimTimer = 0;
           enemy.respawnTimer = options.respawnDelay;
-          result.kills += 1;
-          result.killPoints.push({ x: enemy.pos.x, y: enemy.pos.y });
+          result.killed.push(enemy);
         }
 
         if (arrow.pierce > 0) {

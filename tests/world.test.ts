@@ -14,6 +14,9 @@ import {
 } from '../src/data/config';
 import type { FrameInput } from '../src/core/World';
 import type { Enemy } from '../src/entities/types';
+import type { Vec2 } from '../src/core/math';
+import { MAPS } from '../src/data/maps';
+import { insideObstacle } from '../src/systems/obstacles';
 
 const DT = 1 / 60;
 const idle: FrameInput = { move: { x: 0, y: 0 }, aim: null };
@@ -152,11 +155,18 @@ describe('World', () => {
 
   it('돌진형의 몸통도 화살과 같은 무적 규칙을 지난다 (DESIGN 9번)', () => {
     // 돌진형 하나만 세운다. 5m면 준비 시간(`ENEMY.startDelay`)이 지나는 대로 웅크리고,
-    // 그 뒤에 몸이 날아온다. **첫 몸통 한 대가 올 때까지 넉넉히 기다린다** —
-    // 준비 시간 동안 자동 발사가 이 놈을 한 번 쓰러뜨리고 다시 서기도 하기 때문이다.
-    // 여기서 재는 것은 "언제 닿는가"가 아니라 "한 번의 돌진이 몇 번 아픈가"다.
+    // 그 뒤에 몸이 날아온다. 여기서 재는 것은 "언제 닿는가"가 아니라
+    // "한 번의 돌진이 몇 번 아픈가"다.
+    //
+    // **반대쪽(-x)을 겨눈 채로 기다린다.** 자동 발사는 그대로 나가지만 화살이 빗나가므로
+    // 이 놈이 다가오는 동안 쓰러지지 않는다. 하나만 세운 판에서는 플레이어의 화살이
+    // 전부 이 한 놈에게 가서, 겨누지 않고 두면 **웅크리자마자 매번 쓰러진다**
+    // (씨앗 열둘 · 120초 동안 몸통 0대 — 세션 49에 다시 설 자리가 16m로 바뀌면서 그렇게 됐다).
+    // 판 안에서 이 적이 순해진 것은 아니다. 오히려 한 판에 닿는 몸통은 23 → 35대로 늘었다
+    // (`tests/progression.test.ts`의 '몸통 박치기'). 여기서만 화력이 한곳에 몰릴 뿐이다.
+    const away: FrameInput = { move: { x: 0, y: 0 }, aim: { x: -1, y: 0 } };
     const world = new World({ enemies: [{ x: 5, y: 0, kind: 'charger' }] });
-    for (let i = 0; i < 60 * 12 && world.player.hp === PLAYER.maxHp; i += 1) world.step(idle, DT);
+    for (let i = 0; i < 60 * 12 && world.player.hp === PLAYER.maxHp; i += 1) world.step(away, DT);
 
     // 한 번의 돌진은 딱 한 번 깎는다. 몸이 겹쳐 있는 여러 프레임 동안 계속 깎이면
     // 예고 한 번에 판이 끝난다.
@@ -165,7 +175,7 @@ describe('World', () => {
     expect(world.player.hitFlash).toBe(1);
 
     const hp = world.player.hp;
-    run(world, PLAYER.invulnerable - DT);
+    run(world, PLAYER.invulnerable - DT, away);
     expect(world.player.hp).toBe(hp);
   });
 
@@ -382,20 +392,28 @@ describe('World — 증원', () => {
    * 화면에서는 대여섯이 한 덩어리로 서고 반대쪽 절반이 빈다. 프레임이 아니라
    * **읽히는가**의 문제다(어디서 오는지가 한쪽만 보고도 짐작되면 안 된다).
    *
-   * 자는 이렇다: 다 들어온 뒤 **자리 전부**(처음 배치 다섯 + 증원 `maxExtra`개)의 방위각을
-   * 아레나 중심에서 재어 정렬하고, 그중 **가장 넓은 빈 부채꼴**을 잰다.
-   * 열일곱이 고르게 서면 360/17 ≒ 21도다. 씨앗 20개 실측:
-   * 무작위 각도 **중앙 63도 · 최악 105도**(한 판은 반대쪽 절반이 통째로 비었다)
-   * → 빈 쪽부터 채우게 한 뒤 **중앙 47도 · 최악 56도**.
+   * 자는 이렇다: 다 들어온 뒤 **화면에 서 있는 적 전부**(처음 배치 다섯 + 증원 `maxExtra`개)의
+   * 방위각을 플레이어에서 재어 정렬하고, 그중 **가장 넓은 빈 부채꼴**을 잰다.
+   * 열일곱이 고르게 서면 360/17 ≒ 21도다.
    *
-   * **플레이어가 가만히 선 판에서 잰다.** 고르는 쪽은 플레이어에서 본 방위각을 쓰는데
-   * (`pickReinforceSpawn`), 플레이어가 한가운데 서 있으면 그 각과 중심에서 본 각이
-   * 같아진다 — 자가 흔들리지 않는 조건을 만들어 두고 재는 것이다.
+   * **처음 선 자리가 아니라 지금 서 있는 자리를 잰다 (세션 49).** 세션 39가 이 자를 만들 때는
+   * 쓰러진 적이 처음 선 자리로 돌아왔으므로 그 자리들이 곧 화면이었다. 이제는 다시 설 자리를
+   * 눕을 때마다 새로 고르므로(`World.pickRespawnSpot`), **처음 선 자리는 판이 열리고 1분 뒤의
+   * 화면을 더 이상 말해 주지 않는다.** 같은 판을 두 자로 재면 이렇게 갈린다(씨앗 20개):
+   * | 무엇을 재는가 | 세션 48까지 | 지금 |
+   * |---|---|---|
+   * | 처음 선 자리 | 중앙 44도 · 최악 57도 | 중앙 60도 · 최악 112도 |
+   * | **서 있는 자리** | 중앙 52도 · 최악 56도 | **중앙 43도 · 최악 46도** |
+   * 화면은 오히려 더 고르게 찼는데 옛 자로는 뭉친 것처럼 보인다. 눈으로 보는 것을 재야 한다.
    *
-   * **처음 배치까지 함께 세는 이유**: 화면에 서는 것은 열다섯이지 열이 아니다.
+   * **판 안에서 0.5초마다 재어 그 판의 중앙값을 쓴다.** 적은 걸어 다니므로 한순간을 집으면
+   * 우연히 한쪽이 비는 때가 잡힌다(같은 판의 순간 최악값은 63~80도로 튄다).
+   *
+   * **플레이어가 가만히 선 판에서 잰다.** 고르는 쪽도 플레이어에서 본 방위각을 쓰므로
+   * (`pickReinforceSpawn`), 자와 자를 대는 곳이 같아진다.
+   *
+   * **처음 배치까지 함께 세는 이유**: 화면에 서는 것은 열일곱이지 열둘이 아니다.
    * 증원끼리만 고르게 서도 고정 배치와 겹치면 화면에서는 그대로 뭉쳐 보인다.
-   *
-   * 자리는 쓰러져도 그대로 남으므로(`home`으로 돌아와 다시 선다) 판 내내 이 값이다.
    */
   it('증원이 한쪽에 뭉치지 않는다 — 빈 쪽부터 채운다', () => {
     const TAU = Math.PI * 2;
@@ -410,19 +428,45 @@ describe('World — 증원', () => {
       return (widest * 180) / Math.PI;
     }
 
+    const mid = (xs: readonly number[]): number =>
+      [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+
     const gaps: number[] = [];
     for (let seed = 1; seed <= 20; seed += 1) {
       const world = new World({ seed });
       survive(world, REINFORCE.firstDelay + REINFORCE.interval * REINFORCE.maxExtra);
       expect(world.enemies).toHaveLength(layout + REINFORCE.maxExtra);
-      gaps.push(widestGap(world.enemies.map((e) => Math.atan2(e.home.y, e.home.x))));
+
+      // 다 들어온 뒤 1분을 더 돌리며 0.5초마다 화면을 잰다.
+      const samples: number[] = [];
+      for (let i = 0; i < 60 * 60; i += 1) {
+        world.player.hp = world.player.maxHp;
+        if (world.offer) {
+          world.chooseUpgrade(world.offer.choices[0]!.card.id);
+          continue;
+        }
+        world.step(idle, DT);
+        if (i % 30 !== 0) continue;
+        samples.push(
+          widestGap(
+            world.enemies.map((e) => {
+              // 쓰러져 있는 적은 곧 설 자리로 센다. 화면에서 잠깐 비는 것은 뭉침이 아니다.
+              const at = e.alive ? e.pos : e.standAt;
+              return Math.atan2(at.y - world.player.pos.y, at.x - world.player.pos.x);
+            }),
+          ),
+        );
+      }
+      gaps.push(mid(samples));
     }
     const sorted = [...gaps].sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)]!;
     const worst = sorted[sorted.length - 1]!;
     const show = `중앙 ${median.toFixed(0)}도 · 최악 ${worst.toFixed(0)}도`;
-    expect(median, show).toBeLessThanOrEqual(55);
-    expect(worst, show).toBeLessThanOrEqual(70);
+    // 실측 중앙 43도 · 최악 46도. 선은 그 위에 한 뼘 띄워 둔다 — 여기가 깨지면
+    // 자리를 고르는 둘(`pickReinforceSpawn` · `pickRespawnSpot`) 중 하나가 무너진 것이다.
+    expect(median, show).toBeLessThanOrEqual(50);
+    expect(worst, show).toBeLessThanOrEqual(55);
   });
 
   it('증원은 플레이어 코앞이 아니라 벽 가까이에서 걸어 들어온다', () => {
@@ -504,5 +548,94 @@ describe('World — 증원', () => {
     world.revive();
     survive(world, 1);
     expect(world.enemies.length).toBe(before);
+  });
+});
+
+/**
+ * **다시 서는 적은 어디서 오는가** (세션 49 · DESIGN 5번).
+ *
+ * 세션 48까지는 쓰러진 적이 **처음 선 자리**로 돌아갔다. 그 자리들은 맵에 못 박혀 있으므로
+ * 거기서 가장 먼 곳 — 곧 벽 앞 — 에 서면 한 번 눕힐 때마다 적이 걸어 돌아오는 20~30m를
+ * 벌었고, 손을 놓고도 120초를 버티는 자리가 세 맵 모두에 있었다(한복판 40초).
+ * 지금은 **플레이어를 둘러싼 고리 위**에 선다(`ENEMY.respawnDistance`).
+ *
+ * 한 판의 결과로 재는 자는 `tests/maps.test.ts`에 있다(벽 앞에서 초당 날아오는 화살 수).
+ * 여기서는 그 규칙 자체를 한 프레임으로 본다 — 결과만 재면 무엇이 움직였는지 모른다.
+ */
+describe('World — 쓰러진 적이 다시 서는 자리', () => {
+  /** 적 하나를 눕히고, 다시 설 때까지 돌린다. 돌려주는 것은 일어선 그 자리다. */
+  function fellAndRose(world: World, enemy: Enemy, between?: () => void): Vec2 {
+    enemy.hp = 0;
+    enemy.alive = false;
+    enemy.respawnTimer = ENEMY.respawnDelay;
+    // World가 자리를 예약하는 것은 화살이 눕힌 순간이지만, 확정은 일어서기 직전이다.
+    // 여기서는 손으로 눕혔으므로 예약 없이 확정만 지나간다 — 그것도 같은 값이어야 한다.
+    for (let i = 0; i < 60 * 10 && !enemy.alive; i += 1) {
+      between?.();
+      world.step(idle, DT);
+    }
+    expect(enemy.alive).toBe(true);
+    return enemy.pos;
+  }
+
+  const fromPlayer = (world: World, at: Vec2): number =>
+    Math.hypot(at.x - world.player.pos.x, at.y - world.player.pos.y);
+
+  it('플레이어가 벽에 붙어 서 있어도 한복판에 서 있을 때와 같은 거리에서 온다', () => {
+    for (const spot of [
+      { x: 0, y: 0 },
+      { x: 23, y: 0 },
+      { x: -20, y: 12 },
+    ]) {
+      const world = new World({ seed: 7, enemies: [{ x: 10, y: 0 }] });
+      world.player.pos = { x: spot.x, y: spot.y };
+      const risen = fellAndRose(world, world.enemies[0]!);
+      expect(
+        fromPlayer(world, risen),
+        `(${spot.x}, ${spot.y})에 선 사람에게서 ${fromPlayer(world, risen).toFixed(1)}m`,
+      ).toBeCloseTo(ENEMY.respawnDistance, 6);
+      // 벽 밖에 세우지 않는다. 고리가 아레나 밖으로 나가는 자리에서도 마찬가지다.
+      expect(Math.hypot(risen.x, risen.y)).toBeLessThanOrEqual(ARENA.radius - ENEMY.radius + 1e-6);
+    }
+  });
+
+  /**
+   * **자리는 눕는 순간이 아니라 일어서기 직전에 정해진다.**
+   * 그러지 않으면 3.6초 동안 플레이어가 최대 25m를 가므로(속도 7.2m/s)
+   * "플레이어에게서 16m"라는 규칙이 **뛰어다니는 사람에게만 거짓**이 된다.
+   * 실측(예순 판 p90): 눕는 순간에만 고르면 344초, 일어서기 직전에 다시 고르면 304초다.
+   */
+  it('눕힌 뒤 플레이어가 반대편으로 달아나도 그 자리에서 16m다', () => {
+    const world = new World({ seed: 7, enemies: [{ x: 10, y: 0 }] });
+    const enemy = world.enemies[0]!;
+    const before = { x: world.player.pos.x, y: world.player.pos.y };
+    const risen = fellAndRose(world, enemy, () => {
+      world.player.pos = { x: 22, y: 0 };
+    });
+    expect(Math.hypot(world.player.pos.x - before.x, world.player.pos.y - before.y)).toBeGreaterThan(
+      20,
+    );
+    expect(fromPlayer(world, risen)).toBeCloseTo(ENEMY.respawnDistance, 6);
+  });
+
+  it('기둥 속에는 서지 않는다', () => {
+    const map = MAPS.find((m) => m.obstacles.length > 0)!;
+    for (let seed = 1; seed <= 30; seed += 1) {
+      const world = new World({ seed, map, enemies: [{ x: 10, y: 0 }] });
+      const risen = fellAndRose(world, world.enemies[0]!);
+      expect(
+        insideObstacle(risen, ENEMY.radius, map.obstacles),
+        `씨앗 ${seed}에서 기둥 속에 섰다`,
+      ).toBe(false);
+    }
+  });
+
+  it('처음 선 자리는 그대로 남는다 — 어디서 들어왔는지를 되물을 수 있어야 한다', () => {
+    const world = new World({ seed: 7, enemies: [{ x: 10, y: 0 }] });
+    const enemy = world.enemies[0]!;
+    const home = { ...enemy.home };
+    fellAndRose(world, enemy);
+    expect(enemy.home).toEqual(home);
+    expect(enemy.standAt).not.toEqual(home);
   });
 });

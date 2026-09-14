@@ -384,7 +384,7 @@ describe('적 봇 — 쓰러진 뒤', () => {
     for (let i = 0; i < 60 && !enemy.alive; i += 1) stepEnemies([enemy], options(MOVE_ONLY));
     expect(enemy.alive).toBe(true);
     expect(enemy.hp).toBe(ENEMY.maxHp);
-    expect(enemy.pos).toEqual(enemy.home);
+    expect(enemy.pos).toEqual(enemy.standAt);
   });
 
   it('쓰러져 있는 동안에는 쏘지 않는다', () => {
