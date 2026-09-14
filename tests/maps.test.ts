@@ -42,6 +42,12 @@ const straightArrow = (id: number, speed: number): Arrow => ({
 /** 몸 하나가 지나갈 수 있는 최소 폭(m). 적의 지름(1.2m)에 여유를 얹었다. */
 const PASSABLE = 2.0;
 
+/** 화살의 몸 반지름(m). `systems/combat.ts`가 쓰는 값과 같다. */
+const ARROW_RADIUS = 0.12;
+
+/** 물러나 벽에 붙어 선 자리까지의 거리(m). 기둥(바깥 끝 20.2m)과 벽(26m) 사이다. */
+const RETREAT = 23;
+
 const arenaEdge = (pillar: Obstacle): number =>
   ARENA.radius - (Math.hypot(pillar.x, pillar.y) + pillar.radius);
 
@@ -119,6 +125,123 @@ describe('맵 데이터 — 맵을 하나 더 넣는 사람이 지켜야 하는 
       });
     });
   }
+});
+
+/**
+ * **가림(cover)** — 어떤 자리에 선 사람이 **몇 도에서 안 보이는가.**
+ *
+ * 활잡이가 다가와 서는 거리(`ENEMY.approachDistance` 12m)로 한 바퀴 선을 그어,
+ * 기둥에 막히는 각을 더한다. 0도면 사방에서 다 보이고, 360도면 아무도 못 본다.
+ *
+ * **왜 시간이 아니라 각으로 재는가**: "여기 숨으면 몇 초 사는가"는 씨앗과 배치가
+ * 조금만 달라져도 88~182초로 튄다(세션 47이 36가지 배치로 재 봤다 — STATUS에 표가 있다).
+ * 그 위에 합격선을 그으면 다음 바퀴가 흔들리는 자를 물려받는다. 가림 각은 기둥 데이터만
+ * 보는 결정적 계산이라 늘 같은 값이 나오고, **막는 것은 기둥이지 운이 아니다.**
+ */
+const cover = (at: { x: number; y: number }, obstacles: readonly Obstacle[]): number => {
+  let blocked = 0;
+  for (let deg = 0; deg < 360; deg += 2) {
+    const a = (deg * Math.PI) / 180;
+    const to = {
+      x: at.x + Math.cos(a) * ENEMY.approachDistance,
+      y: at.y + Math.sin(a) * ENEMY.approachDistance,
+    };
+    if (blockedByObstacles(at, to, ARROW_RADIUS, obstacles)) blocked += 2;
+  }
+  return blocked;
+};
+
+/** 물러나 벽에 붙은 자리에서, 그 방향의 가림 각. */
+const coverToward = (deg: number, map: ArenaMap): number => {
+  const a = (deg * Math.PI) / 180;
+  return cover({ x: Math.cos(a) * RETREAT, y: Math.sin(a) * RETREAT }, map.obstacles);
+};
+
+/** 사람이 설 수 있는 자리 전부를 훑어, 가장 가려지는 자리를 찾는다. */
+const deepestShade = (map: ArenaMap): { deg: number; at: { x: number; y: number } } => {
+  let best = { deg: -1, at: { x: 0, y: 0 } };
+  for (let x = -ARENA.radius; x <= ARENA.radius; x += 0.5) {
+    for (let y = -ARENA.radius; y <= ARENA.radius; y += 0.5) {
+      const at = { x, y };
+      if (Math.hypot(x, y) > ARENA.radius - PLAYER.radius) continue;
+      if (insideObstacle(at, PLAYER.radius, map.obstacles)) continue;
+      const deg = cover(at, map.obstacles);
+      if (deg > best.deg) best = { deg, at };
+    }
+  }
+  return best;
+};
+
+describe('가림 — 어느 맵도 요새를 만들지 않는다', () => {
+  /**
+   * **아레나 어디에 서도 절반 넘게 가려지지 않는다.**
+   *
+   * 반이 열려 있으면 적은 늘 돌아가서 쏠 자리가 있다. 반 넘게 가려지는 자리가 하나라도
+   * 생기면 거기서는 손을 놓고 서 있어도 화살이 오지 않고, 그 자리에서만 DESIGN 5번
+   * ("가만히 서 있으면 쓰러진다")이 다른 게임이 된다.
+   *
+   * 180도는 재서 맞춘 값이 아니라 **"열린 반쪽이 남는다"는 규칙 그 자체**다.
+   * 실측은 빈 뜰 0도 · 기둥 뜰 152도 · 그늘 뜰 152도.
+   */
+  for (const map of MAPS) {
+    it(`${map.name} — 반 넘게 가려지는 자리가 없다`, () => {
+      const worst = deepestShade(map);
+      console.log(
+        `  ${map.name.padEnd(6)} 가장 깊은 그늘 ${worst.deg}도 @(${worst.at.x},${worst.at.y})`,
+      );
+      expect(worst.deg, `${map.id}에 요새가 생겼다`).toBeLessThan(180);
+    });
+  }
+
+  it('자에 이가 있다 — 버린 배치(셋을 90도 안에 굵게)는 걸린다', () => {
+    // 세션 47이 처음 세운 그늘 뜰이다. 셋의 그늘이 겹쳐 206도짜리 굴이 생겼고,
+    // 거기 숨어 서면 손을 놓고도 168초를 버텼다(빈 뜰 39 · 기둥 뜰 134).
+    const rejected = [45, 90, 135].map((deg) => {
+      const a = (deg * Math.PI) / 180;
+      return { x: Math.cos(a) * 17, y: Math.sin(a) * 17, radius: 3.9 };
+    });
+    expect(deepestShade({ ...DEFAULT_MAP, obstacles: rejected }).deg).toBeGreaterThanOrEqual(180);
+  });
+});
+
+describe('그늘 뜰 — 물러날 곳이 둘로 갈린다', () => {
+  /**
+   * 이 맵이 있는 이유 전부가 여기 있다. 앞의 두 맵은 **어느 방향으로 돌아도 같은 맵**이라
+   * 물러날 때 고를 것이 없다 — 빈 뜰은 어디나 0도, 기둥 뜰은 어디나 50~68도다.
+   * 그늘 뜰만 한쪽이 기둥 뜰이고 반대쪽이 빈 뜰이다.
+   *
+   * 여기가 무너지면 이 맵은 기둥 수만 다른 기둥 뜰이 된다.
+   */
+  const SHADE = [15, 45, 75, 105, 135];
+  const OPEN = [195, 225, 255, 285, 315];
+
+  it('그늘 쪽은 기둥 뜰만큼 가리고, 트인 쪽은 빈 뜰처럼 하나도 안 가린다', () => {
+    const shade = findMap('shade');
+    const pillars = findMap('pillars');
+    const shadeSide = SHADE.map((d) => coverToward(d, shade));
+    const openSide = OPEN.map((d) => coverToward(d, shade));
+    const ring = SHADE.concat(OPEN).map((d) => coverToward(d, pillars));
+    console.log(
+      `  그늘 뜰 — 그늘 쪽 ${Math.min(...shadeSide)}~${Math.max(...shadeSide)}도 · ` +
+        `트인 쪽 ${Math.min(...openSide)}~${Math.max(...openSide)}도 · ` +
+        `기둥 뜰(견줌) ${Math.min(...ring)}~${Math.max(...ring)}도`,
+    );
+
+    expect(Math.min(...shadeSide), '그늘 쪽이 가리지 않는다').toBeGreaterThanOrEqual(
+      Math.min(...ring),
+    );
+    expect(Math.max(...openSide), '트인 쪽에도 가림이 있다').toBe(0);
+  });
+
+  it('앞의 두 맵은 어느 쪽으로 물러나도 같다 — 고를 것이 없다', () => {
+    // 견줌이 없으면 위 검사가 "그늘 뜰이 특별한가"를 말하지 못한다.
+    for (const map of [DEFAULT_MAP, findMap('pillars')]) {
+      const ring = SHADE.concat(OPEN).map((d) => coverToward(d, map));
+      expect(Math.max(...ring) - Math.min(...ring), `${map.id}는 방향에 따라 갈린다`).toBeLessThan(
+        30,
+      );
+    }
+  });
 });
 
 describe('기둥 규칙 — 몸도 화살도 코어도 지나가지 못한다', () => {
