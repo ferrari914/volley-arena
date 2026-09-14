@@ -480,6 +480,17 @@ const BODY_LOOK: Record<EnemyKind, { color: number; cap: number; height: number;
     },
   };
 
+/**
+ * 적 종류를 런타임에 훑을 수 있는 **하나뿐인 목록**(DESIGN 9번).
+ *
+ * `EnemyKind`는 타입이라 돌아가는 코드에서는 훑을 수 없고, 그렇다고 따로 적어 두면
+ * 종류가 늘 때 한쪽만 고치는 날이 온다 — 실제로 왔다. 폭탄병이 들어온 뒤에도
+ * `tools/enemy-shot.mjs`는 세 종류만 알고 있어서 **새 적을 찍을 방법이 없었다.**
+ * 그래서 `BODY_LOOK`에서 뽑는다. 저 표는 `Record<EnemyKind, …>`라 종류를 하나 빠뜨리면
+ * 타입 검사가 먼저 막는다. 목록이 그 표를 따라오므로 두 곳이 어긋날 자리가 없다.
+ */
+export const ENEMY_KINDS = Object.keys(BODY_LOOK) as EnemyKind[];
+
 /** 종류별 몸의 모양. 반지름은 어느 것도 `ENEMY.radius`를 넘지 않는다(판정이 하나다). */
 function bodyGeometry(kind: EnemyKind, height: number): THREE.BufferGeometry {
   if (kind === 'charger')

@@ -1,8 +1,9 @@
 /**
  * 적을 눈으로 보려고 만든 도구다. 두 가지를 찍는다.
  *
- *   npm run shot:enemy                      # 세 종류를 한 마리씩 가까이서
+ *   npm run shot:enemy                      # 네 종류를 한 마리씩 가까이서
  *   npm run shot:enemy -- shield calm worn flash aim
+ *   npm run shot:enemy -- bomber aim flash  # 심지가 타는 동안과 터진 자국
  *   npm run shot:enemy -- crowd             # 적이 상한(17마리)까지 찬 화면
  *   npm run shot:enemy -- crowd 13
  *   npm run shot:enemy -- crowd veteran     # 그 자리까지 실제로 싸워 올라간 사람의 화면
@@ -32,8 +33,16 @@ import { startMatch } from './lib/start.mjs';
 const PORT = 4187;
 const OUT = 'shots';
 
-/** 붙들 수 있는 상태들. 종류마다 해당 없는 것은 조용히 지나간다. */
+/**
+ * 붙들 수 있는 상태들. 종류마다 해당 없는 것은 조용히 지나간다.
+ *
+ * **`aim`과 `flash`는 종류마다 다른 것을 뜻한다** — 붙드는 것이 "잠깐 스치는 상태"이지
+ * 어떤 한 가지 값이 아니기 때문이다. `aim`은 활잡이에게는 겨눔이고 폭탄병에게는 타는
+ * 심지이며, `flash`는 방패병에게는 받아 낸 순간이고 폭탄병에게는 터진 자국이다.
+ */
 const STATES = ['live', 'calm', 'aim', 'worn', 'flash'];
+/** 적 종류(DESIGN 9번). `data/config.ts`에 하나 늘 때마다 여기에도 넣는다. */
+const KINDS = ['archer', 'charger', 'shield', 'bomber'];
 /** 무리 화면의 기본 목표 수. `REINFORCE`의 상한(5 + maxExtra)과 같은 값이다. */
 const CROWD_DEFAULT = 17;
 /**
@@ -47,9 +56,9 @@ const argv = process.argv.slice(2);
 const crowd = argv.includes('crowd');
 /** 무리 화면을 **실제로 싸워 올라간 사람**으로 찍는가(위 `crowdProbe` 머리말). */
 const veteran = argv.includes('veteran');
-const kind = argv.find((a) => ['archer', 'charger', 'shield'].includes(a));
+const kind = argv.find((a) => KINDS.includes(a));
 const states = argv.filter((a) => STATES.includes(a));
-const kinds = kind ? [kind] : ['archer', 'charger', 'shield'];
+const kinds = kind ? [kind] : KINDS;
 const wanted = states.length > 0 ? states : ['live'];
 const crowdCount = Number(argv.find((a) => /^\d+$/.test(a)) ?? CROWD_DEFAULT);
 /**
@@ -66,17 +75,27 @@ const mapSuffix = mapId === 'open' ? '' : `-${mapId}`;
  * **적보다 카메라 쪽(+y)에** 세운다.
  */
 function closeUpProbe({ kind, state }) {
+  /**
+   * **폭탄병의 자국만은 쓰러진 몸에서 찾는다.** 제 몸이 폭탄이라 터진 그 프레임에 눕고
+   * (`stepBomber`), 산 적만 찾으면 다음 프레임부터 이 함수가 그냥 돌아가 버린다 —
+   * 그러면 카메라를 붙들어 줄 사람이 없어 자국이 화면 밖에서 사라진다.
+   */
+  const holdDead = kind === 'bomber' && state === 'flash';
+
   return (world) => {
-    const target = world.enemies.find((e) => e.kind === kind && e.alive);
+    const target = world.enemies.find((e) => e.kind === kind && (e.alive || holdDead));
     if (!target) return;
     world.player.pos.x = target.pos.x;
     world.player.pos.y = target.pos.y + 5.5;
     // 판이 끝나 버리면 화면이 결과 화면으로 바뀐다. 찍는 동안에는 죽지 않는다.
+    // (폭탄병의 자국을 찍을 때는 실제로 한 대 맞으므로 이 한 줄이 특히 필요하다.)
     world.player.hp = world.player.maxHp;
-    target.hp = target.maxHp;
+    if (target.alive) target.hp = target.maxHp;
 
     if (state === 'calm' || state === 'worn') world.arrows.length = 0;
     if (state === 'calm') target.shieldFlash = 0;
+    // 폭탄병에게 이것은 타는 심지다(`BOMBER.fuse` 0.9). 매 프레임 되채우므로 터지지 않고,
+    // 발밑에 터질 원(`blastRadius`)이 그대로 그려진 채로 멎어 있다 — 그 원이 이 적의 예고다.
     if (state === 'aim') target.aimTimer = 0.4;
     if (state === 'worn') {
       target.shieldHp = 1;
@@ -84,7 +103,17 @@ function closeUpProbe({ kind, state }) {
     }
     if (state === 'flash') {
       world.arrows.length = 0;
-      target.shieldFlash = 1;
+      if (kind !== 'bomber') target.shieldFlash = 1;
+      else if (world.blasts.length === 0 && target.alive) {
+        // 이번 스텝에 심지가 다 탄다(`stepBomber`가 0 아래로 내리는 그 프레임에 터진다).
+        target.aimTimer = 1 / 120;
+      } else {
+        // 자국은 0.35초만 남는다(`BOMBER.flashTime`) — 기다렸다 찍으면 이미 없다.
+        // 나이를 붙들어 갓 터진 프레임에 세워 둔다. 게임이 아니라 도구가 하는 일이다.
+        for (const blast of world.blasts) blast.age = 0;
+        // 다시 서면 자국에서 멀어져 카메라가 따라가 버린다. 누운 자리에 그대로 둔다.
+        target.respawnTimer = 99;
+      }
     }
   };
 }
