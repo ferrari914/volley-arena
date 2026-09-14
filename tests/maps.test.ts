@@ -181,7 +181,7 @@ describe('가림 — 어느 맵도 요새를 만들지 않는다', () => {
    * ("가만히 서 있으면 쓰러진다")이 다른 게임이 된다.
    *
    * 180도는 재서 맞춘 값이 아니라 **"열린 반쪽이 남는다"는 규칙 그 자체**다.
-   * 실측은 빈 뜰 0도 · 기둥 뜰 152도 · 그늘 뜰 152도.
+   * 실측은 빈 뜰 0도 · 기둥 뜰 150도 · 그늘 뜰 150도(버린 초안 206도).
    */
   for (const map of MAPS) {
     it(`${map.name} — 반 넘게 가려지는 자리가 없다`, () => {
@@ -194,13 +194,15 @@ describe('가림 — 어느 맵도 요새를 만들지 않는다', () => {
   }
 
   it('자에 이가 있다 — 버린 배치(셋을 90도 안에 굵게)는 걸린다', () => {
-    // 세션 47이 처음 세운 그늘 뜰이다. 셋의 그늘이 겹쳐 206도짜리 굴이 생겼고,
+    // 그늘 뜰의 초안이다. 셋을 90도 안에 굵게 세웠더니 그늘이 겹쳐 206도짜리 굴이 생겼고,
     // 거기 숨어 서면 손을 놓고도 168초를 버텼다(빈 뜰 39 · 기둥 뜰 134).
     const rejected = [45, 90, 135].map((deg) => {
       const a = (deg * Math.PI) / 180;
       return { x: Math.cos(a) * 17, y: Math.sin(a) * 17, radius: 3.9 };
     });
-    expect(deepestShade({ ...DEFAULT_MAP, obstacles: rejected }).deg).toBeGreaterThanOrEqual(180);
+    const worst = deepestShade({ ...DEFAULT_MAP, obstacles: rejected });
+    console.log(`  버린 초안 가장 깊은 그늘 ${worst.deg}도 @(${worst.at.x},${worst.at.y})`);
+    expect(worst.deg).toBeGreaterThanOrEqual(180);
   });
 });
 
