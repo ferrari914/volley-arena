@@ -31,9 +31,25 @@ import { insideObstacle, pushOutOfObstacles, sightBlocker } from './obstacles';
  * 기둥에 가려 화살이 닿지 못하면 겨누지 않고 **옆으로 돌아 시야를 되찾는다**
  * (`clearSightMove`). 이것이 없으면 기둥 뒤에 선 사람에게 적이 화살을 기둥에
  * 먹이며 제자리에 서 있어, 손을 놓고도 세 배를 버티는 자리가 맵마다 생긴다.
+ *
+ * **그 물음은 두 번 묻는다 — 나에게 보이는가, 그리고 화면에 보이는가**(세션 50).
+ * 화면 밖에 선 적도 겨누기를 시작하지 않는다(`outOfView`). `fireRange`(15)가
+ * 화면이 뒤로 보여 주는 거리(12.4m)보다 길어서, 뒤쪽 15m에 선 적은 **화면 밖에서
+ * 멈춰 겨누고 쏘았다.** 기둥에 가린 것과 같은 종류의 일이다 — 예고를 볼 수 없으면
+ * 피할 방법이 없다. 다른 것은 그다음 걸음뿐이다: 가려 있으면 시야를 되찾으러 돌고,
+ * 화면 밖이면 그냥 다가온다(화면 밖은 언제나 `approachDistance` 밖이다).
  * **돌진형에는 이 구간이 없다.** 물러나지도 옆으로 돌지도 않고 곧장 온다 —
  * 그것이 활잡이와 정반대인 지점이고, 둘이 함께 있어야 하는 이유다.
  */
+/**
+ * 화면이 플레이어 앞뒤로 보여 주는 거리(m). 값은 `data/config.ts`의 `VIEW`에서 온다.
+ * 좌우가 없는 이유도 거기 적어 두었다 — 겨누는 거리 안에서는 한 번도 걸리지 않는다.
+ */
+export interface ViewWindow {
+  forward: number;
+  back: number;
+}
+
 export interface EnemyStepOptions {
   dt: number;
   playerPos: Vec2;
@@ -62,6 +78,11 @@ export interface EnemyStepOptions {
   shield: ShieldOptions;
   /** 이 맵에 선 기둥들(DESIGN 10번). 적의 몸도 플레이어와 같은 규칙으로 막힌다. */
   obstacles: readonly Obstacle[];
+  /**
+   * 화면이 플레이어 앞뒤로 보여 주는 거리(m · `data/config.ts`의 `VIEW`).
+   * **적이 겨누기를 시작해도 되는지만 가른다** — 어떻게 움직이는지는 이 값을 보지 않는다.
+   */
+  view: ViewWindow;
   /**
    * 화살의 굵기(m). **시야를 재는 데 쓴다** — 적이 "보인다"고 판단하는 선과 화살이
    * 실제로 기둥에 막히는 선(`combat.ts`)이 같아야, 쏜 화살이 기둥에 박히는 일이 없다.
@@ -174,7 +195,16 @@ export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyS
     // 지금 기둥에 가려 있는가. 겨눌지 말지와 어디로 움직일지를 둘 다 이것이 가른다.
     const blocker = sightBlocker(enemy.pos, playerPos, sightWidth(dist, options), options.obstacles);
 
-    const shot = updateFiring(enemy, dist, options, options, blocker !== null);
+    // 가려 있는 것과 화면 밖에 있는 것은 **같은 종류의 일이다** — 둘 다 예고를 볼 수 없다.
+    // 그래서 겨누기를 시작하는 쪽에서는 하나로 묶고, 움직이는 쪽에서는 가른다
+    // (가려 있으면 시야를 되찾으러 옆으로 돌고, 화면 밖이면 그냥 다가온다 — 아래 `outOfView`).
+    const shot = updateFiring(
+      enemy,
+      dist,
+      options,
+      options,
+      blocker !== null || outOfView(enemy, playerPos, options.view),
+    );
     if (shot) result.shots.push(shot);
 
     // 겨누는 동안에는 멈춰 선다. 이것이 "지금 나를 노리고 있다"는 유일한 예고다.
@@ -293,7 +323,13 @@ function stepShield(
     sightWidth(dist, options),
     options.obstacles,
   );
-  const shot = updateFiring(enemy, dist, options, shield, blocker !== null);
+  const shot = updateFiring(
+    enemy,
+    dist,
+    options,
+    shield,
+    blocker !== null || outOfView(enemy, options.playerPos, options.view),
+  );
 
   // 겨누는 동안에는 멈춰 선다. 활잡이와 같은 예고다.
   //   보이지 않는다 → 옆으로 돌아 시야를 되찾는다 (아래 `clearSightMove`)
@@ -381,13 +417,17 @@ function updateFiring(
   options: EnemyStepOptions,
   timing: FiringTiming,
   /**
-   * 기둥에 가려 화살이 닿지 못하는가(DESIGN 10번). 가려 있으면 **겨누기를 시작하지 않는다.**
+   * **플레이어가 이 적의 예고를 볼 수 없는가.** 두 가지가 여기 하나로 묶인다 —
+   * 기둥에 가려 화살이 닿지 못하거나(DESIGN 10번 · `sightBlocker`),
+   * 적이 화면 밖에 서 있거나(`outOfView`). 둘 중 하나라도 참이면
+   * **겨누기를 시작하지 않는다.**
    *
    * **이미 겨누고 있던 것은 끝까지 놓는다.** 겨눔은 "지금 너를 노린다"는 약속이고,
-   * 그 0.5초 사이에 기둥 뒤로 몸을 숨긴 사람은 **약속을 보고 피한 것**이다 —
-   * 여기서 거둬들이면 예고가 거짓이 되고, 숨어서 피하는 것이 피한 것으로 세어지지 않는다.
+   * 그 0.5초 사이에 기둥 뒤로 몸을 숨긴 사람도, 달려서 화면 밖으로 밀어낸 사람도
+   * **약속을 보고 피한 것**이다 — 여기서 거둬들이면 예고가 거짓이 되고,
+   * 피한 것이 피한 것으로 세어지지 않는다.
    */
-  sightBlocked: boolean,
+  unseen: boolean,
 ): EnemyShot | null {
   if (enemy.aimTimer > 0) {
     enemy.aimTimer -= options.dt;
@@ -407,7 +447,7 @@ function updateFiring(
   }
 
   if (enemy.fireCooldown > 0) enemy.fireCooldown -= options.dt;
-  if (!sightBlocked && enemy.fireCooldown <= 0 && options.playerAlive && dist <= timing.fireRange) {
+  if (!unseen && enemy.fireCooldown <= 0 && options.playerAlive && dist <= timing.fireRange) {
     enemy.aimTimer = timing.aimTime;
   }
   return null;
@@ -440,6 +480,27 @@ function desiredMove(
   // 전부 같은 쪽으로 돌면서 한 줄로 뭉치는 것을 막는다.
   const side = enemy.id % 2 === 0 ? 1 : -1;
   return { x: -dir.y * side * options.strafeRatio, y: dir.x * side * options.strafeRatio };
+}
+
+/**
+ * **플레이어의 화면 밖에 서 있는가.** 그렇다면 겨누기를 시작하지 않는다(DESIGN 품질 기준의
+ * "처음 하는 사람이 설명 없이 30초 안에" — 예고를 볼 수 없으면 피할 방법이 없다).
+ *
+ * **화면 세로 방향만 본다.** 쿼터뷰 카메라는 돌지 않으므로 화면의 위아래가 곧 월드의 -y/+y다.
+ * 좌우를 보지 않는 이유는 `VIEW` 주석에 있다 — 겨누는 거리(15m) 안에서는 좌우가 한 번도
+ * 걸리지 않는다(가장 좁은 16:9에서도 화면 맨 아랫줄의 폭이 ±12.5m다).
+ *
+ * **거리가 아니라 자리로 재는 이유**: `fireRange`를 줄이면 사방이 함께 줄어든다. 안 보이는
+ * 것은 한 방향뿐인데(실측 — 화면 아래쪽 칸 42.5% · 나머지 일곱 칸 0~3.0%) 사방을 줄이면
+ * 적이 전부 3m씩 더 파고들어야 하는 다른 게임이 된다.
+ *
+ * **움직임은 이 값을 보지 않는다.** 화면 밖이면 곧 `approachDistance`(12) 밖이므로
+ * (`VIEW.back` 12.3 > 12) 적은 이미 다가오는 중이다 — 가만히 굳는 자리가 생기지 않는다.
+ * 그 관계는 `tests/camera.test.ts`가 지킨다.
+ */
+function outOfView(enemy: Enemy, playerPos: Vec2, view: ViewWindow): boolean {
+  const dy = enemy.pos.y - playerPos.y;
+  return dy > view.back || dy < -view.forward;
 }
 
 /**

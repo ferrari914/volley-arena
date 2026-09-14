@@ -11,6 +11,7 @@ import {
   REVIVE,
   SHIELD,
   UPGRADE,
+  VIEW,
 } from '../data/config';
 import { DEFAULT_MAP, type ArenaMap } from '../data/maps';
 import { UPGRADE_CARDS } from '../data/upgrades';
@@ -583,6 +584,9 @@ export class World {
       charger: CHARGER,
       shield: SHIELD,
       obstacles: this.map.obstacles,
+      // 적이 겨누기를 시작해도 되는 창(`data/config.ts`의 `VIEW`). 게임이 화면을 아는
+      // 유일한 자리다 — 화면 밖에서 시작된 예고는 아무도 볼 수 없다.
+      view: VIEW,
       // 화살이 막히는 판정(`updateCombat`)과 같은 굵기다. 시야를 그보다 후하게 재면
       // 적이 "보인다"고 믿고 쏜 화살이 기둥에 박힌다.
       arrowRadius: ARROW.radius,

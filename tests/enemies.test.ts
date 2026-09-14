@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA, ARROW, CHARGER, ENEMY, PLAYER, SHIELD } from '../src/data/config';
+import { ARENA, ARROW, CHARGER, ENEMY, PLAYER, SHIELD, VIEW } from '../src/data/config';
 import { createEnemy, type Enemy, type Obstacle } from '../src/entities/types';
 import { stepEnemies, type EnemyStepOptions } from '../src/systems/enemyAi';
 import { sightBlocker } from '../src/systems/obstacles';
@@ -39,6 +39,7 @@ function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
     contactRadius: ENEMY.radius + PLAYER.radius,
     charger: CHARGER,
     shield: SHIELD,
+    view: VIEW,
     // 흔들림 없이 곧장 겨눈다. 판정을 볼 때 난수가 끼면 무엇을 보고 있는지 흐려진다.
     random: () => 0.5,
     ...overrides,
@@ -577,5 +578,86 @@ describe('가림 — 적은 맞힐 수 없는 곳에 쏘지 않는다', () => {
     const before = { ...enemy.pos };
     run([enemy], 3, { obstacles: between });
     expect(Math.hypot(enemy.pos.x - before.x, enemy.pos.y - before.y)).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * **화면 밖 — 적은 아무도 못 보는 예고를 하지 않는다** (세션 50).
+ *
+ * 기둥에 가린 것과 같은 종류의 일이다(위 `가림`). 다른 것은 막는 쪽이 기둥이 아니라
+ * 화면의 끝이라는 것뿐이고, 그래서 자도 기둥이 아니라 `VIEW`다.
+ *
+ * **쿼터뷰 카메라는 돌지 않으므로 화면의 위아래가 곧 월드의 -y/+y다.**
+ * 화면 아래쪽(플레이어 뒤 · +y)이 12.3m로 가장 좁고, 활잡이의 사거리는 15m다 —
+ * 그 사이(12.3~15m)가 **화면 밖에서 겨누던 자리**다.
+ */
+describe('화면 밖 — 적은 아무도 못 보는 예고를 하지 않는다', () => {
+  /** 뒤쪽 창(12.3m) 밖이면서 사거리(15m) 안인 자리. 고치기 전에는 여기서 쐈다. */
+  const BEHIND = VIEW.back + 1.5;
+
+  it('화면 아래쪽 끝 너머에 서면 겨누지도 쏘지도 않는다', () => {
+    // 발을 묶어 둔다(speed 0). 그러지 않으면 걸어 들어와 쏘게 되어,
+    // 이 검사가 "쏘지 않는다"가 아니라 "늦게 쏜다"를 재게 된다.
+    const enemy = enemyAt(0, BEHIND);
+    const shots = run([enemy], 5, { speed: 0 });
+    expect(shots.length, '화면 밖에서 쐈다').toBe(0);
+    expect(enemy.aimTimer, '아무도 못 보는데 겨누고 있다').toBe(0);
+  });
+
+  it('같은 거리라도 옆에 서면 쏜다 (자에 이가 있다)', () => {
+    // 거리는 똑같고 방향만 다르다 — 자르는 것이 거리가 아니라 **화면**이라는 뜻이다.
+    // (좌우는 화면이 훨씬 넓다. `tests/camera.test.ts`가 그것을 격자로 증명한다.)
+    const enemy = enemyAt(BEHIND, 0);
+    expect(run([enemy], 5, { speed: 0 }).length).toBeGreaterThan(0);
+  });
+
+  it('화면 위쪽 끝 너머도 마찬가지다', () => {
+    const enemy = enemyAt(0, -(VIEW.forward + 0.3));
+    const shots = run([enemy], 5, { speed: 0 });
+    expect(shots.length, '화면 위쪽 밖에서 쐈다').toBe(0);
+  });
+
+  it('화면 밖에서는 굳지 않고 걸어 들어와 쏜다', () => {
+    // 화면 밖은 언제나 다가오는 거리(approachDistance 12m) 밖이므로, 적은 이미
+    // 다가오는 중이다 — 여기에 따로 "화면 안으로 걸어라"를 만들 필요가 없다.
+    // 그 관계(VIEW.back > approachDistance)는 `tests/camera.test.ts`가 지킨다.
+    const enemy = enemyAt(0, BEHIND);
+    // **첫 발이 떠난 그 프레임의 자리**를 본다. 마지막 자리만 보면 "화면 밖에서 쏘고 나서
+    // 걸어 들어온" 것도 통과한다(가림 쪽 검사가 같은 이유로 첫 발의 자리를 본다).
+    // 겨누는 동안에는 멈춰 서므로 쏘는 자리가 곧 겨누기 시작한 자리다.
+    let firedAt: number | null = null;
+    for (let i = 0; i < Math.round(6 / DT) && firedAt === null; i += 1) {
+      const y = enemy.pos.y;
+      if (stepEnemies([enemy], options()).shots.length > 0) firedAt = y;
+    }
+    expect(firedAt, '끝내 쏘지 못했다 — 화면 밖에서 굳었다').not.toBeNull();
+    expect(firedAt ?? 0, '화면 안으로 들어오지 않고 쐈다').toBeLessThanOrEqual(VIEW.back);
+  });
+
+  it('겨누기 시작한 뒤에 화면 밖으로 밀려나도 그 한 발은 놓는다 (예고는 약속이다)', () => {
+    // 달려서 적을 화면 밖으로 밀어낸 사람은 **예고를 보고 피한 것**이다.
+    // 여기서 거둬들이면 예고가 거짓이 되고, 피한 것이 피한 것으로 세어지지 않는다.
+    // (기둥 뒤로 숨은 경우와 같은 규칙이다 — 위 `가림`의 마지막 검사.)
+    const enemy = enemyAt(0, VIEW.back - 1);
+    for (let i = 0; i < Math.round(10 / DT) && enemy.aimTimer <= 0; i += 1) {
+      stepEnemies([enemy], options({ speed: 0 }));
+    }
+    expect(enemy.aimTimer).toBeGreaterThan(0);
+    // 플레이어가 앞으로 달아나 적이 화면 아래쪽 밖으로 밀려난 것과 같다.
+    const shots = run([enemy], ENEMY.aimTime + 0.1, {
+      speed: 0,
+      playerPos: { x: 0, y: -(BEHIND - (VIEW.back - 1)) },
+    });
+    expect(shots.length, '겨누던 화살을 거둬들였다').toBe(1);
+  });
+
+  it('방패병도 화면 밖에서는 겨누지 않는다', () => {
+    // 방패병의 사거리는 11m라 평소에는 이 창에 닿지 않는다(`tests/camera.test.ts`).
+    // 그래도 규칙은 하나여야 한다 — 종류마다 예고의 규칙이 다르면 매번 새로 배워야 한다.
+    // 사거리를 활잡이만큼 늘려 세우고 발을 묶는다(방패병은 제 `shield.speed`로 걷는다).
+    const enemy = shieldAt(0, BEHIND);
+    const shots = run([enemy], 5, { shield: { ...SHIELD, fireRange: 15, speed: 0 } });
+    expect(shots.length, '화면 밖에서 쐈다').toBe(0);
+    expect(enemy.aimTimer, '아무도 못 보는데 겨누고 있다').toBe(0);
   });
 });
