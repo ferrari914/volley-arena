@@ -518,6 +518,141 @@ describe('방패병', () => {
 });
 
 /**
+ * **폭탄병** (DESIGN 9번 · 넷째 종류).
+ *
+ * 여기 있는 것은 **한 프레임의 규칙**이다 — 언제 불을 붙이고, 붙은 불이 무엇을 하는가.
+ * 그 원이 누구에게 닿는지(맞히는 원과 그리는 원이 같은가 · 스스로 터진 것은 처치가
+ * 아니라는 것)는 World의 일이라 `tests/world.test.ts`가 잰다.
+ *
+ * **앞의 셋과 갈리는 자리를 골라 잰다.** 같은 것(다가온다 · 예고한다 · 저지른다)은
+ * 이미 위에서 재고 있으므로, 여기서는 **폭탄병이 아니면 참이 아닌 것**만 못 박는다:
+ * 한 번 붙은 불은 꺼지지 않는다 · 그 자리에서 터진다 · 터지면 제 몸도 눕는다.
+ */
+describe('폭탄병', () => {
+  /** 폭탄병 한 마리(DESIGN 9번). 활잡이와 같은 자리에 세워 두고 행동만 비교한다. */
+  const bomberAt = (x: number, y: number): Enemy =>
+    createEnemy(nextId++, x, y, BOMBER.maxHp, 'bomber');
+
+  /** seconds초 동안 돌리고 그동안 터진 것을 모아 돌려준다. */
+  function runBlasts(enemies: Enemy[], seconds: number, overrides: Partial<EnemyStepOptions> = {}) {
+    const blasts = [];
+    for (let i = 0; i < Math.round(seconds / DT); i += 1) {
+      blasts.push(...stepEnemies(enemies, options(overrides)).blasts);
+    }
+    return blasts;
+  }
+
+  it('터질 원이 붙어 서는 자리보다 넓다 (옆으로 도는 것으로는 못 벗어난다)', () => {
+    // 이 적이 요구하는 것이 이 부등호 하나다 — 같거나 좁으면 불을 붙인 자리에
+    // 가만히 서 있어도 아무 일이 없고, 그러면 "물러나라"가 아니라 "무시하라"가 된다.
+    expect(BOMBER.blastRadius).toBeGreaterThan(BOMBER.triggerRange + PLAYER.radius);
+  });
+
+  it('화살을 쏘지 않는다 (몸이 폭탄이다)', () => {
+    const enemy = bomberAt(6, 0);
+    expect(run([enemy], 10)).toHaveLength(0);
+  });
+
+  it('물러나지도 옆으로 돌지도 않고 곧장 다가온다 (돌진형과 같다)', () => {
+    // 활잡이라면 물러날 거리(keepDistance 안쪽)에 세워 둔다.
+    const enemy = bomberAt(ENEMY.keepDistance - 2, 0);
+    const before = enemy.pos.x;
+    run([enemy], 0.4);
+    expect(enemy.pos.x).toBeLessThan(before - 0.5);
+    expect(Math.abs(enemy.pos.y)).toBeLessThan(0.01);
+  });
+
+  it('붙는 거리 밖에서는 불을 붙이지 않는다 (걸어오는 동안은 안전하다)', () => {
+    const enemy = bomberAt(BOMBER.triggerRange + 4, 0);
+    // 한 발짝만 돌린다 — 더 돌리면 걸어 들어와서 무엇을 보고 있는지 흐려진다.
+    expect(runBlasts([enemy], DT)).toHaveLength(0);
+    expect(enemy.aimTimer).toBe(0);
+  });
+
+  it('붙으면 멈춰 서서 심지를 태운다 (그 멈춤이 유일한 예고다)', () => {
+    const enemy = bomberAt(BOMBER.triggerRange - 0.5, 0);
+    run([enemy], DT);
+    expect(enemy.aimTimer).toBeCloseTo(BOMBER.fuse, 5);
+
+    // 타는 동안에는 발이 멎는다. 예고가 곧 멈춤이라는 규칙은 종류를 가리지 않는다.
+    const before = { ...enemy.pos };
+    run([enemy], BOMBER.fuse / 2);
+    expect(Math.hypot(enemy.pos.x - before.x, enemy.pos.y - before.y)).toBeLessThan(1e-6);
+  });
+
+  it('심지가 다 타면 서 있던 그 자리에서 터지고, 제 몸도 눕는다', () => {
+    const enemy = bomberAt(BOMBER.triggerRange - 0.5, 0);
+    run([enemy], DT);
+    const stood = { ...enemy.pos };
+
+    const blasts = runBlasts([enemy], BOMBER.fuse + DT);
+    expect(blasts).toHaveLength(1);
+    expect(blasts[0]?.at.x).toBeCloseTo(stood.x, 5);
+    expect(blasts[0]?.at.y).toBeCloseTo(stood.y, 5);
+    expect(blasts[0]?.radius).toBe(BOMBER.blastRadius);
+    // 제 몸이 폭탄이므로 여기서 눕는다. 화살에 쓰러진 적과 같은 자리로 간다.
+    expect(enemy.alive).toBe(false);
+    // 터진 그 프레임 뒤로 한 프레임이 더 돌아 있으므로 딱 맞추지 않는다.
+    expect(enemy.respawnTimer).toBeGreaterThan(ENEMY.respawnDelay - 2 * DT);
+  });
+
+  it('한 번 붙은 불은 꺼지지 않는다 — 달아나도 그 자리에서 터진다', () => {
+    // **이것이 "물러나라"를 답으로 만드는 규칙이다.** 따라가며 터지면 물러나는 것이
+    // 답이 아니게 되고, 그러면 예고를 봐도 할 수 있는 일이 없다.
+    const enemy = bomberAt(BOMBER.triggerRange - 0.5, 0);
+    run([enemy], DT);
+    const lit = { ...enemy.pos };
+
+    // 심지가 타는 동안 플레이어가 원 밖으로 달아난다.
+    const far = { x: 0, y: -(BOMBER.blastRadius + 6) };
+    const blasts = runBlasts([enemy], BOMBER.fuse + DT, { playerPos: far });
+    expect(blasts).toHaveLength(1);
+    expect(blasts[0]?.at.x).toBeCloseTo(lit.x, 5);
+    expect(blasts[0]?.at.y).toBeCloseTo(lit.y, 5);
+    // 그 자리는 달아난 사람에게서 원 밖이다 — 맞고 안 맞고는 World가 가른다.
+    expect(Math.hypot(far.x - lit.x, far.y - lit.y)).toBeGreaterThan(BOMBER.blastRadius);
+  });
+
+  it('심지가 타는 동안 쓰러뜨리면 터지지 않는다 (쏘는 쪽 답)', () => {
+    const enemy = bomberAt(BOMBER.triggerRange - 0.5, 0);
+    run([enemy], DT);
+    expect(enemy.aimTimer).toBeGreaterThan(0);
+
+    // 화살이 몸을 비웠다(`systems/combat.ts`가 하는 일과 같다).
+    enemy.alive = false;
+    enemy.hp = 0;
+    enemy.aimTimer = 0;
+    enemy.respawnTimer = ENEMY.respawnDelay;
+    expect(runBlasts([enemy], BOMBER.fuse + 1)).toHaveLength(0);
+  });
+
+  it('쓰러진 플레이어 앞에서는 불을 붙이지 않는다', () => {
+    const enemy = bomberAt(BOMBER.triggerRange - 0.5, 0);
+    expect(runBlasts([enemy], BOMBER.fuse + 1, { playerAlive: false })).toHaveLength(0);
+    expect(enemy.aimTimer).toBe(0);
+  });
+
+  it('기다리는 동안에는 붙어 선 자리에서 멈춘다 (코앞까지 파고들지 않는다)', () => {
+    // 판이 열린 직후(`ENEMY.startDelay`)와 일어선 사람 앞(`REVIVE.enemyDelay`)이 이 상태다.
+    const enemy = bomberAt(BOMBER.triggerRange - 0.5, 0);
+    enemy.fireCooldown = 5;
+    run([enemy], 2);
+    expect(enemy.aimTimer).toBe(0);
+    // 몸이 플레이어에 겹쳐 서서 비비는 그림이 되면 안 된다.
+    expect(Math.hypot(enemy.pos.x, enemy.pos.y)).toBeGreaterThan(BOMBER.triggerRange - 1);
+  });
+
+  it('기둥에 가려 있어도, 화면 밖이어도 다가와 터진다 (돌진형과 같다)', () => {
+    // 이 적의 예고는 화살이 닿는지와 상관이 없고, 불을 붙이는 자리(3.5m)는 언제나 화면 안이다.
+    // 그래서 활잡이·방패병이 보는 두 가지(가림·창)를 이 적은 묻지 않는다.
+    const blocked: Obstacle[] = [{ x: 2, y: 0, radius: 1 }];
+    const enemy = bomberAt(-(BOMBER.triggerRange - 0.5), 0);
+    enemy.pos = { x: 0, y: -(BOMBER.triggerRange - 0.5) }; // 화면 아래쪽(뒤)에 세운다.
+    expect(runBlasts([enemy], BOMBER.fuse + DT, { obstacles: blocked })).toHaveLength(1);
+  });
+});
+
+/**
  * **적은 맞힐 수 없는 곳에 쏘지 않는다** (DESIGN 10번 · 기둥).
  *
  * 세션 47이 찾은 고장이다: 기둥 뒤에 서면 활잡이가 **기둥에 화살을 먹이며 제자리에 서서**,

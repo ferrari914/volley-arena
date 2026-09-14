@@ -4,6 +4,7 @@ import {
   AIM,
   ARENA,
   ARROW,
+  BOMBER,
   CHARGER,
   CORE,
   ENEMY,
@@ -318,6 +319,85 @@ describe('World', () => {
       expect(Number.isFinite(world.player.pos.x)).toBe(true);
       expect(Math.hypot(world.player.pos.x, world.player.pos.y)).toBeLessThanOrEqual(26);
     }
+  });
+});
+
+/**
+ * **폭탄병이 터진 뒤** (DESIGN 9번 · `World.detonate`).
+ *
+ * 한 프레임의 규칙(언제 불을 붙이고 언제 터지는가)은 `tests/enemies.test.ts`에 있다.
+ * 여기서 재는 것은 **터진 원이 무엇에 닿는가** 하나다 — 그 판단은 World의 일이고
+ * (무적 시간과 코어와 처치 수를 쥔 쪽이 여기다), 이 적이 요구하는 "물러나라"가
+ * 실제로 답이 되는지는 이 세 줄에 걸려 있다.
+ */
+describe('World — 폭탄병이 터진 자리', () => {
+  /** 폭탄병 하나만 세운 판. 다른 적이 있으면 무엇이 체력을 깎았는지 알 수 없다. */
+  const soloBomber = (): World => new World({ enemies: [{ x: 0, y: -8, kind: 'bomber' }] });
+
+  /**
+   * 폭탄병을 `at`에 세우고 **다음 한 스텝에 터뜨린다.**
+   *
+   * 판을 그냥 돌려 기다리지 않는 이유: 자동 조준이 늘 가장 가까운 적을 잡으므로
+   * (걸어오는 이 적이 곧 그 적이다) 혼자 세워 두면 붙기 전에 지워진다 — 그것이 이 적의
+   * 성질이고(`BOMBER.maxHp`), 그 성질 때문에 "터졌을 때 무슨 일이 일어나는가"를
+   * 판으로는 잴 수 없다. 재려는 것은 **터진 원이 무엇에 닿는가** 하나다.
+   */
+  function detonateAt(world: World, at: Vec2): void {
+    const bomber = world.enemies[0]!;
+    bomber.pos = { x: at.x, y: at.y };
+    bomber.fireCooldown = 0;
+    bomber.aimTimer = DT / 2; // 이번 스텝에 심지가 다 탄다.
+    world.step(idle, DT);
+    expect(world.blastsFired).toBe(1);
+  }
+
+  it('원 안에서 터지면 맞는다', () => {
+    const world = soloBomber();
+    detonateAt(world, { x: 0, y: -(BOMBER.blastRadius - 0.5) });
+    expect(world.blastHits).toBe(1);
+    expect(world.player.hp).toBe(PLAYER.maxHp - BOMBER.damage);
+  });
+
+  it('원 밖이면 맞지 않는다 (그리는 원이 곧 맞히는 원이다)', () => {
+    // **이 한 줄이 이 적의 전부다.** 발밑 고리(`render/models.ts`의 `aimRing`)가 그리는
+    // 원과 여기서 재는 원이 같은 값(`BOMBER.blastRadius`)이라, 고리 밖으로 걸어 나간
+    // 사람은 반드시 안 맞는다. 어긋나면 화면에서 이 적을 배울 수 없다.
+    const world = soloBomber();
+    detonateAt(world, { x: 0, y: -(BOMBER.blastRadius + 0.5) });
+    expect(world.blastHits).toBe(0);
+    expect(world.player.hp).toBe(PLAYER.maxHp);
+  });
+
+  it('제 몸을 터뜨린 것은 처치로 세지 않고 코어도 떨구지 않는다', () => {
+    // 가만히 서서 맞아 주는 것이 경험치를 버는 길이 되면 안 된다.
+    const world = soloBomber();
+    detonateAt(world, { x: 0, y: -(BOMBER.blastRadius - 0.5) });
+    expect(world.kills).toBe(0);
+    expect(world.cores.filter((c) => c.origin === 'drop')).toHaveLength(0);
+    // 그래도 눕기는 눕는다 — 다시 설 자리를 잡고 `respawnDelay` 뒤에 돌아온다.
+    expect(world.enemies[0]?.alive).toBe(false);
+  });
+
+  it('쏘아 눕히면 처치로 세고 코어를 떨군다 (터뜨리기 전에 지우는 쪽 답)', () => {
+    // 위 검사의 짝이다. 둘이 함께 있어야 "쏘거나 물러나거나"가 둘 다 값을 갖는다.
+    const world = soloBomber();
+    for (let i = 0; i < 60 * 30 && world.kills === 0; i += 1) world.step(idle, DT);
+    expect(world.kills).toBe(1);
+    expect(world.blastsFired).toBe(0);
+    expect(world.cores.filter((c) => c.origin === 'drop').length).toBeGreaterThan(0);
+  });
+
+  it('터진 자국은 잠깐 남았다 스스로 사라진다 (게임 규칙에 닿지 않는다)', () => {
+    const world = soloBomber();
+    detonateAt(world, { x: 0, y: -(BOMBER.blastRadius - 0.5) });
+    expect(world.blasts).toHaveLength(1);
+    expect(world.blasts[0]?.radius).toBe(BOMBER.blastRadius);
+
+    const hpAfterBlast = world.player.hp;
+    run(world, BOMBER.flashTime + 0.1);
+    expect(world.blasts).toHaveLength(0);
+    // 자국이 남아 있는 동안 두 번 아프지 않는다 — 폭발이 하는 일은 그 프레임에 다 끝난다.
+    expect(world.player.hp).toBe(hpAfterBlast);
   });
 });
 
