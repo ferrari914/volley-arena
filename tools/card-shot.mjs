@@ -99,6 +99,17 @@ function cardProbe({ id, rerolls, pushes }) {
   }
 
   return (world) => {
+    // **판은 갈아 끼워진다.** 아레나를 고르면 그 순간 새 World가 들어선다
+    // (`main.ts`의 MapSelect) — 고르는 화면 뒤에 비치던 판은 미리 보기였을 뿐이다.
+    // 도구는 창이 열린 첫 프레임부터 도므로, 이것을 안 보면 **미리 보기 판에 카드를
+    // 세워 놓고 "세웠다"고 적은 뒤 진짜 판에서는 아무것도 하지 않는다**
+    // (실제로 그렇게 한 번 찍혔다 — 화면에는 카드가 없고 도구만 다 됐다고 말했다).
+    // 다시 시작(`onRestart`)도 같은 길이라 함께 걸린다.
+    if (window.__cardWorld !== world) {
+      window.__cardWorld = world;
+      window.__card = null;
+      window.__cardSeen = [];
+    }
     const seen = window.__cardSeen ?? (window.__cardSeen = []);
     const report = (ready, offer, extra) => {
       window.__card = {
@@ -191,7 +202,16 @@ try {
       }
 
       // 카드가 뜬 뒤 한 장씩 늦게 나타난다(`UpgradeCards`의 55ms 간격). 다 선 뒤에 찍는다.
-      await page.waitForSelector('#upgrade[data-show="1"]', { timeout: 5000 });
+      // **못 뜨면 던지지 않고 적는다** — 판은 카드를 들고 있는데 화면이 안 그린 것이므로,
+      // 그 화면을 찍어 두어야 다음 사람이 무엇이 어긋났는지 볼 수 있다.
+      const shown = await page
+        .waitForSelector('#upgrade[data-show="1"]', { timeout: 5000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!shown) {
+        failed = true;
+        console.error(`  [안 뜬 화면] ${label}: 판은 카드를 들고 있는데 화면에 안 떴다`);
+      }
       await page.waitForTimeout(700);
 
       // **화면에 뜬 것과 판이 들고 있는 것이 같은가.** 다르면 찍은 장이 거짓말을 한다 —
