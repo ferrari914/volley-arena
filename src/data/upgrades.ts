@@ -143,7 +143,7 @@ export const UPGRADE_CARDS: readonly UpgradeCard[] = [
     id: 'backstep',
     role: 'support',
     title: '뒷걸음',
-    detail: '적을 보며 물러설 때 속도 25% 증가',
+    detail: '적을 보며 물러설 때 25% 빠르다',
     // **열째 장이고, 앞의 아홉과 다른 것을 묻는 첫 장이다: "언제".**
     // 나머지 아홉은 전부 늘 듣는다 — 고르는 순간부터 판이 끝날 때까지 값 하나가 바뀐
     // 채로 있다. 이 장은 **그 프레임에 어느 쪽으로 걷는가**를 보고 듣거나 안 듣는다

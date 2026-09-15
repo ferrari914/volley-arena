@@ -226,6 +226,31 @@ try {
         console.error(`  [어긋난 화면] ${label}: 화면은 [${drawn.join(' · ')}] · 판은 [${titles.join(' · ')}]`);
       }
 
+      // **설명이 한 줄에 들어오는가.** 열 장 중 아홉이 한 줄인데 한 장만 접히면 그 장만
+      // 마지막 낱말이 홀로 떨어져, 카드 셋을 나란히 놓았을 때 한 장이 덜 다듬어져 보인다.
+      // 세션 58이 뒷걸음에서 겪었다 — 처음 쓴 글이 모바일(844px)에서 두 줄이 됐고,
+      // 눈으로 보기 전에는 아무도 몰랐다. 폭은 글자 수로 못 센다(한글·숫자·공백의 너비가
+      // 다 다르다. 실제로 더 짧아 보이는 글이 먼저 접혔다). **브라우저가 이미 아는 값이므로
+      // 여기서 묻는다** — 이 도구는 카드를 넣는 바퀴가 반드시 돌리는 자리다.
+      const wrapped = await page.evaluate(() =>
+        [...document.querySelectorAll('.up-card')]
+          .map((card) => {
+            const detail = card.querySelector('.up-card__detail');
+            if (!detail) return null;
+            const lineHeight = parseFloat(getComputedStyle(detail).lineHeight);
+            return {
+              title: card.querySelector('.up-card__title')?.textContent ?? '',
+              text: detail.textContent ?? '',
+              lines: Math.round(detail.getBoundingClientRect().height / lineHeight),
+            };
+          })
+          .filter((c) => c && c.lines > 1),
+      );
+      for (const c of wrapped) {
+        failed = true;
+        console.error(`  [두 줄로 접혔다] ${label}: ${c.title} — "${c.text}" (${c.lines}줄)`);
+      }
+
       const path = `${OUT}/card-${id}-${screen}.png`;
       await page.screenshot({ path });
       console.log(`  ${path}`);
