@@ -754,3 +754,67 @@ describe('카드 색', () => {
     expect(tooClose).toEqual([]);
   });
 });
+
+/**
+ * **카드 한 장을 눈으로 볼 수 있는가** (`tools/card-shot.mjs`).
+ *
+ * 지시서 ⑥("화면이 있는 것을 만들면 실행해서 스크린샷을 찍고 그 이미지를 직접 읽어라")은
+ * **찍을 수 있을 때만** 지킬 수 있는 규칙이다. 카드 화면에 어느 셋이 뜨는지는 판이 정하므로
+ * (`rollUpgradeChoices`), 방금 만든 카드가 그 셋에 드는지는 운이다 —
+ * `npm run qa`로는 새 카드를 볼 방법이 없어 세션 53은 임시 하네스를 짰다가 버렸다.
+ *
+ * 그래서 그 도구는 **뜬 셋을 내려놓고 다시 뽑는다**(고르지 않는다). 아래 둘이 그 규칙이다.
+ * 하나라도 깨지면 도구는 조용히 30초를 기다리다 아무것도 못 찍는다 —
+ * 도구는 타입 검사가 닿지 않는 `.mjs`라 아무도 말해 주지 않는다(`tests/enemyShot.test.mjs`와 같은 자리).
+ */
+describe('카드를 찍는 도구가 기대는 규칙', () => {
+  /** 다친 채로 레벨을 올려 카드를 띄운다. 도구가 하는 것과 같다(`cardProbe`). */
+  function offerAtLevelUp(world: World): void {
+    world.player.hp = world.player.maxHp * 0.55;
+    feedXp(world, xpForLevel(world.progress.level, LEVEL));
+  }
+
+  /**
+   * 뜬 셋을 내려놓고 한 스텝 돌린다 — 도구가 되뽑는 방법 그대로다.
+   * **다친 채로 둔다**: 체력이 가득 차면 회복 카드가 후보에서 빠진다(`World.openOffer`).
+   */
+  function reroll(world: World): void {
+    world.offer = null;
+    world.player.hp = world.player.maxHp * 0.55;
+    world.step(IDLE, DT);
+  }
+
+  it('카드를 내려놓고 한 스텝 돌리면 같은 레벨에서 다시 뽑힌다', () => {
+    const world = new World();
+    offerAtLevelUp(world);
+    const before = world.offer;
+    expect(before).not.toBeNull();
+
+    reroll(world);
+
+    // 다시 떴다 — 레벨도 남은 선택 횟수도 그대로다. 한 장도 고르지 않았으므로
+    // 능력치와 눈금(`up-card__pips`)도 처음 보는 카드 그대로다.
+    expect(world.offer).not.toBeNull();
+    expect(world.offer?.level).toBe(before!.level);
+    expect(world.pendingUpgrades).toBe(1);
+    expect(world.takenUpgrades).toEqual([]);
+  });
+
+  it('되뽑으면 어느 카드든 예순 번 안에 뜬다', () => {
+    // 도구의 상한(`REROLLS`)과 같은 수다. 여기서 넘치면 그 카드는 도구로 못 찍는다 —
+    // 이를테면 후보에서 영영 빠지는 조건이 붙은 카드가 새로 들어온 경우다.
+    const limit = 60;
+    const worst: string[] = [];
+    for (const target of UPGRADE_CARDS) {
+      const world = new World();
+      offerAtLevelUp(world);
+      let tries = 0;
+      while (tries < limit && !world.offer?.choices.some((c) => c.card.id === target.id)) {
+        reroll(world);
+        tries += 1;
+      }
+      if (tries >= limit) worst.push(target.id);
+    }
+    expect(worst).toEqual([]);
+  });
+});
