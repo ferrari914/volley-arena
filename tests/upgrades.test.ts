@@ -35,6 +35,7 @@ const baseStats = (): PlayerStats => ({
   pierce: 0,
   bounce: 0,
   knockback: 0,
+  backstep: 0,
 });
 
 const card = (id: string, maxStacks = 3, role: UpgradeRole = 'power'): UpgradeCard => ({
@@ -431,36 +432,69 @@ describe('World — 3중 1택', () => {
     expect(pickFirst(world)).toBeTruthy();
   });
 
-  it('고를 카드가 다 떨어지면 카드를 띄우지 않고 그냥 흐른다', () => {
+  /**
+   * **카드가 열 장이 되면서(세션 57 · `backstep`) 이 장면이 실제 판에서는 사라졌다.**
+   * 겹칠 수 있는 총량이 42장(회복을 뺀 40장)인데 한 판의 레벨업은 많아야 39회다
+   * (`LEVEL.max` 40). 즉 **끝까지 올려도 고를 카드가 남는다** — 그편이 옳다.
+   * 마지막 레벨업에 "고를 것이 없다"가 뜨는 것보다 낫고, 카드를 늘리는 바퀴가
+   * 매번 이 수를 맞추려 `maxStacks`를 깎을 이유도 없다.
+   *
+   * 그래도 **`World.openOffer`의 "고를 것이 없으면 멈추지 않는다"는 규칙은 살아 있어야
+   * 한다** — 카드 목록이나 레벨 상한이 바뀌면 다시 닿는 자리이고, 여기가 무너지면
+   * 아무도 내릴 수 없는 화면이 된다. 그래서 두 검사로 갈랐다:
+   * ① 판 안에서는 다 떨어지지 않는다(아래 첫 검사 · 카드가 줄면 여기가 운다) ·
+   * ② 그래도 다 떨어진 자리에서는 멈추지 않는다(둘째 검사 · 미리 채워 두고 그 자리로 간다).
+   */
+  /** 회복을 뺀, 체력이 가득 찬 사람이 고를 수 있는 카드의 총량. */
+  const reachable = UPGRADE_CARDS.filter((c) => c.heal === undefined).reduce(
+    (sum, c) => sum + c.maxStacks,
+    0,
+  );
+
+  it('한 판을 끝까지 올려도 고를 카드가 남는다', () => {
+    // **다치지 않은 사람으로 잰다.** 회복 카드는 다친 사람에게만 나오므로
+    // (`rollUpgradeChoices`), 체력이 가득 차 있으면 그 두 장이 후보에서 통째로 빠진다.
+    // 그 가장 적은 쪽으로도 레벨업 수보다 많다는 것이 여기서 재는 것이다.
+    const levelUps = LEVEL.max - 1;
+    expect(reachable, '카드가 줄어 판 안에서 다 떨어진다').toBeGreaterThan(levelUps);
+
     const world = new World();
-
-    // **다치지 않은 사람으로 잰다.** 회복 카드는 다친 사람에게만 나오므로(`rollUpgradeChoices`),
-    // 체력이 가득 차 있으면 그 두 장이 후보에서 통째로 빠진다.
-    //
-    // **세션 53까지는 반대로 깎아 두고 쟀다.** 그때는 카드 총량(38)이 레벨업 수(39)보다
-    // 적어 다친 사람으로도 다 떨어졌지만, 아홉째 카드(`repel`)가 들어오며 마흔 장이 되어
-    // **레벨을 끝까지 올려도 두 장이 남는다.** 카드가 늘어난 것을 되돌릴 일이 아니라,
-    // 다 떨어지는 자리에 닿는 길을 다시 찾은 것이다 — 빠지는 카드가 있는 쪽으로.
-    const reachable = UPGRADE_CARDS.filter((c) => c.heal === undefined).reduce(
-      (sum, c) => sum + c.maxStacks,
-      0,
-    );
-    // 이 검사가 뜻을 잃는 자리를 먼저 세운다. 카드가 더 늘어 여기를 넘으면
-    // "다 떨어진다"는 장면 자체가 없어지므로, 조용히 통과하는 대신 여기서 운다.
-    expect(reachable, '레벨업 수보다 카드가 많아 다 떨어지는 자리에 닿지 못한다').toBeLessThanOrEqual(
-      LEVEL.max - 1,
-    );
-
-    // 한 덩이로 최대 레벨까지 올린다. 레벨업 수가 고를 수 있는 카드 수보다 많아
-    // 마지막에는 고를 것이 없는 상태가 된다.
     feedXp(world, 1e9);
     let picks = 0;
     while (world.offer && picks < reachable + 5) {
       pickFirst(world);
       picks += 1;
     }
+    // 레벨업 수만큼만 골랐고, 그것은 카드가 동나서가 아니라 오를 레벨이 없어서다.
+    expect(picks).toBe(levelUps);
+    expect(world.pendingUpgrades).toBe(0);
+    expect(world.isPaused).toBe(false);
+  });
 
-    expect(picks).toBe(reachable);
+  it('고를 카드가 다 떨어지면 카드를 띄우지 않고 그냥 흐른다', () => {
+    const world = new World();
+
+    // 서로 다른 두 장만 한 칸씩 남기고 미리 채운다. **World가 보는 그 칸을 그대로 채운다** —
+    // 카드를 고르는 길(`chooseUpgrade` → `openOffer`)은 손대지 않으므로, 남은 두 장은
+    // 실제 판과 똑같이 뽑히고 골라진다. 한 장에 두 칸을 남기지 않는 이유는, 그러면
+    // 마지막 두 번이 같은 카드 하나짜리 선택이 되어 뽑기를 지나지 않기 때문이다.
+    let left = 2;
+    for (const c of UPGRADE_CARDS) {
+      const keep = c.heal === undefined ? Math.min(left, 1) : 0;
+      left -= keep;
+      world.upgradeStacks[c.id] = c.maxStacks - keep;
+    }
+    expect(left, '남길 카드를 다 배치하지 못했다').toBe(0);
+
+    // 한 덩이로 최대 레벨까지 올린다. 남은 두 장을 고르고 나면 고를 것이 없다.
+    feedXp(world, 1e9);
+    let picks = 0;
+    while (world.offer && picks < 8) {
+      pickFirst(world);
+      picks += 1;
+    }
+
+    expect(picks).toBe(2);
     expect(world.isPaused).toBe(false);
     expect(world.pendingUpgrades).toBe(0);
     // 멈춘 채로 남지 않는다.
@@ -721,6 +755,69 @@ describe('밀어내기', () => {
     }
     // 한 프레임에 제 걸음으로 갈 수 있는 거리는 0.1m가 안 된다(속력 3.4m/s · 1/60초).
     expect(pushedBack).toBeGreaterThan(0.3);
+  });
+});
+
+/**
+ * DESIGN 8번 열째 카드 — 뒷걸음.
+ *
+ * **앞의 아홉과 달리 능력치를 읽는 것만으로는 이 카드가 듣는지 알 수 없다.**
+ * 그래서 여기서 보는 것은 값이 더해지는가 하나와, **실제 판에서 걸음이 달라지는가**다.
+ * 한 프레임의 규칙(무엇이 기준이고 어떻게 차오르는가)은 `tests/systems.test.ts`가 본다.
+ */
+describe('뒷걸음', () => {
+  const backstepCard = UPGRADE_CARDS.find((c) => c.id === 'backstep');
+  if (!backstepCard) throw new Error('뒷걸음 카드가 없다');
+
+  it('겹칠 때마다 더해진다 (0 → 0.25 → 0.5)', () => {
+    let stats = baseStats();
+    expect(stats.backstep).toBe(0);
+    stats = applyUpgrade(stats, backstepCard);
+    expect(stats.backstep).toBeCloseTo(0.25, 6);
+    stats = applyUpgrade(stats, backstepCard);
+    expect(stats.backstep).toBeCloseTo(0.5, 6);
+  });
+
+  it('이동 속도 자체는 건드리지 않는다 — 파고들 때는 그대로다', () => {
+    const stats = baseStats();
+    expect(applyUpgrade(stats, backstepCard).moveSpeed).toBe(stats.moveSpeed);
+  });
+
+  /** 적 하나를 세워 두고 한 방향으로 1초를 걷는다. 걸은 거리를 돌려준다. */
+  function walked(stacks: number, move: { x: number; y: number }): number {
+    // 적을 +x 쪽에 세우면 자동 조준이 그쪽을 본다 — 화면에서 몸이 보는 쪽이다.
+    const world = new World({ enemies: [{ x: 12, y: 0 }] });
+    for (let i = 0; i < stacks; i += 1) world.stats = applyUpgrade(world.stats, backstepCard!);
+    // 몸이 다 돌아선 뒤부터 잰다(`PLAYER.turnRate`). 도는 동안은 겨눈 쪽이 움직인다.
+    for (let i = 0; i < 30; i += 1) world.step(IDLE, DT);
+    const from = { ...world.player.pos };
+    for (let i = 0; i < 60; i += 1) world.step({ move, aim: null }, DT);
+    return Math.hypot(world.player.pos.x - from.x, world.player.pos.y - from.y);
+  }
+
+  it('실제 판에서 물러나는 걸음만 빨라진다', () => {
+    const back = { x: -1, y: 0 };
+    const forward = { x: 1, y: 0 };
+    // 물러나는 쪽은 한 장에 1.25배, 두 장에 1.5배.
+    expect(walked(1, back) / walked(0, back)).toBeCloseTo(1.25, 2);
+    expect(walked(2, back) / walked(0, back)).toBeCloseTo(1.5, 2);
+    // 파고드는 쪽은 한 걸음도 달라지지 않는다.
+    expect(walked(2, forward)).toBeCloseTo(walked(0, forward), 6);
+  });
+
+  it('등을 보이고 달아나면 아무것도 해 주지 않는다', () => {
+    // 오른쪽 스틱으로 반대쪽을 겨눈 채 그 반대로 달아나는 사람.
+    // 겨눈 쪽에서 물러나는 것이 아니므로 걸음이 그대로다.
+    const away = (stacks: number): number => {
+      const world = new World({ enemies: [{ x: 12, y: 0 }] });
+      for (let i = 0; i < stacks; i += 1) world.stats = applyUpgrade(world.stats, backstepCard!);
+      const input: FrameInput = { move: { x: -1, y: 0 }, aim: { x: -1, y: 0 } };
+      for (let i = 0; i < 30; i += 1) world.step(input, DT);
+      const from = { ...world.player.pos };
+      for (let i = 0; i < 60; i += 1) world.step(input, DT);
+      return Math.hypot(world.player.pos.x - from.x, world.player.pos.y - from.y);
+    };
+    expect(away(2)).toBeCloseTo(away(0), 6);
   });
 });
 

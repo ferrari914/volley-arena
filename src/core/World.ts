@@ -43,7 +43,7 @@ import {
   pickAmbientSpawn,
   stepCores,
 } from '../systems/experience';
-import { movePlayer } from '../systems/movement';
+import { backstepBoost, movePlayer } from '../systems/movement';
 import { insideObstacle } from '../systems/obstacles';
 import { applyUpgrade, rollUpgradeChoices } from '../systems/upgrades';
 
@@ -210,6 +210,7 @@ export class World {
     pierce: 0,
     bounce: 0,
     knockback: 0,
+    backstep: 0,
   };
 
   /** 카드별로 몇 번 골랐는지. 다음 제시에서 최대치에 닿은 카드를 빼는 데 쓴다. */
@@ -278,7 +279,10 @@ export class World {
       this.player.pos,
       input.move,
       dt,
-      this.stats.moveSpeed,
+      // 뒷걸음 카드(DESIGN 8번)는 **겨눈 쪽에서 물러나는 동안에만** 듣는다.
+      // 조준을 갱신하기 **전**의 `facing`으로 잰다 — 화면에 그려져 있던 그 방향이고,
+      // 사람이 스틱을 기울일 때 보고 있던 것도 그것이다.
+      this.stats.moveSpeed * backstepBoost(input.move, this.player.facing, this.stats.backstep),
       ARENA.radius,
       PLAYER.radius,
       this.map.obstacles,

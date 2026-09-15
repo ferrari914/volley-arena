@@ -296,6 +296,17 @@ export interface PlayerStats {
    * 잃으므로 개수 카드들처럼 덧셈으로 는다(`data/upgrades.ts`).
    */
   knockback: number;
+  /**
+   * 겨눈 쪽에서 물러날 때 이동 속도에 덧붙는 몫(DESIGN 8번 · 뒷걸음).
+   * 0.25면 정확히 뒤로 갈 때 1.25배로 걷는다.
+   *
+   * **앞의 일곱과 또 다른 종류의 값이다 — 이것만 "언제"를 묻는다.**
+   * 나머지는 전부 늘 듣는 값이라 능력치 하나를 읽으면 그만이지만, 이 값이 실제로
+   * 얼마나 듣는지는 **그 프레임에 어느 쪽으로 걷는가**가 정한다
+   * (`systems/movement.ts`의 `backstepBoost`). 시작값이 0이라 곱셈이 뜻을 잃으므로
+   * 밀어내기와 같은 이유로 덧셈으로 는다(`data/upgrades.ts`).
+   */
+  backstep: number;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { movePlayer } from '../src/systems/movement';
+import { backstepBoost, movePlayer } from '../src/systems/movement';
 import { findNearestEnemy } from '../src/systems/autoAim';
 import { stepArrows } from '../src/systems/combat';
 import { segmentPointDistanceSq } from '../src/core/math';
@@ -63,6 +63,65 @@ describe('movePlayer', () => {
     const start = { x: 25.4, y: 0 };
     const next = movePlayer(start, { x: 1, y: 1 }, 1 / 60, 7.2, 26, 0.55);
     expect(next.y).toBeGreaterThan(start.y);
+  });
+});
+
+/**
+ * DESIGN 8번 열째 카드 — 뒷걸음(`backstep`).
+ *
+ * **이 게임에서 "언제"를 묻는 첫 값이다.** 나머지 능력치는 읽으면 그만이지만 이것은
+ * 그 프레임의 이동 방향이 얼마나 듣는지를 정한다. 그래서 한 프레임의 규칙을 여기서 못 박는다 —
+ * 무엇이 기준인가(겨눈 쪽) · 어떻게 차오르는가(각) · 언제 아무 일도 없는가.
+ */
+describe('backstepBoost', () => {
+  /** 겨눈 쪽은 +x. 화면에서 몸이 오른쪽을 보고 서 있는 것과 같다. */
+  const FACING = 0;
+
+  it('정확히 뒤로 가면 그만큼 다 붙는다', () => {
+    expect(backstepBoost({ x: -1, y: 0 }, FACING, 0.25)).toBeCloseTo(1.25, 6);
+    expect(backstepBoost({ x: -1, y: 0 }, FACING, 0.5)).toBeCloseTo(1.5, 6);
+  });
+
+  it('겨눈 쪽으로 파고들 때는 아무것도 붙지 않는다', () => {
+    expect(backstepBoost({ x: 1, y: 0 }, FACING, 0.25)).toBe(1);
+  });
+
+  it('옆으로 갈 때도 붙지 않는다 — 도는 것은 물러나는 것이 아니다', () => {
+    expect(backstepBoost({ x: 0, y: 1 }, FACING, 0.25)).toBeCloseTo(1, 6);
+    expect(backstepBoost({ x: 0, y: -1 }, FACING, 0.25)).toBeCloseTo(1, 6);
+  });
+
+  it('각으로 차오른다 — 90도에서 끊기지 않는다', () => {
+    // 뒤쪽으로 45도만 돌아선 자리. 딱 끊는 자였다면 여기가 1이거나 1.25다.
+    const half = backstepBoost({ x: -1, y: 1 }, FACING, 0.25);
+    expect(half).toBeGreaterThan(1);
+    expect(half).toBeLessThan(1.25);
+    expect(half).toBeCloseTo(1 + 0.25 * Math.SQRT1_2, 6);
+    // 옆(1)에서 뒤(1.25)까지 한 칸도 되돌아가지 않는다.
+    const steps = Array.from({ length: 33 }, (_, i) => {
+      const angle = Math.PI / 2 + (i / 32) * (Math.PI / 2);
+      return backstepBoost({ x: Math.cos(angle), y: Math.sin(angle) }, FACING, 0.25);
+    });
+    for (let i = 1; i < steps.length; i += 1) {
+      expect(steps[i]!).toBeGreaterThanOrEqual(steps[i - 1]! - 1e-9);
+    }
+  });
+
+  it('스틱을 살짝만 기울여도 방향이 같으면 같은 몫이다', () => {
+    // 길이는 걷는 속도에 실린다(`movePlayer`). 여기서 보는 것은 방향뿐이다.
+    expect(backstepBoost({ x: -0.2, y: 0 }, FACING, 0.25)).toBeCloseTo(1.25, 6);
+  });
+
+  it('카드가 없거나 서 있으면 곱하지 않는다', () => {
+    expect(backstepBoost({ x: -1, y: 0 }, FACING, 0)).toBe(1);
+    expect(backstepBoost({ x: 0, y: 0 }, FACING, 0.25)).toBe(1);
+  });
+
+  it('기준은 겨눈 쪽이다 — 몸이 돌면 같은 걸음이 다른 몫이 된다', () => {
+    const move = { x: -1, y: 0 };
+    expect(backstepBoost(move, 0, 0.25)).toBeCloseTo(1.25, 6);
+    // 오른쪽 스틱으로 반대쪽을 겨눈 사람. 같은 방향으로 걷는데 아무것도 안 붙는다.
+    expect(backstepBoost(move, Math.PI, 0.25)).toBe(1);
   });
 });
 

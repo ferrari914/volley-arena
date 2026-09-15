@@ -32,6 +32,29 @@ export function settleBody(
   return pushOutOfObstacles(inArena, bodyRadius, obstacles);
 }
 
+/**
+ * 겨눈 쪽에서 물러나는 동안 이동 속도에 곱해지는 값(DESIGN 8번 · 뒷걸음).
+ * 정확히 뒤로 가면 `1 + backstep`, 옆으로 가면 1, 앞으로 가면 1이다.
+ *
+ * **각으로 잰다. 뒤/앞 두 칸으로 자르지 않는다.** 90도에서 딱 끊으면 옆으로 걷는
+ * 사람이 스틱을 한 칸 기울일 때마다 속도가 튀어, 화면에서는 그것이 "가끔 미끄러진다"로
+ * 보인다. 코사인으로 재면 뒤로 돌아설수록 몫이 차오르므로 튀는 자리가 없다.
+ *
+ * **기준은 적이 아니라 `facing`(겨눈 쪽)이다.** 화면에서 읽을 수 있는 것은 몸이
+ * 향한 쪽뿐이고, 그래야 오른쪽 스틱으로 다른 곳을 겨눈 사람에게는 이 카드가
+ * 듣지 않는다 — **등을 보이고 달아나면 아무것도 해 주지 않는다**가 이 카드의 요구다.
+ *
+ * 스틱을 살짝만 기울인 프레임에도 방향은 같으므로 **길이를 빼고 방향만 본다**.
+ * 걷는 속도 자체는 스틱 길이에 그대로 실린다(`movePlayer`).
+ */
+export function backstepBoost(move: Vec2, facing: number, backstep: number): number {
+  if (backstep <= 0) return 1;
+  const len = length(move);
+  if (len < 1e-6) return 1;
+  const toward = (move.x * Math.cos(facing) + move.y * Math.sin(facing)) / len;
+  return 1 + backstep * Math.max(0, -toward);
+}
+
 /** 이동 입력을 받아 새 위치를 돌려준다. 자리를 자르는 것은 `settleBody`가 한다. */
 export function movePlayer(
   pos: Vec2,
