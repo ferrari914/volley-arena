@@ -24,7 +24,7 @@ import { DT, IDLE, median, play, playMatch, walkToNearestCore } from './support/
 
 /**
  * 이 파일이 쓰는 화살은 한 종류뿐이다 — 한복판에서 +x로 똑바로 날아가는 플레이어의 화살.
- * 기둥이 막는가만 보므로 관통도 튕김도 0이다(막힘은 그 둘보다 먼저 온다).
+ * 기둥이 막는가만 보므로 관통도 튕김도 밀어내기도 0이다(막힘은 그것들보다 먼저 온다).
  */
 const straightArrow = (id: number, speed: number): Arrow => ({
   id,
@@ -36,6 +36,7 @@ const straightArrow = (id: number, speed: number): Arrow => ({
   lifetime: 3,
   pierce: 0,
   bounce: 0,
+  knockback: 0,
   alive: true,
 });
 

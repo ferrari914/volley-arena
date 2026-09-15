@@ -34,6 +34,7 @@ const baseStats = (): PlayerStats => ({
   arrowCount: 1,
   pierce: 0,
   bounce: 0,
+  knockback: 0,
 });
 
 const card = (id: string, maxStacks = 3, role: UpgradeRole = 'power'): UpgradeCard => ({
@@ -432,22 +433,34 @@ describe('World — 3중 1택', () => {
 
   it('고를 카드가 다 떨어지면 카드를 띄우지 않고 그냥 흐른다', () => {
     const world = new World();
-    const total = UPGRADE_CARDS.reduce((sum, c) => sum + c.maxStacks, 0);
 
-    // 회복 카드는 다친 사람에게만 나온다. 체력을 깎아 두지 않으면 그 두 장이
-    // 후보에서 빠져 "다 떨어졌다"는 자리에 닿지 못한다.
-    world.player.hp = world.player.maxHp * 0.5;
+    // **다치지 않은 사람으로 잰다.** 회복 카드는 다친 사람에게만 나오므로(`rollUpgradeChoices`),
+    // 체력이 가득 차 있으면 그 두 장이 후보에서 통째로 빠진다.
+    //
+    // **세션 53까지는 반대로 깎아 두고 쟀다.** 그때는 카드 총량(38)이 레벨업 수(39)보다
+    // 적어 다친 사람으로도 다 떨어졌지만, 아홉째 카드(`repel`)가 들어오며 마흔 장이 되어
+    // **레벨을 끝까지 올려도 두 장이 남는다.** 카드가 늘어난 것을 되돌릴 일이 아니라,
+    // 다 떨어지는 자리에 닿는 길을 다시 찾은 것이다 — 빠지는 카드가 있는 쪽으로.
+    const reachable = UPGRADE_CARDS.filter((c) => c.heal === undefined).reduce(
+      (sum, c) => sum + c.maxStacks,
+      0,
+    );
+    // 이 검사가 뜻을 잃는 자리를 먼저 세운다. 카드가 더 늘어 여기를 넘으면
+    // "다 떨어진다"는 장면 자체가 없어지므로, 조용히 통과하는 대신 여기서 운다.
+    expect(reachable, '레벨업 수보다 카드가 많아 다 떨어지는 자리에 닿지 못한다').toBeLessThanOrEqual(
+      LEVEL.max - 1,
+    );
 
-    // 한 덩이로 최대 레벨까지 올린다. 레벨업 수(39)가 카드 총량(38)보다 많아
+    // 한 덩이로 최대 레벨까지 올린다. 레벨업 수가 고를 수 있는 카드 수보다 많아
     // 마지막에는 고를 것이 없는 상태가 된다.
     feedXp(world, 1e9);
     let picks = 0;
-    while (world.offer && picks < total + 5) {
+    while (world.offer && picks < reachable + 5) {
       pickFirst(world);
       picks += 1;
     }
 
-    expect(picks).toBe(total);
+    expect(picks).toBe(reachable);
     expect(world.isPaused).toBe(false);
     expect(world.pendingUpgrades).toBe(0);
     // 멈춘 채로 남지 않는다.
@@ -656,6 +669,58 @@ describe('튕김', () => {
     expect(volleyHits(0)).toBe(1);
     expect(volleyHits(1)).toBe(2);
     expect(volleyHits(2)).toBe(3);
+  });
+});
+
+/**
+ * DESIGN 8번 아홉째 카드 — 밀어내기.
+ *
+ * 관통·튕김과 같은 두 자리를 본다(능력치에 더해지는가 · 태어나는 화살이 들고 나가는가).
+ * **적의 화살이 0인 까닭만 다르다.** 관통·튕김은 갈 다음 상대가 없어서 0이지만,
+ * 밀어내기는 갈 곳이 있는데도 0이다 — 적의 화살이 사람을 밀면 터질 원 밖으로 밀려나는
+ * 프레임이 생겨, **맞는 것이 사는 길**이 된다(DESIGN 9번 폭탄병).
+ *
+ * 누가 밀리고 누가 안 밀리는가는 `tests/systems.test.ts`가 한 프레임으로 본다.
+ */
+describe('밀어내기', () => {
+  const repelCard = UPGRADE_CARDS.find((c) => c.id === 'repel');
+  if (!repelCard) throw new Error('밀어내기 카드가 없다');
+
+  it('한 장에 0.45m씩 는다 (0 → 0.45 → 0.9)', () => {
+    // 시작값이 0이라 곱셈이 뜻을 잃는다 — 개수 카드들과 같은 이유로 덧셈이다.
+    let stats = baseStats();
+    expect(stats.knockback).toBe(0);
+    stats = applyUpgrade(stats, repelCard);
+    expect(stats.knockback).toBeCloseTo(0.45, 6);
+    stats = applyUpgrade(stats, repelCard);
+    expect(stats.knockback).toBeCloseTo(0.9, 6);
+  });
+
+  it('플레이어의 화살만 밀어내기를 들고 나간다', () => {
+    const world = new World({ enemies: [] });
+    world.stats = applyUpgrade(world.stats, repelCard);
+    world.addArrow({ x: 0, y: 0 }, { x: 1, y: 0 }, 'player');
+    world.addArrow({ x: 0, y: 0 }, { x: 1, y: 0 }, 'enemy');
+    expect(world.arrows.find((a) => a.owner === 'player')?.knockback).toBeCloseTo(0.45, 6);
+    expect(world.arrows.find((a) => a.owner === 'enemy')?.knockback).toBe(0);
+  });
+
+  it('실제 판에서 맞은 적이 뒤로 물러난다', () => {
+    // 한 발을 맞히고 적이 옮겨 간 거리를 잰다. 적이 제 걸음으로 다가오는 몫이 섞이지
+    // 않도록 **다가오지 않는 거리**(사거리 안이라 겨누려고 서는 자리)에 세우지 않고,
+    // 맞은 프레임의 앞뒤만 견준다.
+    const world = new World({ enemies: [{ x: 7, y: 0 }] });
+    world.stats = applyUpgrade(world.stats, repelCard);
+    const enemy = world.enemies[0]!;
+    let pushedBack = 0;
+    for (let i = 0; i < 240 && pushedBack === 0; i += 1) {
+      const before = { ...enemy.pos };
+      const hits = world.hits;
+      world.step(IDLE, DT);
+      if (world.hits > hits) pushedBack = Math.hypot(enemy.pos.x - before.x, enemy.pos.y - before.y);
+    }
+    // 한 프레임에 제 걸음으로 갈 수 있는 거리는 0.1m가 안 된다(속력 3.4m/s · 1/60초).
+    expect(pushedBack).toBeGreaterThan(0.3);
   });
 });
 

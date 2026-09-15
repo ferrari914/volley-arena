@@ -209,6 +209,7 @@ export class World {
     arrowCount: 1,
     pierce: 0,
     bounce: 0,
+    knockback: 0,
   };
 
   /** 카드별로 몇 번 골랐는지. 다음 제시에서 최대치에 닿은 카드를 빼는 데 쓴다. */
@@ -858,6 +859,9 @@ export class World {
       // 뚫고 갈 다음 상대도, 꺾어 갈 다음 상대도 없다.
       pierce: owner === 'player' ? Math.max(0, Math.round(this.stats.pierce)) : 0,
       bounce: owner === 'player' ? Math.max(0, Math.round(this.stats.bounce)) : 0,
+      // 밀어내기도 플레이어의 카드다. 적의 화살이 사람을 밀면 터질 원 밖으로 밀려나는
+      // 일이 생겨, 맞는 것이 오히려 사는 길이 되는 프레임이 생긴다.
+      knockback: owner === 'player' ? Math.max(0, this.stats.knockback) : 0,
       alive: true,
     });
   }

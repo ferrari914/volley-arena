@@ -1,6 +1,7 @@
 import { length, segmentPointDistanceSq, type Vec2 } from '../core/math';
 import type { Arrow, Enemy, Obstacle, Player } from '../entities/types';
 import { findNearestEnemy } from './autoAim';
+import { settleBody } from './movement';
 import { blockedByObstacles } from './obstacles';
 
 export interface ArrowStepOptions {
@@ -148,6 +149,10 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
           result.killed.push(enemy);
         }
 
+        // 맞은 놈을 뒤로 밀어낸다 (DESIGN 8번 · 밀어내기 카드).
+        // 쓰러진 놈은 밀지 않는다 — 눕는 자리가 곧 코어가 떨어지는 자리다(`result.killed`).
+        if (arrow.knockback > 0 && enemy.alive) pushEnemyBack(enemy, arrow.vel, arrow.knockback, options);
+
         if (arrow.pierce > 0) {
           // 뚫고 나간다. 남은 적들도 계속 본다 — 적 둘이 한 프레임 안에 겹쳐 있는
           // 드문 경우(막 되살아난 자리)에도 화살이 사라지지 않고 제 몫을 해야 한다.
@@ -214,6 +219,48 @@ export function blocksArrow(enemy: Enemy, arrowVel: Vec2, arc: number): boolean 
   const facing = Math.cos(enemy.facing) * (arrowVel.x / speed)
     + Math.sin(enemy.facing) * (arrowVel.y / speed);
   return facing <= -Math.cos(arc);
+}
+
+/**
+ * 맞은 적을 화살이 날아온 방향으로 밀어낸다 (DESIGN 8번 · 밀어내기 카드).
+ * 밀렸으면 true — 재는 쪽(테스트)이 "왜 안 밀렸는가"를 되물을 수 있어야 한다.
+ *
+ * **저지르기 시작한 적은 밀리지 않는다**(`aimTimer` · `dashTimer`). 이 한 줄이
+ * 카드 한 장이 적 넷의 요구를 지우지 못하게 막는다:
+ * - 심지에 불이 붙은 폭탄병은 **그 자리에서** 터진다. 밀어서 치울 수 있으면
+ *   "물러나라"가 답이 아니게 되고, 그러면 이 적은 카드 한 장으로 사라진다.
+ * - 몸을 던진 돌진형은 궤도가 휘지 않는다 — 직선이라는 약속이 곧 피할 여지다
+ *   (다른 적에게 밀리지 않는 것과 같은 이유다 · `systems/enemyAi.ts`).
+ * - 겨누는 활잡이·방패병은 제자리에 선 채로 한 발을 놓는다. 예고를 보고 피하는 것이
+ *   답인 적을, 밀어서 예고 자체를 지우게 두지 않는다.
+ * 그래서 이 카드가 버는 것은 **적이 저지르기 전의 시간**이다 — 걸어오는 동안에만 밀린다.
+ *
+ * 방향은 화살이 **날아가는 쪽**이다(위치가 아니라 속도로). `blocksArrow`가 방패의
+ * 정면을 재는 것과 같은 이유다 — 한 프레임에 몸통보다 멀리 나아간 화살은 몸 반대편에서
+ * 판정되기도 해서, 위치로 재면 밀리는 방향이 뒤집히는 프레임이 생긴다.
+ *
+ * 벽과 기둥은 그대로 막는다 — 미는 것도 몸을 옮기는 일이라 걸어가는 것과 같은 함수를
+ * 쓴다(`settleBody`). 그래서 기둥에 등을 붙인 적은 더 밀리지 않는다.
+ */
+function pushEnemyBack(
+  enemy: Enemy,
+  arrowVel: Vec2,
+  distance: number,
+  options: ArrowStepOptions,
+): boolean {
+  if (enemy.aimTimer > 0 || enemy.dashTimer > 0) return false;
+  const speed = length(arrowVel);
+  if (speed < 1e-6) return false;
+  enemy.pos = settleBody(
+    {
+      x: enemy.pos.x + (arrowVel.x / speed) * distance,
+      y: enemy.pos.y + (arrowVel.y / speed) * distance,
+    },
+    options.arenaRadius,
+    options.enemyRadius,
+    options.obstacles,
+  );
+  return true;
 }
 
 /**

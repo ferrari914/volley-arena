@@ -333,6 +333,36 @@ const dodged = SEEDS.map((seed) => playMatch(seed, 600, backOffBomber(dodgeCharg
 /** 방패병을 옆구리로 돌고 터질 원에서는 물러나는 사람의 같은 스무 판(세션 24·51). 세 번째 자다. */
 const circled = SEEDS.map((seed) => playMatch(seed, 600, backOffBomber(circleShield)));
 
+/**
+ * **아래쪽 꼬리를 재는 자 (세션 53). 씨앗 스무 개로는 못 잰다.**
+ *
+ * 세션 18·24가 "아는 사람은 아래쪽 꼬리가 없다"를 **스무 판의 가장 짧은 판**으로 쟀다.
+ * 그 자는 씨앗 **하나**를 재는 자다 — 스무 판 중 제일 짧은 한 판이 값의 전부이고,
+ * 그 한 판은 고른 카드가 조금만 달라져도 통째로 바뀐다. 세션 49가 `방패병 하나와 60초`에서
+ * 고친 것과 **같은 종류의 고장**이고, 이번에는 카드 한 장(`repel`)이 들어오며 드러났다.
+ * 씨앗을 예순 개로만 넓혀 봐도 그 자는 **지금 커밋된 코드에서도** 뒤집힌다:
+ * | 가장 짧은 판 (60판) | 걷는 사람 | 도는 사람 |
+ * |---|---|---|
+ * | 카드 넣기 전 | 113초 | **94초** ← 뒤집혀 있다 |
+ * | 카드 넣은 뒤 | 97초 | 164초 |
+ *
+ * 그래서 극단값이 아니라 **선 아래로 떨어진 판의 수**를 센다. 같은 말을 하는 자인데
+ * 한 판이 아니라 분포를 본다 — "짧게 끝나는 판이 얼마나 자주 나오는가"가 곧 아래쪽 꼬리다.
+ * | 150초 안에 쓰러진 판 (120판) | 걷는 사람 | 도는 사람 | 비키는 사람 |
+ * |---|---|---|---|
+ * | 카드 넣기 전 | 9 | 3 | 1 |
+ * | 카드 넣은 뒤 | 16 | 1 | 0 |
+ *
+ * **판을 `SHORTEST`에서 끊는다.** 재는 것이 "그 선 아래인가"뿐이라 그 뒤는 볼 필요가 없고,
+ * 끊으면 120판이 5초 안에 돈다(끝까지 돌리면 세 배가 넘는다 — `npm test`에 둘 수 없다).
+ */
+const TAIL_SEEDS = Array.from({ length: 120 }, (_, i) => 20260909 + i);
+function shortMatches(input: (world: World) => FrameInput): number {
+  return TAIL_SEEDS.filter((seed) => playMatch(seed, SHORTEST, input).defeated).length;
+}
+/** 아무 답도 모르는 사람의 꼬리. 두 묶음이 저마다 이것과 견준다. */
+const plainTail = shortMatches(walkToNearestCore);
+
 describe('밸런스 — 한 판 길이 (씨앗 20개)', () => {
   const lengths = results.map((r) => r.elapsed);
   const inRange = lengths.filter((s) => s >= SHORTEST && s <= LONGEST).length;
@@ -485,9 +515,6 @@ describe('밸런스 — 판을 열고 3초 안에는 아무도 맞지 않는다'
 describe('밸런스 — 예고를 보고 비키면 몸에 닿지 않는다 (DESIGN 9번)', () => {
   const bodyHits = (rows: readonly { bodyHits: number }[]): number =>
     rows.reduce((sum, r) => sum + r.bodyHits, 0);
-  const shortest = (rows: readonly { elapsed: number }[]): number =>
-    Math.min(...rows.map((r) => r.elapsed));
-
   it('안 비키는 사람은 몸으로 맞고, 비키는 사람은 그 1/4도 맞지 않는다', () => {
     const plain = bodyHits(results);
     const smart = bodyHits(dodged);
@@ -503,16 +530,19 @@ describe('밸런스 — 예고를 보고 비키면 몸에 닿지 않는다 (DESI
   });
 
   it('아래쪽 꼬리는 게임의 성질이 아니라 안 비키는 버릇이다', () => {
-    const plain = shortest(results);
-    const smart = shortest(dodged);
+    const smart = shortMatches(backOffBomber(dodgeCharger));
     const lengths = dodged.map((r) => r.elapsed);
     console.log(
-      `비키는 사람의 스무 판: 중앙값 ${median(lengths).toFixed(0)}초 · ` +
-        `가장 짧은 판 ${smart.toFixed(0)}초(안 비키면 ${plain.toFixed(0)}초) · ` +
+      `비키는 사람 — ${SHORTEST}초 안에 쓰러진 판 ${smart}/${TAIL_SEEDS.length}` +
+        `(안 비키면 ${plainTail}) · 스무 판 중앙값 ${median(lengths).toFixed(0)}초 · ` +
         `가장 긴 판 ${Math.max(...lengths).toFixed(0)}초`,
     );
-    // 실측 139초 → 175초. 같은 씨앗·같은 카드인데 아래쪽 꼬리만 사라진다.
-    expect(smart, '비켜도 가장 짧은 판이 길어지지 않는다').toBeGreaterThan(plain);
+    // 견줄 꼬리가 없으면 비교가 뜻이 없다. 게임이 통째로 순해진 것도 여기서 걸린다.
+    expect(plainTail, '안 비키는 사람에게도 아래쪽 꼬리가 없다').toBeGreaterThanOrEqual(6);
+    // 실측 16 → 0판. 같은 씨앗·같은 카드인데 아래쪽 꼬리만 사라진다.
+    expect(smart * 4, `비키는 사람 ${smart}판 · 안 비키는 사람 ${plainTail}판`).toBeLessThanOrEqual(
+      plainTail,
+    );
     // 위쪽에는 선을 걸지 않는다 — 비키는 사람은 원래 조금 더 오래 산다(실측 333초).
     // 그 천장을 지키는 것은 증원이고, 위 묶음이 안 비키는 사람으로 재고 있다.
     expect(median(lengths)).toBeGreaterThan(SHORTEST);
@@ -592,18 +622,20 @@ describe('밸런스 — 옆구리로 돌면 판이 뚫린다 (DESIGN 9번)', () 
   });
 
   it('아래쪽 꼬리는 게임의 성질이 아니라 돌 줄 모르는 버릇이다', () => {
-    const plain = Math.min(...results.map((r) => r.elapsed));
-    const smart = Math.min(...circled.map((r) => r.elapsed));
+    const smart = shortMatches(backOffBomber(circleShield));
     const lengths = circled.map((r) => r.elapsed);
     console.log(
-      `도는 사람의 스무 판: 중앙값 ${median(lengths).toFixed(0)}초 · ` +
-        `가장 짧은 판 ${smart.toFixed(0)}초(안 돌면 ${plain.toFixed(0)}초) · ` +
+      `도는 사람 — ${SHORTEST}초 안에 쓰러진 판 ${smart}/${TAIL_SEEDS.length}` +
+        `(안 돌면 ${plainTail}) · 스무 판 중앙값 ${median(lengths).toFixed(0)}초 · ` +
         `막힘 ${circled.reduce((a, r) => a + r.blocked, 0)}발` +
         `(안 돌면 ${results.reduce((a, r) => a + r.blocked, 0)}발)`,
     );
-    // 실측 94초 → 182초. 같은 씨앗·같은 카드인데 아래쪽 꼬리만 사라진다(세션 18의 비키기와 같다).
-    expect(smart, '돌아도 가장 짧은 판이 길어지지 않는다').toBeGreaterThan(plain);
-    // 중앙값은 제자리다 — 돌기는 아래쪽만 들어 올린다(실측 256 → 266초).
+    // 위 묶음과 같은 자다(세션 18의 비키기와 같다). 실측 16 → 1판.
+    expect(plainTail, '안 도는 사람에게도 아래쪽 꼬리가 없다').toBeGreaterThanOrEqual(6);
+    expect(smart * 4, `도는 사람 ${smart}판 · 안 도는 사람 ${plainTail}판`).toBeLessThanOrEqual(
+      plainTail,
+    );
+    // 중앙값은 제자리다 — 돌기는 아래쪽만 들어 올린다(실측 256 → 275초).
     expect(median(lengths)).toBeGreaterThan(SHORTEST);
     expect(median(lengths)).toBeLessThan(LONGEST);
   });

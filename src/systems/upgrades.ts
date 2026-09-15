@@ -24,7 +24,7 @@ export function applyUpgrade(stats: PlayerStats, card: UpgradeCard): PlayerStats
   return next;
 }
 
-/** 목록을 제자리에서 섞는다(피셔-예이츠). 여덟 장짜리 목록이라 전부 섞어도 값이 싸다. */
+/** 목록을 제자리에서 섞는다(피셔-예이츠). 아홉 장짜리 목록이라 전부 섞어도 값이 싸다. */
 function shuffle(list: UpgradeCard[], random: () => number): void {
   for (let i = 0; i < list.length - 1; i += 1) {
     const j = i + Math.floor(random() * (list.length - i));

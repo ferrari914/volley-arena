@@ -4,7 +4,7 @@ import { findNearestEnemy } from '../src/systems/autoAim';
 import { stepArrows } from '../src/systems/combat';
 import { segmentPointDistanceSq } from '../src/core/math';
 import { createEnemy, createPlayer, type Arrow, type ArrowOwner } from '../src/entities/types';
-import { ARROW, ENEMY, PLAYER, SHIELD } from '../src/data/config';
+import { ARROW, BOMBER, CHARGER, ENEMY, PLAYER, SHIELD } from '../src/data/config';
 
 let nextId = 1;
 const enemyAt = (x: number, y: number): ReturnType<typeof createEnemy> =>
@@ -19,6 +19,7 @@ const arrow = (
   damage = 1,
   pierce = 0,
   bounce = 0,
+  knockback = 0,
 ): Arrow => ({
   id: 1,
   owner,
@@ -29,6 +30,7 @@ const arrow = (
   lifetime: 1.6,
   pierce,
   bounce,
+  knockback,
   alive: true,
 });
 
@@ -403,5 +405,111 @@ describe('stepArrows — 방패병의 방패', () => {
     expect(front).toBe(SHIELD.shieldHp + SHIELD.maxHp);
     expect(flank).toBe(SHIELD.maxHp);
     expect(front).toBeGreaterThan(flank * 2);
+  });
+});
+
+/**
+ * DESIGN 8번 아홉째 카드 — 밀어내기.
+ *
+ * 앞의 여덟 장과 다른 것을 바꾸는 첫 장이다. 나머지는 전부 **내가** 얼마나 세거나 빠른가를
+ * 바꾸지만, 이 장은 **적이 어디에 서는가**를 바꾼다. 그래서 지키는 것도 다르다 —
+ * "얼마나 아픈가"가 아니라 **"누가 밀리고 누가 안 밀리는가"**다.
+ *
+ * 밀지 않는 자리가 이 카드의 전부다. 저지르기 시작한 적까지 밀리면
+ * 카드 한 장이 적 넷의 요구(계속 움직여라·옆으로 비켜라·돌아서 쏴라·물러나라)를
+ * 통째로 지운다 — 예고를 보고 피하는 게임이 예고를 밀어내는 게임이 된다.
+ */
+describe('stepArrows — 밀어내기', () => {
+  /** 원점의 적. 속력 120이라 한 프레임(1/60초)에 2m를 나아가 한가운데를 지난다. */
+  const target = (kind: Parameters<typeof createEnemy>[4] = 'archer') =>
+    createEnemy(nextId++, 0, 0, 99, kind);
+
+  /** +x로 날아가는 화살 한 발을 한 프레임 먹이고, 적이 옮겨 간 자리를 돌려준다. */
+  function pushed(enemy: ReturnType<typeof createEnemy>, knockback: number, obstacles = []) {
+    stepArrows(
+      [arrow(-2, 0, 120, 0, 'player', 1, 0, 0, knockback)],
+      options({ enemies: [enemy], obstacles }),
+    );
+    return enemy.pos;
+  }
+
+  it('맞은 적이 화살이 가던 쪽으로 그만큼 밀린다', () => {
+    const enemy = target();
+    expect(pushed(enemy, 0.45)).toEqual({ x: 0.45, y: 0 });
+  });
+
+  it('밀어내기가 없는 화살은 아무도 옮기지 않는다 (지금까지의 화살이 전부 그렇다)', () => {
+    const enemy = target();
+    expect(pushed(enemy, 0)).toEqual({ x: 0, y: 0 });
+  });
+
+  /**
+   * **방향은 위치가 아니라 속도로 잰다.** 한 프레임에 2m를 나아가는 화살은 적의 몸
+   * 반대편(+x 쪽)에서 판정되는 프레임이 있어, 위치 차이로 재면 밀리는 방향이 뒤집힌다.
+   * `blocksArrow`가 방패의 정면을 속도로 재는 것과 같은 이유다.
+   */
+  it('몸을 지나쳐 판정된 화살도 가던 쪽으로 민다 (뒤로 당기지 않는다)', () => {
+    const enemy = target();
+    stepArrows(
+      [arrow(-0.1, 0, 120, 0, 'player', 1, 0, 0, 0.45)],
+      options({ enemies: [enemy] }),
+    );
+    expect(enemy.pos.x).toBeCloseTo(0.45, 6);
+  });
+
+  it('겨누는 적은 밀리지 않는다 — 예고를 밀어서 지울 수 없다', () => {
+    const enemy = target();
+    enemy.aimTimer = 0.3;
+    expect(pushed(enemy, 0.45)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('심지에 불이 붙은 폭탄병은 그 자리에서 터진다', () => {
+    // 폭탄병의 심지도 `aimTimer`다(`systems/enemyAi.ts`). 밀어서 치울 수 있으면
+    // "물러나라"가 답이 아니게 되고, 그러면 이 적은 카드 한 장으로 사라진다.
+    const enemy = target('bomber');
+    enemy.aimTimer = BOMBER.fuse;
+    expect(pushed(enemy, 0.45)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('몸을 던진 돌진형은 궤도가 휘지 않는다', () => {
+    // 직선이라는 약속이 곧 피할 여지다.
+    const enemy = target('charger');
+    enemy.dashTimer = CHARGER.dashTime;
+    expect(pushed(enemy, 0.45)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('쓰러뜨린 적은 밀지 않는다 — 눕는 자리가 곧 코어가 떨어지는 자리다', () => {
+    const enemy = target();
+    enemy.hp = 1;
+    const result = stepArrows(
+      [arrow(-2, 0, 120, 0, 'player', 1, 0, 0, 0.45)],
+      options({ enemies: [enemy] }),
+    );
+    expect(result.killed).toHaveLength(1);
+    expect(enemy.pos).toEqual({ x: 0, y: 0 });
+  });
+
+  it('벽 너머로는 밀리지 않는다', () => {
+    const enemy = target();
+    const wall = 26 - ENEMY.radius; // 벽에 등을 붙이고 선 자리.
+    enemy.pos = { x: wall, y: 0 };
+    stepArrows(
+      [arrow(wall - 2, 0, 120, 0, 'player', 1, 0, 0, 0.45)],
+      options({ enemies: [enemy] }),
+    );
+    expect(enemy.hp).toBeLessThan(99); // 맞지도 않았다면 이 검사는 아무것도 재지 않는다.
+    expect(enemy.pos.x).toBeCloseTo(wall, 6);
+  });
+
+  it('기둥에 등을 붙인 적은 더 밀리지 않는다', () => {
+    const enemy = target();
+    const pillar = { x: 2, y: 0, radius: 1.2 };
+    enemy.pos = { x: pillar.x - pillar.radius - ENEMY.radius, y: 0 };
+    const before = enemy.pos.x;
+    stepArrows(
+      [arrow(before - 2, 0, 120, 0, 'player', 1, 0, 0, 0.45)],
+      options({ enemies: [enemy], obstacles: [pillar] }),
+    );
+    expect(enemy.pos.x).toBeCloseTo(before, 6);
   });
 });

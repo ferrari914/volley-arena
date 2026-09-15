@@ -1,6 +1,7 @@
-import { clamp, length, rotateToward, type Vec2 } from '../core/math';
+import { length, rotateToward, type Vec2 } from '../core/math';
 import type { Enemy, Obstacle } from '../entities/types';
-import { insideObstacle, pushOutOfObstacles, sightBlocker } from './obstacles';
+import { settleBody } from './movement';
+import { insideObstacle, sightBlocker } from './obstacles';
 
 /**
  * 적 봇의 행동 (DESIGN 5번 · 9번).
@@ -477,17 +478,20 @@ function distanceTo(enemy: Enemy, point: Vec2): number {
 }
 
 /**
- * 방향(정규화하지 않은 것도 받는다)과 속력으로 한 스텝 움직이고 벽 안쪽으로 자른다.
- * 기둥에서도 밀려난다(DESIGN 10번) — **플레이어와 같은 함수를 쓴다**(`pushOutOfObstacles`).
+ * 방향(정규화하지 않은 것도 받는다)과 속력으로 한 스텝 움직이고 설 수 있는 자리에 앉힌다.
+ * 벽과 기둥을 자르는 일은 **플레이어와 같은 함수가 한다**(`settleBody`).
  * 여기서 따로 만들면 적만 기둥을 뚫고 지나가는 고장이 조용히 생긴다.
  */
 function moveBy(enemy: Enemy, move: Vec2, speed: number, options: EnemyStepOptions): void {
   const moveLen = length(move);
   if (moveLen <= 1e-6) return;
   const step = (speed * options.dt) / moveLen;
-  enemy.pos = { x: enemy.pos.x + move.x * step, y: enemy.pos.y + move.y * step };
-  clampToArena(enemy, options.arenaRadius - options.bodyRadius);
-  enemy.pos = pushOutOfObstacles(enemy.pos, options.bodyRadius, options.obstacles);
+  enemy.pos = settleBody(
+    { x: enemy.pos.x + move.x * step, y: enemy.pos.y + move.y * step },
+    options.arenaRadius,
+    options.bodyRadius,
+    options.obstacles,
+  );
 }
 
 /** 쓰러진 적을 `standAt`에 다시 세운다. 체력도 방패도 타이머도 함께 되돌린다. */
@@ -728,10 +732,3 @@ function addSeparation(move: Vec2, self: Enemy, enemies: readonly Enemy[], radiu
   }
 }
 
-/** 적도 벽을 넘지 않는다. 플레이어와 같은 규칙(각도는 두고 반지름만 자른다). */
-function clampToArena(enemy: Enemy, limit: number): void {
-  const dist = length(enemy.pos);
-  if (dist <= limit) return;
-  const scale = clamp(Math.max(limit, 0) / dist, 0, 1);
-  enemy.pos = { x: enemy.pos.x * scale, y: enemy.pos.y * scale };
-}
