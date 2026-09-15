@@ -43,7 +43,7 @@ npm run qa           # 빌드 → 실제 브라우저로 실행 → shots/ 에 �
 적 하나의 생김새만 보고 싶으면 카메라를 들이대는 도구가 따로 있다.
 
 ```bash
-npm run shot:enemy                                  # 세 종류를 있는 그대로
+npm run shot:enemy                                  # 네 종류를 있는 그대로
 npm run shot:enemy -- shield calm worn flash aim    # 방패병의 네 상태
 npm run shot:enemy -- crowd                         # 적이 상한(17마리)까지 찬 화면
 npm run shot:enemy -- crowd 5                       # 견줄 화면(판의 첫머리)
@@ -62,6 +62,21 @@ npm run shot:enemy -- crowd veteran                 # 그 자리까지 실제로
 기다렸다가** 찍고(창을 연 시각이 아니다 — 다 채우는 데 걸리는 시간이 장마다 다르다),
 찍은 프레임의 적·화살·코어 수와 드로우콜, 그리고 **가장 많았던 프레임**을 함께 출력한다.
 화살은 적에게 꽂혀서도 죽어 프레임마다 크게 흔들리므로 한 프레임만 봐서는 읽을 수 없다.
+
+카드 한 장을 3중 1택 화면에 세워 보고 싶으면 그쪽에도 도구가 있다.
+
+```bash
+npm run shot:card -- repel          # 밀어내기가 낀 카드 화면 (모바일·데스크톱)
+npm run shot:card -- repel mend     # 여러 장을 잇달아
+npm run shot:card -- repel mobile   # 한쪽 화면만
+```
+
+qa도 카드 화면을 찍지만 **어느 셋이 뜨는지는 판이 정한다**(아홉 장에서 섞어 셋을 뽑는다) —
+방금 만든 카드가 그 셋에 들지는 운이다. `shot:card` 는 **뜬 셋을 내려놓고 다시 뽑아**
+그 카드가 낄 때까지 되풀이한다. 한 장도 고르지 않으므로 능력치도 눈금도 처음 그대로다.
+찍는 사람은 체력이 절반쯤 남아 있다 — 가득 차면 회복 카드가 후보에서 빠져
+그 장만 영영 못 찍히기 때문이다. 카드 id를 잘못 적으면 되뽑는 동안 실제로 본 카드들을
+그대로 보여 준다.
 
 `veteran` 을 붙이면 시계를 미는 대신 **판을 실제로 돌린다** — 코어를 주우러 걷고 화력 카드를
 고르고 적을 잡는 것이 전부 게임 안에서 일어나므로, 그 화면의 레벨과 화력이 진짜 그 판의 값이다
@@ -144,7 +159,8 @@ which claude && claude --version && node --version
 | `tools/shot.mjs` | 화면 QA. 실제 브라우저로 띄워 스크린샷 + 콘솔 에러·안전 영역 검사 |
 | `tools/latency.mjs` | 입력 지연 측정(`npm run latency`). 터치 → 화면 반영까지 |
 | `tools/enemy-shot.mjs` | 적을 눈으로 본다(`npm run shot:enemy`). 한 종류를 가까이서, `crowd` 로 무리 전체, `crowd veteran` 으로 다 자란 사람의 난전 |
-| `tools/lib/preview.mjs` | 두 도구가 함께 쓰는 미리보기 서버 띄우기 |
+| `tools/card-shot.mjs` | 카드 한 장을 눈으로 본다(`npm run shot:card -- <id>`). 그 카드가 낄 때까지 되뽑아 3중 1택 화면을 세운다 |
+| `tools/lib/preview.mjs` | 도구들이 함께 쓰는 미리보기 서버 띄우기 |
 | `tests/support/loadScene.ts` | 부하 장면(적 20·투사체 60). 성능 측정이 쓰는 장면 |
 | `tests/perf/` | `npm run perf` 가 도는 측정. `npm test` 에는 포함되지 않는다 |
 | `shots/` | QA 스크린샷 (git 제외) |
