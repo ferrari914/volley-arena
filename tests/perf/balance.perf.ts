@@ -48,10 +48,16 @@ const LONGEST = 330;
  * 그 사람이 `takeAny`와 같은 사람이다. 그래서 **반대쪽 끝**을 세웠다 —
  * 보조만 고르는 사람은 화력이 가장 약하게 자라는 쪽이고, 아래쪽 꼬리는 늘 거기서 나온다.
  */
-const PEOPLE: readonly { name: string; choose: Chooser }[] = [
-  { name: '아무거나 고르는 사람', choose: takeAny },
-  { name: '화력을 먼저 고르는 사람', choose: preferPower },
-  { name: '보조를 먼저 고르는 사람', choose: preferSupport },
+const PEOPLE: readonly { name: string; choose: Chooser; inWindow: boolean }[] = [
+  { name: '아무거나 고르는 사람', choose: takeAny, inWindow: true },
+  { name: '화력을 먼저 고르는 사람', choose: preferPower, inWindow: true },
+  /**
+   * **`inWindow`가 false인 단 한 사람.** 3~5분 선(④)을 이 사람으로 재지 않는다 —
+   * 판이 짧은 것이 이 사람의 정의이기 때문이다(중앙 128초 · 선 아래). 세는 자리에 넣으면
+   * 그 자리는 "밸런스가 선 안인가"가 아니라 **"반대쪽 끝이 얼마나 끝인가"**를 재게 된다.
+   * 이 사람만 보는 선은 ②(중앙 > 120초)에 따로 있고, 그쪽이 훨씬 예민하다(아래 ④ 주석).
+   */
+  { name: '보조를 먼저 고르는 사람', choose: preferSupport, inWindow: false },
 ];
 
 const inRange = (rows: readonly MatchResult[]): number =>
@@ -93,9 +99,12 @@ function standing(): { median: number; shortest: number; longest: number } {
 }
 
 /** 세 사람을 한 벌 돌린다. 발이 바뀌면 사람 셋이 통째로 다른 판을 산다. */
-const table = (input: (world: World) => FrameInput): { name: string; rows: MatchResult[] }[] =>
+const table = (
+  input: (world: World) => FrameInput,
+): { name: string; inWindow: boolean; rows: MatchResult[] }[] =>
   PEOPLE.map((p) => ({
     name: p.name,
+    inWindow: p.inWindow,
     rows: SEEDS.map((seed) => playMatch(seed, 600, input, p.choose)),
   }));
 
@@ -116,6 +125,8 @@ describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
   it('180판이 밸런스 선 안에 든다', () => {
     const byPerson = walking;
     const all = byPerson.flatMap((p) => p.rows);
+    /** ④가 재는 자리. 반대쪽 끝 한 사람은 빠져 있다(위 `PEOPLE`의 `inWindow`). */
+    const inWindow = byPerson.filter((p) => p.inWindow).flatMap((p) => p.rows);
 
     console.log(
       [
@@ -127,6 +138,11 @@ describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
         ...byPerson.map((p) => line(p.name, p.rows)),
         '',
         line('모두', all),
+        `  선 안 잣대  ${inRange(inWindow)}/${inWindow.length}판 ` +
+          `(${byPerson
+            .filter((p) => p.inWindow)
+            .map((p) => p.name)
+            .join(' · ')} — ④가 재는 자리)`,
         (() => {
           const stood = standing();
           return (
@@ -145,30 +161,73 @@ describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
     const medians = byPerson.map((p) => median(p.rows.map((r) => r.elapsed)));
     const [any, power, support] = [medians[0] ?? 0, medians[1] ?? 0, medians[2] ?? 0];
 
-    // ① 잘 고르는 두 사람은 3~5분 안에 끝난다(실측 249초 · 249초).
+    // ① 잘 고르는 두 사람은 3~5분 안에 끝난다(실측 중앙 243초 · 296초 —
+    // 씨앗 창문 여덟 개에서 220~260 · 276~309초. 아래 ④의 표와 같은 자리에서 쟀다).
     expect(any, '아무거나 고르는 사람의 중앙값').toBeGreaterThan(SHORTEST);
     expect(any, '아무거나 고르는 사람의 중앙값').toBeLessThan(LONGEST);
     expect(power, '화력을 먼저 고르는 사람의 중앙값').toBeGreaterThan(SHORTEST);
     expect(power, '화력을 먼저 고르는 사람의 중앙값').toBeLessThan(LONGEST);
 
-    // ② 보조만 골라도 판이 반토막 나지는 않는다(실측 153초). 여기가 무너지면
+    // ② 보조만 골라도 판이 반토막 나지는 않는다. 여기가 무너지면
     // 3중 1택이 "화력 아니면 죽음"이 되어 고르기가 뜻을 잃는다.
+    //
+    // **반대쪽 끝 한 사람을 보는 선은 여기 하나뿐이다**(세션 56이 ④에서 그 사람을 뺐다).
+    // 실측은 여덟 창문에서 123 · 126 · 127 · 127 · 128 · 130 · 131 · 133초
+    // (평균 128.1 · 표준편차 3.0)로, 선(120)까지 남은 폭이 2.7σ다. ④가 그랬듯
+    // **다음에 빨개질 자리는 여기다** — 이 사람을 더 깎는 값을 넣는 바퀴는 넣기 전후로
+    // 이 표를 나란히 놓아라.
     expect(support, '보조를 먼저 고르는 사람의 중앙값').toBeGreaterThan(120);
 
-    // ③ 그런데 고르기는 뜻이 있어야 한다(실측 249 / 153 = 1.63배).
+    // ③ 그런데 고르기는 뜻이 있어야 한다(실측 296 / 130 = 2.26배 —
+    // 여덟 창문에서 2.16~2.45배라 선 1.15배와는 한참 떨어져 있다).
     // 두 끝이 같은 값을 내면 카드는 장식이다.
     expect(power, `화력 ${power.toFixed(0)}초 vs 보조 ${support.toFixed(0)}초`).toBeGreaterThan(
       support * 1.15,
     );
 
-    // ④ 표 전체의 모양. 실측 선 안 141/180판 · p90 312초.
+    // ④ 표 전체의 모양.
     //
     // **'가장 긴 판'으로 재던 것을 p90으로 바꿨다(세션 40).** 게임을 한 줄도 안 바꾸고
     // 씨앗 블록만 옮겨 여섯 번 재니 그 값이 322~396초로 흔들렸다 — 420 선이 그 폭 바로 위라,
     // 밸런스와 무관한 씨앗 운이 통과 여부를 정하고 있었다(수치와 근거는
     // `tests/progression.test.ts`의 '위쪽 꼬리' 주석에 있다). 여기서도 같은 자를 쓴다.
+    //
+    // **'선 안'에서 반대쪽 끝 한 사람을 뺐다 — 180판이 아니라 120판을 센다(세션 56).**
+    // 세션 20이 141/180을 보고 120을 잡았고, 그 뒤 폭탄병(51)과 카드 두 장(48·53)을 지나며
+    // 실측이 115까지 내려와 **빨간 채로 두 바퀴를 지나왔다**(아무도 `npm run perf`를 안 돌린다 —
+    // DESIGN '검사 명령'에 없다). 세션 56이 게임을 한 줄도 안 바꾸고 씨앗 창문만 옮겨
+    // 여덟 번 재니, 선(120)이 **평균보다 위**에 있었다. 여덟 창문 중 둘에서만 통과한다:
+    //
+    // | 씨앗 창문 60개씩 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 평균 · 표준편차 |
+    // |---|---|---|---|---|---|---|---|---|---|
+    // | 아무거나 고르는 사람 | 53 | 45 | 50 | 55 | 54 | 53 | 56 | 55 | 52.6 |
+    // | 화력을 먼저 고르는 사람 | 46 | 47 | 45 | 48 | 48 | 49 | 45 | 46 | 46.8 |
+    // | **보조를 먼저 고르는 사람** | 16 | 15 | 20 | 14 | 22 | 19 | 16 | 11 | **16.6** |
+    // | 셋 (옛 자 · 선 120) | 115 | 107 | 115 | 117 | **124** | **121** | 117 | 112 | 116.0 · 5.2 |
+    // | **둘 (지금 자 · 선 85)** | 99 | 92 | 95 | 103 | 102 | 102 | 101 | 101 | **99.4 · 3.9** |
+    //
+    // **셋으로 세면 그 값은 밸런스를 재지 않는다.** 보조를 먼저 고르는 사람은 중앙이 128초로
+    // 선(150) 아래라, 그 사람의 판은 **설계상 3분의 2가 선 밖**이다(60판 중 16판만 안에 든다).
+    // 아무리 밸런스가 좋아져도 셋의 합은 64% 언저리에 묶이고, 더 나쁜 것은 **한쪽이 다른 쪽을
+    // 가린다**는 것이다 — 게임이 전체적으로 느려지면 앞의 둘은 위로 새 나가는데 이 사람은
+    // 오히려 선 안으로 들어와 합이 안 움직인다(세션 53의 밀어내기가 그렇게 보였다:
+    // 51→53 · 49→46 · 22→16 = 122→115).
+    // 이 사람을 안 세도 놓치는 것이 없다: 그 사람만 보는 선이 ②이고, 그쪽은 **여덟 창문 모두
+    // 123~133초**(평균 128.1 · 표준편차 3.0)라 훨씬 예민하다. 아래쪽 꼬리는 `tail.perf.ts`가
+    // 480판으로 따로 본다. **셋의 표는 위 console.log에 그대로 찍는다** — 안 세는 것이지
+    // 안 보는 것이 아니다.
+    //
+    // **선을 85로 잡은 이유.** 여덟 창문의 실측이 92~103(평균 99.4 · 표준편차 3.9)이다.
+    // 가장 나쁜 창문(92)에서 2σ 더 물러난 자리가 85다. 이 표는 값을 고르는 자이지 매 바퀴
+    // 지키는 문턱이 아니므로(위 주석) 좁게 잡지 않는다 — 여기가 울면 **판의 12%p가 3~5분
+    // 밖으로 나갔다**는 뜻이고, 그건 씨앗 운으로는 안 나는 크기다.
+    // p90과 '가장 긴 판'은 그대로 180판 전부로 잰다. 위쪽 천장을 재는 값이라 짧은 판이
+    // 섞이는 것이 선을 느슨하게 할 뿐 눈을 가리지 않는다.
     const lengths = [...all.map((r) => r.elapsed)].sort((a, b) => a - b);
-    expect(inRange(all)).toBeGreaterThanOrEqual(120);
+    expect(
+      inRange(inWindow),
+      `선 안 ${inRange(inWindow)}/${inWindow.length}판 (반대쪽 끝은 ②가 본다)`,
+    ).toBeGreaterThanOrEqual(85);
     expect(quantile(lengths, 0.9), '180판의 p90').toBeLessThan(LONGEST);
     expect(lengths[lengths.length - 1] ?? 0, '180판 중 가장 긴 판').toBeLessThan(480);
 
