@@ -79,16 +79,21 @@ export interface Arrow {
  * - `shield` — 앞을 막고 걸어와 쏜다. 정면으로 온 화살은 방패가 받는다. → 돌아서 쏴라
  * - `bomber` — 붙어서 제 몸을 터뜨린다. 터지는 원이 붙어 선 자리보다 넓다. → 물러나라
  * - `looter` — 나를 보지 않고 코어를 주워 삼킨다. 아프게 하지 않는다. → 쫓아가라
+ * - `lobber` — 내가 **선 자리**로 돌을 띄워 보낸다. 기둥을 넘어간다. → 그 자리를 떠나라
  *
- * **다섯의 요구가 겹치지 않는다.** 앞의 셋에 대한 답은 전부 "거리를 둔 채 방향을 바꾸는 것"이라
+ * **여섯의 요구가 겹치지 않는다.** 앞의 셋에 대한 답은 전부 "거리를 둔 채 방향을 바꾸는 것"이라
  * 폭탄병에게는 하나도 통하지 않고(`data/config.ts`의 `BOMBER`), 넷에 대한 답은 전부
  * "어떻게 안 맞는가"라 약탈꾼에게는 하나도 통하지 않는다(`LOOTER`) — 그 적은 때리지 않는다.
+ * **다섯은 전부 나와 그 적 사이의 관계를 묻는다**(거리·각·방향). 투석병만 묻는 것이
+ * 관계가 아니라 **내가 서 있는 땅**이다(`LOBBER`) — 그 적이 어디 있든, 사이에 무엇이 있든
+ * 답은 하나다: 표시된 자리에서 나가라.
  *
- * 종류마다 다른 수치는 `data/config.ts`의 `ENEMY`·`CHARGER`·`SHIELD`·`BOMBER`·`LOOTER`에 있고,
+ * 종류마다 다른 수치는 `data/config.ts`의
+ * `ENEMY`·`CHARGER`·`SHIELD`·`BOMBER`·`LOOTER`·`LOBBER`에 있고,
  * 행동이 갈리는 곳은 `systems/enemyAi.ts` 한 곳뿐이다
  * (방패가 화살을 받는 자리만 `systems/combat.ts`에 있다 — 판정은 화살 쪽 일이다).
  */
-export type EnemyKind = 'archer' | 'charger' | 'shield' | 'bomber' | 'looter';
+export type EnemyKind = 'archer' | 'charger' | 'shield' | 'bomber' | 'looter' | 'lobber';
 
 /**
  * 적이 설 자리 하나. 종류를 적지 않으면 활잡이다(DESIGN 5번의 그 적).
@@ -228,6 +233,32 @@ export interface Blast {
   radius: number;
   /** 터진 뒤 지난 시간(s). `BOMBER.flashTime`이 지나면 사라진다. */
   age: number;
+  alive: boolean;
+}
+
+/**
+ * 날아가는 돌 하나 (DESIGN 9번 · 투석병). **화살과 달리 맞힐 것을 쫓지 않는다** —
+ * 떠나는 순간 떨어질 자리가 정해지고(그때의 플레이어 자리), 그 뒤로는 시간만 흐른다.
+ * 그래서 중간에 무엇을 만나도 아무 일이 없다(기둥도 몸도) — 하늘을 지나가기 때문이다.
+ *
+ * **이것 자체는 아프지 않다.** 떨어지는 순간 `Blast` 하나가 되고, 누구에게 닿았는지는
+ * 그 원이 정한다(`core/World.ts`) — 폭탄병이 터지는 자리와 같은 규칙이다.
+ */
+export interface Lob {
+  /** 렌더러가 메시를 짝지을 때 쓰는 고유 번호. */
+  id: number;
+  /** 떠난 자리. 화면이 포물선을 그릴 때 쓴다. */
+  from: Vec2;
+  /** 떨어질 자리. **돌이 떠나는 순간의 플레이어 자리**이고, 그 뒤로 바뀌지 않는다. */
+  to: Vec2;
+  /** 남은 비행 시간(s). 0이 되는 순간 떨어진다. */
+  remaining: number;
+  /** 전체 비행 시간(s) — `LOBBER.flight`가 그대로 들어온다. 화면이 진행도를 잰다. */
+  flight: number;
+  /** 떨어질 원의 반지름(m). `LOBBER.blastRadius`가 그대로 들어온다. */
+  radius: number;
+  /** 떨어질 때 깎는 체력. `LOBBER.damage`가 그대로 들어온다. */
+  damage: number;
   alive: boolean;
 }
 

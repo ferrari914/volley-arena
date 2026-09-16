@@ -14,6 +14,7 @@ import {
   play,
   playMatch,
   preferPower,
+  neverStandStill,
   quantile,
   walkToNearestCore,
 } from './support/match';
@@ -326,12 +327,21 @@ const RUNAWAY = 480;
  * 그대로 두면 이 자들이 재는 것이 돌진형·방패병이 아니라 **제 빈 구멍**이 된다.
  * 실제로 그랬다: 감싸기 전 `circleShield`의 가장 짧은 판이 108초로 **안 도는 사람(132초)보다
  * 짧아져**, "돌면 아래쪽 꼬리가 사라진다"는 이 파일의 결론이 뒤집혔다.
+ *
+ * **투석병이 들어오면서 한 겹 더 감쌌다**(세션 74 · `neverStandStill`). 같은 고장이 같은
+ * 모양으로 다시 왔다 — 비키기도 돌기도 **발이 멎은 동안에는** 통하지 않는다.
+ * 감싸기 전 실측: 이 둘의 꼬리가 0 → 5판으로 늘어, 돌진형을 재던 자가 조용히 투석병을
+ * 재고 있었다. 맨 앞의 `results`(코어만 보고 걷는 사람)는 그대로 둔다 —
+ * 그 사람은 **아무 답도 모르는 사람**이고, 3~5분 선은 그 사람으로 재는 것이 이 파일의 규칙이다.
+ *
  * 맨 앞의 `results`(코어만 보고 걷는 사람)는 그대로 둔다 — 그 사람은 **아무 답도 모르는 사람**이고,
  * 3~5분 선은 그 사람으로 재는 것이 이 파일의 규칙이다.
  */
-const dodged = SEEDS.map((seed) => playMatch(seed, 600, backOffBomber(dodgeCharger)));
+const dodged = SEEDS.map((seed) => playMatch(seed, 600, neverStandStill(backOffBomber(dodgeCharger))));
 /** 방패병을 옆구리로 돌고 터질 원에서는 물러나는 사람의 같은 스무 판(세션 24·51). 세 번째 자다. */
-const circled = SEEDS.map((seed) => playMatch(seed, 600, backOffBomber(circleShield)));
+const circled = SEEDS.map((seed) =>
+  playMatch(seed, 600, neverStandStill(backOffBomber(circleShield))),
+);
 
 /**
  * **아래쪽 꼬리를 재는 자 (세션 53). 씨앗 스무 개로는 못 잰다.**
@@ -538,7 +548,7 @@ describe('밸런스 — 예고를 보고 비키면 몸에 닿지 않는다 (DESI
   });
 
   it('아래쪽 꼬리는 게임의 성질이 아니라 안 비키는 버릇이다', () => {
-    const smart = shortMatches(backOffBomber(dodgeCharger));
+    const smart = shortMatches(neverStandStill(backOffBomber(dodgeCharger)));
     const lengths = dodged.map((r) => r.elapsed);
     console.log(
       `비키는 사람 — ${SHORTEST}초 안에 쓰러진 판 ${smart}/${TAIL_SEEDS.length}` +
@@ -630,7 +640,7 @@ describe('밸런스 — 옆구리로 돌면 판이 뚫린다 (DESIGN 9번)', () 
   });
 
   it('아래쪽 꼬리는 게임의 성질이 아니라 돌 줄 모르는 버릇이다', () => {
-    const smart = shortMatches(backOffBomber(circleShield));
+    const smart = shortMatches(neverStandStill(backOffBomber(circleShield)));
     const lengths = circled.map((r) => r.elapsed);
     console.log(
       `도는 사람 — ${SHORTEST}초 안에 쓰러진 판 ${smart}/${TAIL_SEEDS.length}` +

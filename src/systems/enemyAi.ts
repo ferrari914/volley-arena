@@ -16,6 +16,7 @@ import { insideObstacle, sightBlocker } from './obstacles';
  *   방패병(shield)   — 멈춰 서서 겨눈 뒤 → 화살을 놓는다 (활잡이와 같다)
  *   폭탄병(bomber)   — 멈춰 서서 달아오른 뒤 → 제 몸을 터뜨린다
  *   약탈꾼(looter)   — 멈춰 서서 웅크린 뒤 → **코어를 삼킨다** (플레이어를 때리지 않는다)
+ *   투석병(lobber)   — 멈춰 서서 돌을 든 뒤 → **지금 플레이어가 선 자리로 띄운다**
  * 예고 칸을 종류마다 다시 만들지 않은 이유: 예고 없이 아픈 적은 피할 방법이 없고,
  * 예고의 모양이 종류마다 다르면 처음 하는 사람이 매번 새로 배워야 한다.
  *
@@ -45,6 +46,10 @@ import { insideObstacle, sightBlocker } from './obstacles';
  * `playerPos`를 **가지 않을 자리**로 쓴다 — 플레이어 곁의 코어는 건드리지 않고
  * (`LOOTER.guard`), 훔칠 것이 없으면 물러나 선다(`LOOTER.standOff`).
  * 다섯 중 유일하게 **플레이어를 향해 돌지 않는 적**이기도 하다.
+ *
+ * **투석병만 가림을 보지 않는다**(`stepLobber`). 돌을 띄워 보내므로 기둥이 사이에 들어도
+ * 던지고, 그래서 시야를 되찾으러 돌지도 않는다 — 가림 뒤가 안전하지 않은 첫 자리다.
+ * 화면 밖은 나머지와 같이 본다(몸의 예고를 볼 수 없는 자리에서는 들지 않는다).
  *
  * **돌진형과 폭탄병에는 이 구간이 없다.** 물러나지도 옆으로 돌지도 않고 곧장 온다 —
  * 그것이 활잡이와 정반대인 지점이고, 둘이 함께 있어야 하는 이유다.
@@ -89,6 +94,8 @@ export interface EnemyStepOptions {
   bomber: BomberOptions;
   /** 약탈꾼(DESIGN 9번)의 수치. 이 적만 쓰는 값이라 전부 여기 있다. */
   looter: LooterOptions;
+  /** 투석병(DESIGN 9번)의 수치. 움직임은 활잡이의 값을 그대로 쓰므로 여기 없다. */
+  lobber: LobberOptions;
   /**
    * 지금 맵에 놓인 경험치 코어들(DESIGN 3번). **약탈꾼 하나 때문에 여기 있다** —
    * 다섯 중 그 적만 플레이어가 아닌 것을 보고 걷는다(`stepLooter`).
@@ -177,6 +184,29 @@ export interface LooterOptions {
 }
 
 /**
+ * 투석병만 쓰는 수치. 시작값은 `data/config.ts`의 `LOBBER`에서 온다.
+ * **`flight`·`blastRadius`·`damage`는 이 파일에서 쓰이지 않고 그대로 나간다**(`EnemyLob`) —
+ * 날아가는 동안의 일과 떨어진 원이 누구에게 닿았는지는 받는 쪽(World)이 판단한다.
+ * (`BomberOptions`와 같은 자리다.)
+ */
+export interface LobberOptions {
+  speed: number;
+  turnRate: number;
+  /** 이 거리 안이면 돌을 들어 올린다(m). */
+  fireRange: number;
+  /** 돌을 들고 멈춰 서 있는 시간(s). */
+  windup: number;
+  /** 던지고 다음 돌을 들기까지의 시간(s). */
+  cooldown: number;
+  /** 돌이 날아가는 시간(s). */
+  flight: number;
+  /** 떨어질 원의 반지름(m). */
+  blastRadius: number;
+  /** 떨어질 때 깎는 체력. */
+  damage: number;
+}
+
+/**
  * 겨누고 쏘는 박자. 활잡이와 방패병이 같은 코드를 쓰되 값만 갈린다 —
  * 종류마다 겨눔을 새로 만들면 "멈춰 선 적은 곧 무언가 한다"는 예고의 규칙이 갈라진다.
  */
@@ -219,6 +249,23 @@ export interface EnemyStepResult {
   blasts: EnemyBlast[];
   /** 이번 스텝에 약탈꾼이 삼킨 코어들. 없애는 것은 받는 쪽(World)의 일이다. */
   steals: CoreSteal[];
+  /** 이번 스텝에 투석병이 띄운 돌들. 날리는 일은 받는 쪽(World)이 한다. */
+  lobs: EnemyLob[];
+}
+
+/**
+ * 이번 스텝에 투석병이 띄운 돌 하나 (DESIGN 9번). **떨어질 자리가 여기서 정해진다** —
+ * 돌이 떠나는 순간의 플레이어 자리이고, 그 뒤로는 아무것도 이 돌을 돌려세우지 못한다.
+ * 그것이 이 적의 규칙("그 자리를 떠나라")이 성립하는 유일한 방식이다.
+ */
+export interface EnemyLob {
+  /** 떠난 자리(던진 적의 몸). 화면이 포물선을 그릴 때 쓴다. */
+  from: Vec2;
+  /** 떨어질 자리. 돌이 떠나는 순간 플레이어가 선 그 자리다(`landingPoint`). */
+  to: Vec2;
+  flight: number;
+  radius: number;
+  damage: number;
 }
 
 /** 약탈꾼 하나가 코어 하나를 삼켰다 (DESIGN 9번). */
@@ -231,7 +278,7 @@ export interface CoreSteal {
 /** 적을 한 스텝 움직이고, 이번에 저지른 것들을 돌려준다. */
 export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyStepResult {
   const { dt, playerPos } = options;
-  const result: EnemyStepResult = { shots: [], contacts: [], blasts: [], steals: [] };
+  const result: EnemyStepResult = { shots: [], contacts: [], blasts: [], steals: [], lobs: [] };
 
   for (const enemy of enemies) {
     if (enemy.hitFlash > 0) enemy.hitFlash = Math.max(0, enemy.hitFlash - dt * 2.5);
@@ -270,6 +317,11 @@ export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyS
 
     if (enemy.kind === 'looter') {
       stepLooter(enemy, enemies, dir, dist, options, result);
+      continue;
+    }
+
+    if (enemy.kind === 'lobber') {
+      stepLobber(enemy, enemies, dir, dist, options, result);
       continue;
     }
 
@@ -583,6 +635,91 @@ function stepLooter(
   }
   addSeparation(move, enemy, enemies, options.separation);
   moveBy(enemy, move, looter.speed, options);
+}
+
+/**
+ * 투석병 한 마리 (DESIGN 9번). **문법은 앞의 다섯과 똑같다** —
+ * 다가온다 → 멈춰 서서 돌을 들어 올린다 → **지금 플레이어가 선 자리로 띄운다.**
+ *
+ * - **움직임은 활잡이의 것 그대로다**(`desiredMove` · 멀면 다가오고 가까우면 물러나고
+ *   사이에서는 옆으로 돈다). 방패병이 활잡이의 박자를 그대로 쓴 것과 같은 자리다 —
+ *   **갈리는 것은 저지르는 것 하나여야** 새 종류가 새 규칙을 만들지 않는다.
+ * - **가림을 보지 않는다**(`sightBlocker`를 부르지 않는다). 돌은 기둥을 넘어가므로
+ *   가려 있어도 던지고, 그래서 **시야를 되찾으러 옆으로 돌지도 않는다**(`blocker`에 null을
+ *   건넨다). 기둥 뒤에 선 사람에게 이 적만은 그대로 온다 — 이 적이 새로 여는 자리가 거기다.
+ * - **화면 밖에서는 들지 않는다**(`outOfView` · 나머지와 같은 규칙). 몸의 예고를 볼 수
+ *   없는 자리에서 시작하면 남는 예고가 날아가는 동안(`flight`)뿐이라, 그 한 겹을
+ *   고장의 여지로 두지 않는다.
+ * - **떨어질 자리는 돌이 떠나는 순간에 정해진다.** 겨냥이 아니라 **복사**다(`landingPoint`) —
+ *   그 뒤로는 무엇도 이 돌을 돌려세우지 못하므로, 답은 **그 자리에서 나가는 것** 하나뿐이고
+ *   어느 쪽으로 나가도 좋다. **가는 길 앞을 재지 않는 이유는 세션 74가 재서 정했다** —
+ *   `data/config.ts`의 `LOBBER.damage`를 보라. 앞을 재면 곧장 걷는 사람이 반드시 맞고,
+ *   그 사람은 이 게임의 길이를 재는 자다(판 220 → 159초).
+ *
+ * **들고 있는 동안 쓰러뜨리면 돌은 떠나지 않는다** — 심지가 타는 동안 쓰러뜨린 폭탄병,
+ * 삼키는 중에 쓰러뜨린 약탈꾼과 같은 자리다. 그것이 이 예고의 값이다.
+ */
+function stepLobber(
+  enemy: Enemy,
+  enemies: readonly Enemy[],
+  dir: Vec2,
+  dist: number,
+  options: EnemyStepOptions,
+  result: EnemyStepResult,
+): void {
+  const { dt, lobber } = options;
+
+  // 몸은 늘 플레이어를 향해 돈다(활잡이와 같다). **다만 이 적에게 도는 것은 겨냥이 아니다** —
+  // 돌이 떨어질 자리는 몸이 보는 쪽과 상관없다. 돌아서 있는 적이 던지면 화면이 고장으로 읽힌다.
+  enemy.facing = rotateToward(enemy.facing, Math.atan2(dir.y, dir.x), lobber.turnRate * dt);
+
+  if (enemy.aimTimer > 0) {
+    enemy.aimTimer -= dt;
+    if (enemy.aimTimer > 0) return; // 들고 있는 동안에는 발이 멎는다. 그 멈춤이 첫 예고다.
+    enemy.aimTimer = 0;
+    enemy.fireCooldown = lobber.cooldown;
+    // **들기 시작했으면 끝까지 던진다.** 그 사이에 기둥 뒤로 숨은 사람도 화면 밖으로
+    // 밀어낸 사람도 피한 것이 아니다 — 이 적에게서 피하는 자리는 던진 **뒤**에 있다.
+    result.lobs.push({
+      from: { x: enemy.pos.x, y: enemy.pos.y },
+      to: landingPoint(options),
+      flight: lobber.flight,
+      radius: lobber.blastRadius,
+      damage: lobber.damage,
+    });
+    return;
+  }
+
+  if (enemy.fireCooldown > 0) enemy.fireCooldown -= dt;
+  else if (
+    options.playerAlive &&
+    dist <= lobber.fireRange &&
+    !outOfView(enemy, options.playerPos, options.view)
+  ) {
+    enemy.aimTimer = lobber.windup;
+    return;
+  }
+
+  const move = desiredMove(enemy, dir, dist, options, null);
+  addSeparation(move, enemy, enemies, options.separation);
+  moveBy(enemy, move, lobber.speed, options);
+}
+
+/**
+ * 돌이 떨어질 자리 — **돌이 떠나는 순간 플레이어가 선 그 자리.**
+ *
+ * **겨냥이 아니라 복사다.** 그래서 이 적이 벌하는 것은 방향도 거리도 아니고 **멈춤**이다 —
+ * 한 발짝만 걸어 나가면 어느 쪽으로 가든 빗나가고, 그 자리에 손을 놓고 있으면 반드시 맞는다.
+ *
+ * **아레나 안으로 자른다.** 벽에 붙어 선 사람의 자리는 벽 턱에 걸려 있어, 자르지 않으면
+ * 그리는 원의 한쪽이 벽 밖에 나가 화면이 어긋나 보인다.
+ */
+function landingPoint(options: EnemyStepOptions): Vec2 {
+  const { playerPos, arenaRadius } = options;
+  const reach = length(playerPos);
+  const limit = arenaRadius - 0.6;
+  if (reach <= limit) return { x: playerPos.x, y: playerPos.y };
+  return { x: (playerPos.x / reach) * limit, y: (playerPos.y / reach) * limit };
 }
 
 /**

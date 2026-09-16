@@ -7,6 +7,7 @@ import {
   CORE,
   ENEMY,
   LEVEL,
+  LOBBER,
   PLAYER,
   REINFORCE,
   REVIVE,
@@ -27,6 +28,7 @@ import {
   type Enemy,
   type EnemyKind,
   type EnemySpawn,
+  type Lob,
   type Player,
   type PlayerStats,
   type Progress,
@@ -36,7 +38,7 @@ import {
 import { length, normalize, rotateToward, wrapAngle, type Vec2 } from './math';
 import { findNearestEnemy } from '../systems/autoAim';
 import { damagePlayer, healPlayer, stepArrows, stepPlayerRecovery } from '../systems/combat';
-import { stepEnemies, type EnemyBlast } from '../systems/enemyAi';
+import { stepEnemies, type EnemyBlast, type EnemyLob } from '../systems/enemyAi';
 import {
   createDropCores,
   createProgress,
@@ -74,6 +76,7 @@ function bodyOf(kind: EnemyKind): { maxHp: number; shieldHp: number } {
   if (kind === 'shield') return { maxHp: SHIELD.maxHp, shieldHp: SHIELD.shieldHp };
   if (kind === 'bomber') return { maxHp: BOMBER.maxHp, shieldHp: 0 };
   if (kind === 'looter') return { maxHp: LOOTER.maxHp, shieldHp: 0 };
+  if (kind === 'lobber') return { maxHp: LOBBER.maxHp, shieldHp: 0 };
   return { maxHp: ENEMY.maxHp, shieldHp: 0 };
 }
 
@@ -126,6 +129,12 @@ export class World {
    * 폭발이 하는 일은 터지는 그 프레임에 다 끝나고, 여기 남는 것은 자국뿐이다.
    */
   readonly blasts: Blast[] = [];
+  /**
+   * 날아가는 중인 돌들 (DESIGN 9번 · 투석병). **떨어지는 순간 `blasts`의 원 하나가 된다** —
+   * 곧 이 목록은 "곧 저기에 떨어진다"를 담고, 저쪽은 "방금 저기에 떨어졌다"를 담는다.
+   * 둘을 한 목록에 담으면 화면이 **경고와 자국을 같은 것으로 그리게 된다.**
+   */
+  readonly lobs: Lob[] = [];
 
   /** 살아온 시간(s). */
   elapsed = 0;
@@ -152,6 +161,15 @@ export class World {
    */
   blastsFired = 0;
   blastHits = 0;
+  /**
+   * 투석병이 던진 돌의 수와, 그중 실제로 몸에 닿힌 수(DESIGN 9번).
+   * **`blastsFired`/`blastHits`와 같은 자리이고, 같은 이유로 한 쌍이다** —
+   * 던진 수만 세면 "자리를 떠났는가"를 볼 수 없고, 맞은 수만 세면 잘 쏴서 들고 있는
+   * 동안 눕힌 사람과 걸어 나가서 피한 사람이 섞인다.
+   * **이 적에게는 그 비가 곧 "가만히 서 있었는가"다** — 움직이기만 하면 맞지 않는다.
+   */
+  lobsThrown = 0;
+  lobHits = 0;
   /**
    * 약탈꾼이 삼켜 간 코어의 수(DESIGN 9번). `bodyHits`와 같은 자리의 값이다 —
    * 화면에는 쓰지 않고 밸런스를 재는 쪽만 본다. **이 적이 실제로 무엇을 가져갔는지는
@@ -260,6 +278,7 @@ export class World {
   private joinedEnemies = 0;
   private nextCoreId = 1;
   private nextBlastId = 1;
+  private nextLobId = 1;
   private ambientTimer = CORE.ambient.spawnInterval;
   private readonly random: () => number;
 
@@ -327,6 +346,9 @@ export class World {
       if (damagePlayer(this.player, damage, PLAYER.invulnerable)) this.bodyHits += 1;
     }
     for (const blast of acted.blasts) this.detonate(blast);
+    // 투석병이 띄운 돌(DESIGN 9번). **여기서는 날려 보내기만 한다** — 닿는 것은
+    // 떨어지는 순간의 일이고(`updateLobs`), 그 사이에 자리를 떠난 사람은 맞지 않는다.
+    for (const lob of acted.lobs) this.throwLob(lob);
     // 약탈꾼이 삼킨 코어(DESIGN 9번). **없애는 것은 여기서 한다** — `stepEnemies`는
     // 무엇을 삼켰는지만 돌려준다(폭탄병의 원이 누구에게 닿았는지를 거기서 정하지 않는
     // 것과 같은 규칙이다). 삼킨 코어는 돌아오지 않는다.
@@ -368,6 +390,7 @@ export class World {
     }
 
     this.updateCores(dt);
+    this.updateLobs(dt);
     this.updateBlasts(dt);
     this.removeDeadArrows();
 
@@ -652,6 +675,7 @@ export class World {
       shield: SHIELD,
       bomber: BOMBER,
       looter: LOOTER_OPTIONS,
+      lobber: LOBBER,
       // 약탈꾼 하나가 보는 목록이다(`stepLooter`). **그 적만 플레이어가 아닌 것을 보고
       // 걷는다** — 나머지 넷에게는 이 배열이 없는 것과 같다.
       cores: this.cores,
@@ -749,6 +773,60 @@ export class World {
     const dy = this.player.pos.y - blast.at.y;
     if (dx * dx + dy * dy > blast.radius * blast.radius) return;
     if (damagePlayer(this.player, blast.damage, PLAYER.invulnerable)) this.blastHits += 1;
+  }
+
+  /**
+   * 투석병이 띄운 돌 하나를 날려 보낸다 (DESIGN 9번).
+   * **떨어질 자리는 이미 정해져 있다**(`stepLobber`가 정한, 돌이 떠나는 순간의 플레이어 자리).
+   * 여기서 하는 일은 그것을 목록에 얹는 것뿐이다 — 화살과 달리 지나는 길에 아무 일도 없다.
+   */
+  private throwLob(lob: EnemyLob): void {
+    this.lobsThrown += 1;
+    this.lobs.push({
+      id: this.nextLobId++,
+      from: { x: lob.from.x, y: lob.from.y },
+      to: { x: lob.to.x, y: lob.to.y },
+      remaining: lob.flight,
+      flight: lob.flight,
+      radius: lob.radius,
+      damage: lob.damage,
+      alive: true,
+    });
+  }
+
+  /**
+   * 날아가는 돌들. 시간이 다하면 **떨어진 자리에 원 하나를 남기고 사라진다**
+   * (DESIGN 9번 · 투석병).
+   *
+   * **닿는 판정은 폭탄병의 원과 한 글자도 다르지 않다**(`detonate`) — 그리는 원이 곧
+   * 맞히는 원이고, 무적 시간도 같은 것을 지난다. 바닥의 원은 화면에서 한 가지로 읽혀야
+   * 하므로 규칙도 하나여야 한다.
+   *
+   * **쓰러진 사람은 더 맞지 않는다**(적이 쏘지 않는 것과 같은 규칙). 날아가던 돌은
+   * 그래도 떨어진다 — 자국은 남고 아프지만 않다.
+   */
+  private updateLobs(dt: number): void {
+    if (this.lobs.length === 0) return;
+    for (const lob of this.lobs) {
+      lob.remaining -= dt;
+      if (lob.remaining > 0) continue;
+      lob.alive = false;
+      this.blasts.push({
+        id: this.nextBlastId++,
+        pos: { x: lob.to.x, y: lob.to.y },
+        radius: lob.radius,
+        age: 0,
+        alive: true,
+      });
+      if (this.player.hp <= 0) continue;
+      const dx = this.player.pos.x - lob.to.x;
+      const dy = this.player.pos.y - lob.to.y;
+      if (dx * dx + dy * dy > lob.radius * lob.radius) continue;
+      if (damagePlayer(this.player, lob.damage, PLAYER.invulnerable)) this.lobHits += 1;
+    }
+    for (let i = this.lobs.length - 1; i >= 0; i -= 1) {
+      if (!this.lobs[i]?.alive) this.lobs.splice(i, 1);
+    }
   }
 
   /** 터진 자국은 시간만 흐르다 사라진다. 게임 규칙에 닿는 것이 없다. */

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '../core/World';
-import { ARENA, ARROW, BOMBER, CHARGER, CORE, ENEMY, LOOTER, SHIELD } from '../data/config';
+import { ARENA, ARROW, BOMBER, CHARGER, CORE, ENEMY, LOBBER, LOOTER, SHIELD } from '../data/config';
 import type { ArenaMap } from '../data/maps';
 import type { Vec2 } from '../core/math';
 import type { ArrowOwner, CoreOrigin, Enemy } from '../entities/types';
@@ -12,12 +12,14 @@ import {
   createArrow,
   createCore,
   createEnemy,
+  createLob,
   createLockMarker,
   createPlayer,
   createPointBlankRing,
   PALETTE,
   SHIELD_POSE,
   type EnemyView,
+  type LobView,
 } from './models';
 import { cameraFocusFor, createGameCamera, placeCamera } from './camera';
 
@@ -55,6 +57,9 @@ export class Renderer {
   /** 터진 자국(DESIGN 9번 · 폭탄병). 화살·코어와 같은 풀 방식이다. */
   private readonly blastMeshes = new Map<number, THREE.Mesh>();
   private readonly blastPool: THREE.Mesh[] = [];
+  /** 날아가는 돌과 떨어질 자리의 고리(DESIGN 9번 · 투석병). 같은 풀 방식이다. */
+  private readonly lobViews = new Map<number, LobView>();
+  private readonly lobPool: LobView[] = [];
 
   /** 지금 세워 둔 기둥들(DESIGN 10번). 맵이 바뀌면 통째로 갈아 끼운다. */
   private obstacleGroup: THREE.Group | null = null;
@@ -141,6 +146,7 @@ export class Renderer {
     this.syncEnemies(world, dt);
     this.syncArrows(world);
     this.syncCores(world);
+    this.syncLobs(world, dt);
     this.syncBlasts(world);
     this.syncCamera(player.pos, dt);
   }
@@ -184,6 +190,7 @@ export class Renderer {
       const shield = enemy.kind === 'shield';
       const bomber = enemy.kind === 'bomber';
       const looter = enemy.kind === 'looter';
+      const lobber = enemy.kind === 'lobber';
       const aiming = enemy.aimTimer > 0;
       const dashing = enemy.dashTimer > 0;
       view.aimRing.visible = aiming;
@@ -205,9 +212,13 @@ export class Renderer {
             ? SHIELD.aimTime
             : looter
               ? LOOTER.swallow
-              : ENEMY.aimTime;
+              : lobber
+                ? LOBBER.windup
+                : ENEMY.aimTime;
         const charge = 1 - enemy.aimTimer / aimTime;
         view.aimRing.scale.setScalar(2.1 - charge * 1.1);
+        // 투석병이 달아오르는 색은 폭탄병의 심지와 같다 — 저지르는 것이 바닥의 원이라
+        // 그 색을 쓴다(약탈꾼이 코어의 색으로 달아오르는 것과 같은 규칙).
         view.bodyMaterial.emissive.setHex(
           charger
             ? PALETTE.charger
@@ -215,7 +226,9 @@ export class Renderer {
               ? PALETTE.shield
               : looter
                 ? PALETTE.core
-                : PALETTE.enemyArrow,
+                : lobber
+                  ? PALETTE.bomberFuse
+                  : PALETTE.enemyArrow,
         );
         view.bodyMaterial.emissiveIntensity = 0.15 + charge * 0.5;
       } else if (dashing) {
@@ -339,6 +352,53 @@ export class Renderer {
       entry.mesh.visible = false;
       this.coreMeshes.delete(id);
       this.corePools[entry.origin].push(entry.mesh);
+    }
+  }
+
+  /**
+   * 날아가는 돌 (DESIGN 9번 · 투석병). 코어·화살·자국과 같은 풀 방식이다.
+   *
+   * **화면이 하는 말은 둘이고, 둘 다 게임 쪽 값 그대로다.**
+   * 1. **돌은 포물선을 그린다**(`LOBBER.arcHeight`). 기둥(2.6m)보다 확실히 높이 솟아야
+   *    "저것은 넘어온다"가 화면에 적힌다 — 이 적이 가림을 보지 않는 이유가 거기 있다.
+   *    높이는 **화면만의 값이다**: 게임은 수평면만 보므로 이 곡선이 판정을 바꾸지 않는다.
+   * 2. **고리는 떨어질 자리에서 좁혀진다.** 다 좁혀졌을 때가 `lob.radius`, 곧 **실제로
+   *    닿는 원 그대로**다. 남은 시간이 그대로 고리의 크기라, 언제 떨어지는지와
+   *    어디까지 나가야 하는지를 고리 하나가 함께 말한다.
+   */
+  private syncLobs(world: World, dt: number): void {
+    const seen = new Set<number>();
+    for (const lob of world.lobs) {
+      seen.add(lob.id);
+      let view = this.lobViews.get(lob.id);
+      if (!view) {
+        view = this.lobPool.pop() ?? createLob();
+        view.group.visible = true;
+        view.ring.position.set(lob.to.x, view.ring.position.y, lob.to.y);
+        this.scene.add(view.group);
+        this.lobViews.set(lob.id, view);
+      }
+      const t = Math.min(1, Math.max(0, 1 - lob.remaining / lob.flight));
+      view.stone.position.set(
+        lob.from.x + (lob.to.x - lob.from.x) * t,
+        // 4t(1-t)는 0에서 떠서 1에서 닿고 한가운데에서 가장 높다.
+        ENEMY.height * 0.8 + LOBBER.arcHeight * 4 * t * (1 - t),
+        lob.from.y + (lob.to.y - lob.from.y) * t,
+      );
+      // 구르듯 돌린다. 멈춘 돌은 하늘에 붙은 그림처럼 보인다.
+      view.stone.rotation.x += dt * 4.5;
+      view.stone.rotation.z += dt * 3.1;
+      // 2.4배에서 1배로 좁힌다(겨누는 적의 발밑 고리와 같은 문법 · `createEnemy`).
+      view.ring.scale.setScalar(lob.radius * (2.4 - 1.4 * t));
+      view.ringMaterial.opacity = 0.45 + 0.4 * t;
+    }
+
+    for (const [id, view] of this.lobViews) {
+      if (seen.has(id)) continue;
+      this.scene.remove(view.group);
+      view.group.visible = false;
+      this.lobViews.delete(id);
+      this.lobPool.push(view);
     }
   }
 

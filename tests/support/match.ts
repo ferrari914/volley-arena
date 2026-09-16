@@ -222,6 +222,37 @@ export function backOffBomber(
   };
 }
 
+/**
+ * **손을 놓지 않는 사람**(DESIGN 9번 · 투석병). `backOffBomber`와 같은 자리다 —
+ * 새 적이 들어오면 재는 사람도 그 답을 알아야 한다. 모르는 사람만으로 재면
+ * **게임이 어려워진 것과 자가 눈을 감고 있는 것이 구별되지 않는다**(세션 51이 폭탄병에서 밟았다).
+ *
+ * **이 적의 답은 방향이 아니라 멈추지 않는 것이다.** 돌은 던지는 순간의 내 자리로 떨어지므로
+ * (`systems/enemyAi.ts`의 `landingPoint`) 한 발짝만 걸어 나가면 어느 쪽이든 빗나가고,
+ * 서 있으면 반드시 맞는다. 그래서 감싸는 것이 "비킨다"가 아니라 **"멈추지 않는다"**다.
+ *
+ * **왜 이 한 겹이 필요한가 — 재서 알았다(세션 74).** 비키는 사람도 도는 사람도 코어가
+ * 다 떨어진 순간에는 발이 멎는다(`walkToNearestCore`가 갈 곳을 못 찾는다). 그 몇 초가
+ * 이 적에게는 전부라, 감싸기 전 그 둘의 꼬리가 0 → 5판으로 늘었다 —
+ * **돌진형을 재던 자가 조용히 투석병을 재고 있었던 것이다.**
+ *
+ * 갈 곳이 없을 때 한복판으로 걷는 이유: 벽 앞은 이 게임이 두 번 닫은 요새 자리이고
+ * (`tests/maps.test.ts`의 '벽'), 한복판은 늘 갈 수 있는 한 곳이라 씨앗이 달라도 흔들리지 않는다.
+ */
+export function neverStandStill(
+  inner: (world: World) => FrameInput = walkToNearestCore,
+): (world: World) => FrameInput {
+  return (world) => {
+    const input = inner(world);
+    if (Math.hypot(input.move.x, input.move.y) > 0.01) return input;
+    const { x, y } = world.player.pos;
+    const away = Math.hypot(x, y);
+    // 한복판에 서 있으면 어느 쪽이든 좋다. 한 방향을 정해 두어야 판이 씨앗마다 같아진다.
+    if (away < 0.5) return { move: { x: 1, y: 0 }, aim: input.aim };
+    return { move: { x: -x / away, y: -y / away }, aim: input.aim };
+  };
+}
+
 /** 한 판을 끝까지 돌리고 남은 것. 씨앗 하나에 판 하나다. */
 export interface MatchResult {
   seed: number;

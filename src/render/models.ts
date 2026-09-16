@@ -78,6 +78,16 @@ export const PALETTE = {
   looter: 0x7f8f5c,
   /** 머리와 손. 몸보다 어두워야 등에 진 코어가 유일하게 밝은 자리로 남는다. */
   looterDark: 0x4d5836,
+  /**
+   * 투석병(DESIGN 9번). **여섯째 색은 자리가 좁다** — 붉은 활잡이(0°)·보라 돌진형(262°)·
+   * 청록 방패병(174°)·모래빛 폭탄병·이끼빛 약탈꾼이 이미 서 있다. 남은 자리가 그 사이의
+   * **장밋빛(330°)**이고, 활잡이의 연어빛과는 **채도와 어두움으로 갈랐다**
+   * (저쪽은 밝고 흐리고 이쪽은 진하다). 멀리서 둘이 섞이면 키로도 갈린다 —
+   * 여섯 중 유일하게 활잡이보다 크다(`BODY_LOOK`).
+   */
+  lobber: 0xe0479a,
+  /** 머리와 손. 몸보다 어두워야 머리 위로 든 돌이 유일하게 밝은 자리로 남는다. */
+  lobberDark: 0x8f2159,
   accent: 0xffd479,
   /**
    * 코앞 고리(DESIGN 8번 · 코앞 카드). **카드의 색 그대로다**(`data/upgrades.ts`의 `#22d94f`) —
@@ -389,6 +399,7 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
   const shield = kind === 'shield';
   const bomber = kind === 'bomber';
   const looter = kind === 'looter';
+  const lobber = kind === 'lobber';
   const look = BODY_LOOK[kind];
   const height = look.height;
   const bodyMaterial = standard(look.color, { roughness: look.roughness });
@@ -426,6 +437,22 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
 
   if (bomber) {
     // 부품 없음 — 위 주석을 보라. 정면을 가리키는 것을 달지 않는다.
+  } else if (lobber) {
+    // **머리 위로 든 돌.** 부품이 위에 달린 것은 이것뿐이다(앞의 다섯은 정면이거나 등이다) —
+    // 이 적이 저지르는 것은 앞으로 나가는 것이 아니라 **넘어가는 것**이기 때문이다.
+    // 색은 폭탄병의 심지와 같다(`bomberFuse`). 몸의 색이 아니라 **저지를 것의 색**을 쓰는
+    // 규칙 그대로이고, 떨어진 자국도 같은 색이라 "저 돌이 저 원이 된다"로 읽힌다.
+    const stone = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.34),
+      standard(PALETTE.bomberFuse, {
+        emissive: PALETTE.bomberFuse,
+        emissiveIntensity: 0.35,
+        roughness: 0.8,
+      }),
+    );
+    stone.position.set(0, height + 0.42, -ENEMY.radius * 0.35);
+    stone.rotation.set(0.5, 0.4, 0);
+    pivot.add(stone);
   } else if (looter) {
     // **등에 진 코어 한 알.** 코어와 같은 모양·같은 색이다(`createCore`) —
     // 이 적이 무엇을 하는 적인지를 글자 없이 말하는 유일한 부품이고, **뒤통수에 달려 있어서
@@ -468,12 +495,15 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
   // **약탈꾼의 고리만 뜻이 다르다.** 넷의 고리는 "나를 노린다"이고 이 적의 고리는
   // "네 코어를 삼키는 중"이라, 색을 노리는 색이 아니라 **코어의 색**으로 둔다
   // (폭탄병의 고리를 심지와 같은 색으로 둔 것과 같은 규칙 — 고리는 저지를 것의 색이다).
+  // **투석병의 고리도 폭탄병과 같은 색이다**(`bomberFuse`) — 둘 다 저지르는 것이
+  // 바닥의 원이고, 바닥의 원은 화면에서 한 가지로 읽혀야 한다. 다만 이 적의 고리는
+  // 몸 둘레에서 좁혀진다(떨어질 자리를 알리는 고리는 따로 선다 · `createLob`).
   const ringMaterial = new THREE.MeshBasicMaterial({
     color: charger
       ? PALETTE.charger
       : shield
         ? PALETTE.shield
-        : bomber
+        : bomber || lobber
           ? PALETTE.bomberFuse
           : looter
             ? PALETTE.core
@@ -551,6 +581,14 @@ const BODY_LOOK: Record<EnemyKind, { color: number; cap: number; height: number;
       height: ENEMY.height * 0.78,
       roughness: 0.6,
     },
+    lobber: {
+      color: PALETTE.lobber,
+      cap: PALETTE.lobberDark,
+      // **여섯 중 유일하게 활잡이보다 크다.** 돌을 머리 위로 들어 올리는 적이라
+      // 위쪽이 무거워야 하고, 그 실루엣이 멀리서 이 적을 먼저 알린다.
+      height: ENEMY.height * 1.02,
+      roughness: 0.65,
+    },
   };
 
 /**
@@ -574,6 +612,11 @@ function bodyGeometry(kind: EnemyKind, height: number): THREE.BufferGeometry {
   // 곧게 선 활잡이·방패병과 옆모습에서 먼저 갈린다.
   if (kind === 'looter')
     return new THREE.CylinderGeometry(ENEMY.radius * 0.55, ENEMY.radius, height, 5);
+  // **위가 넓고 아래가 좁은 6각 기둥 — 여섯 중 유일하게 거꾸로 선 몸이다.**
+  // 나머지는 전부 아래가 넓거나(활잡이·방패병·약탈꾼) 바닥에 놓여 있어서(돌진형·폭탄병)
+  // 무게가 아래에 있는데, 이 적만 위에 있다. 머리 위로 든 돌과 함께 읽힌다.
+  if (kind === 'lobber')
+    return new THREE.CylinderGeometry(ENEMY.radius, ENEMY.radius * 0.62, height, 6);
   return new THREE.CylinderGeometry(
     ENEMY.radius * (kind === 'shield' ? 0.8 : 1),
     ENEMY.radius * 0.85,
@@ -778,6 +821,60 @@ export function createBlast(): THREE.Mesh {
   // 예고 고리(0.05)보다 살짝 위에 얹는다 — 터지는 순간 둘이 함께 있는 프레임이 있다.
   mesh.position.y = 0.06;
   return mesh;
+}
+
+/**
+ * 날아가는 돌과, 그것이 떨어질 자리에 서는 고리 (DESIGN 9번 · 투석병).
+ *
+ * **둘을 한 묶음으로 만들되 각각 다른 곳에 놓는다** — 돌은 하늘을 지나가고(`stone`),
+ * 고리는 떨어질 자리에 붙박여 좁혀진다(`ring`). 화면에서 이 둘을 잇는 것이
+ * 이 적의 규칙이다: 저 돌은 저 고리 안으로 떨어진다.
+ *
+ * **고리가 좁혀지는 것은 겨누는 적의 발밑 고리와 같은 문법이다**(`createEnemy`의 `aimRing`).
+ * 새 예고를 만들지 않은 이유: 처음 하는 사람이 한 번 배운 것을 다시 배우지 않아야 한다.
+ * 다 좁혀졌을 때의 크기가 **실제로 닿는 원 그대로**여서(`Renderer`가 `lob.radius`로 맞춘다)
+ * 화면이 거짓말을 하지 않는다.
+ *
+ * 색은 폭탄병의 심지·터진 자국과 같다(`bomberFuse`) — 바닥의 원은 한 가지로 읽혀야 한다.
+ */
+export interface LobView {
+  group: THREE.Group;
+  /** 날아가는 돌. 포물선의 높이는 렌더러가 얹는다. */
+  stone: THREE.Mesh;
+  /** 떨어질 자리에 서는 고리. 반지름 1로 만들어 두고 `scale`로 맞춘다. */
+  ring: THREE.Mesh;
+  ringMaterial: THREE.MeshBasicMaterial;
+}
+
+export function createLob(): LobView {
+  const group = new THREE.Group();
+  group.name = 'lob';
+
+  const stone = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(0.34),
+    standard(PALETTE.bomberFuse, {
+      emissive: PALETTE.bomberFuse,
+      emissiveIntensity: 0.4,
+      roughness: 0.8,
+    }),
+  );
+  stone.castShadow = true;
+  group.add(stone);
+
+  const ringMaterial = new THREE.MeshBasicMaterial({
+    color: PALETTE.bomberFuse,
+    transparent: true,
+    opacity: 0.85,
+    side: THREE.DoubleSide,
+    // 바닥과 겹쳐 깜빡이지 않게. 터진 자국과 같은 규칙이다.
+    depthWrite: false,
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.86, 1, 32), ringMaterial);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  group.add(ring);
+
+  return { group, stone, ring, ringMaterial };
 }
 
 /**

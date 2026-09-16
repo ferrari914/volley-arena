@@ -42,7 +42,7 @@ const OUT = 'shots';
  */
 const STATES = ['live', 'calm', 'aim', 'worn', 'flash'];
 /** 적 종류(DESIGN 9번). `data/config.ts`에 하나 늘 때마다 여기에도 넣는다. */
-const KINDS = ['archer', 'charger', 'shield', 'bomber', 'looter'];
+const KINDS = ['archer', 'charger', 'shield', 'bomber', 'looter', 'lobber'];
 /** 무리 화면의 기본 목표 수. `REINFORCE`의 상한(처음 배치 6 + maxExtra)과 같은 값이다. */
 const CROWD_DEFAULT = 18;
 /**

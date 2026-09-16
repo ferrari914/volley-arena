@@ -94,8 +94,9 @@ describe('맵 데이터 — 맵을 하나 더 넣는 사람이 지켜야 하는 
       { x: 18, y: -9 },
       { x: -18, y: -9 },
       { x: -18, y: 9, kind: 'looter' },
+      { x: 18, y: 9, kind: 'lobber' },
     ];
-    // 네 맵이 모두 같은 배치를 쓴다(맵이 가르는 것은 기둥뿐이다 · `data/maps.ts`).
+    // 다섯 맵이 모두 같은 배치를 쓴다(맵이 가르는 것은 기둥뿐이다 · `data/maps.ts`).
     for (const map of MAPS) {
       expect(
         map.enemies,
@@ -606,14 +607,22 @@ describe('벽 — 등지고 서도 적이 오는 양이 반으로 줄지 않는�
   const SEEDS = Array.from({ length: 12 }, (_, i) => 20260909 + i);
   const BEARINGS = [30, 90, 150, 210, 270, 330];
 
-  /** 그 자리에 손을 놓고 서서, 초당 몇 발이 날아왔는지. */
+  /**
+   * 그 자리에 손을 놓고 서서, **초당 몇 개가 나에게 왔는지.**
+   *
+   * **화살과 돌을 함께 센다**(세션 74 · 투석병). 화살만 세면 이 자는 여섯 중 다섯만
+   * 보는 자가 된다 — 여섯째는 쏘지 않고 띄우기 때문이다(`data/config.ts`의 `LOBBER`).
+   * 그러면 활잡이 하나를 투석병으로 바꿔 세운 것만으로 모든 자리의 비가 흔들리고
+   * (바위 뜰 330도가 0.59로 선 아래에 섰다), **요새가 생겨서가 아니라 자가 눈을 감아서**
+   * 검사가 우는 자리가 된다. 이 묶음이 재는 것은 "적이 오는 양"이지 "화살의 수"가 아니다.
+   */
   const incoming = (map: ArenaMap, at: { x: number; y: number }): number =>
     median(
       SEEDS.map((seed) => {
         const world = new World({ seed, map });
         world.player.pos = { x: at.x, y: at.y };
         play(world, 60 * 180, () => IDLE);
-        return world.enemyShots / world.elapsed;
+        return (world.enemyShots + world.lobsThrown) / world.elapsed;
       }),
     );
 

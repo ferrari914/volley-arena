@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA, ARROW, BOMBER, CHARGER, CORE, ENEMY, LOOTER, PLAYER, SHIELD, VIEW } from '../src/data/config';
+import {
+  ARENA,
+  ARROW,
+  BOMBER,
+  CHARGER,
+  CORE,
+  ENEMY,
+  LOBBER,
+  LOOTER,
+  PLAYER,
+  SHIELD,
+  VIEW,
+} from '../src/data/config';
 import { createEnemy, createXpCore, type Enemy, type Obstacle, type XpCore } from '../src/entities/types';
 import { stepEnemies, type EnemyStepOptions } from '../src/systems/enemyAi';
 import { sightBlocker } from '../src/systems/obstacles';
@@ -44,6 +56,7 @@ function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
     shield: SHIELD,
     bomber: BOMBER,
     looter: LOOTER_OPTIONS,
+    lobber: LOBBER,
     cores: [],
     view: VIEW,
     // 흔들림 없이 곧장 겨눈다. 판정을 볼 때 난수가 끼면 무엇을 보고 있는지 흐려진다.
