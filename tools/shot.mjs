@@ -254,6 +254,41 @@ function measureSafeArea(page, safe, guarded) {
   );
 }
 
+/**
+ * 맵 카드의 한 줄 설명이 두 줄을 넘는지 잰다 (DESIGN 10번 · 세션 67).
+ *
+ * **한 장이 길어지면 넉 장이 다 같이 길어진다.** 카드는 가로로 늘어놓은 flex 항목이라
+ * 높이가 가장 높은 것에 맞춰 늘어난다 — 안뜰의 설명을 여섯 글자 늘려 세 줄로 만들면
+ * 넉 장이 전부 178px에서 193px이 된다. 가로 화면의 세로 길이는 390px뿐이고
+ * (`ui/style.css`의 `#map-select-list` 주석: "카드 높이를 먼저 아낀다"),
+ * 맵이 다섯이 되어 두 줄로 접히는 날 그 15px은 두 배가 되어 화면 밖으로 나간다.
+ *
+ * **안전 영역 검사가 이걸 못 잡는다** — 넉 장이 다 같이 커지는 것은 지금 화면에서
+ * 아직 넘치지 않아서(297px < 390px) 조용히 지나간다. 넘친 뒤에 잡으면 이미 늦다.
+ *
+ * 글자 수로 세지 않는 이유: 줄이 넘어가는 자리를 정하는 것은 글자 수가 아니라 글꼴이다.
+ * 실제로 그려 놓고 높이를 줄 높이로 나눈다.
+ */
+function measureMapBlurbs(page) {
+  return page.evaluate(() => {
+    const problems = [];
+    for (const card of document.querySelectorAll('.map-card')) {
+      const blurb = card.querySelector('.map-card-blurb');
+      if (!blurb || blurb.getClientRects().length === 0) continue;
+      const lineHeight = Number.parseFloat(getComputedStyle(blurb).lineHeight);
+      const lines = Math.round(blurb.getBoundingClientRect().height / lineHeight);
+      if (lines > 2) {
+        const name = card.querySelector('.map-card-name')?.textContent ?? card.dataset['map'];
+        problems.push(
+          `'${name}'의 한 줄 설명이 ${lines}줄이다 — 한 장이 길어지면 넉 장이 다 같이 길어진다 ` +
+            '(맵 카드는 가장 높은 것에 맞춰 늘어난다). 설명을 줄여라',
+        );
+      }
+    }
+    return problems;
+  });
+}
+
 /** 손가락 하나짜리 터치. Playwright의 tap으로는 "끄는" 동작을 만들 수 없어 CDP로 보낸다. */
 function touch(cdp, type, point) {
   return cdp.send('Input.dispatchTouchEvent', {
@@ -1178,6 +1213,9 @@ try {
       await page.screenshot({ path: `${OUT}/${name}-map.png` });
       for (const problem of await measureSafeArea(page, safe, GUARDED)) {
         problems.push(`[${name}] 안전 영역(맵 고르기): ${problem}`);
+      }
+      for (const problem of await measureMapBlurbs(page)) {
+        problems.push(`[${name}] 맵 카드: ${problem}`);
       }
       // **아직 아무도 손을 대지 않은 자리다.** 여기서 기기를 잘못 가리면, 전화기가
       // 첫 화면에서 스틱을 숨긴 채 "WASD로 이동"이라고 말한다(InputManager).

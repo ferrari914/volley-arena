@@ -261,7 +261,7 @@ export const MAPS: readonly ArenaMap[] = [
   {
     id: 'court',
     name: '안뜰',
-    blurb: '기둥 넷이 한복판을 둘러쌌다. 물러나지 않아도 가릴 것이 있다.',
+    blurb: '기둥 넷이 한복판을 둘러쌌다. 물러나지 않아도 가린다.',
     obstacles: COURT_PILLARS,
     enemies: OPEN_LAYOUT,
   },
