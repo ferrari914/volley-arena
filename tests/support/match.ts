@@ -241,6 +241,13 @@ export interface MatchResult {
    */
   blastsFired: number;
   blastHits: number;
+  /**
+   * 파열이 터진 횟수와, 그중 곁의 적을 깎은 횟수(DESIGN 8번 · 파열 카드).
+   * **폭탄병의 한 쌍과 같은 이유로 한 쌍이다** — 터진 수는 "얼마나 잡았는가"에 딸린 값이고,
+   * 이 카드가 실제로 버는 것은 둘의 비(터질 때 곁에 누가 있었는가)다.
+   */
+  burstsFired: number;
+  burstHits: number;
   /** 방패병의 판에 막힌 내 화살의 수. `shieldBodyHits`와 짝을 이뤄야 뜻이 있다. */
   blocked: number;
   /**
@@ -310,6 +317,8 @@ export function playMatch(
     bodyHits: world.bodyHits,
     blastsFired: world.blastsFired,
     blastHits: world.blastHits,
+    burstsFired: world.burstsFired,
+    burstHits: world.burstHits,
     blocked: world.blockedShots,
     shieldBodyHits: world.shieldBodyHits,
     hits: world.hits,

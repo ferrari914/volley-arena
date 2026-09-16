@@ -18,6 +18,13 @@ export interface ArrowStepOptions {
   bounceRange: number;
   /** 방패병의 방패가 막는 정면 부채꼴의 반각(rad, DESIGN 9번). */
   shieldArc: number;
+  /**
+   * 쓰러진 적이 터뜨리는 원의 반지름(m · DESIGN 8번 · 파열 카드).
+   * 0이면 아무것도 터지지 않는다 — 카드를 고르지 않은 사람이 그렇다.
+   */
+  burstRadius: number;
+  /** 그 원 안의 적이 깎이는 체력(`BURST.damage`). */
+  burstDamage: number;
   /** 이 맵에 선 기둥들(DESIGN 10번). 빈 배열이면 아무것도 막지 않는다. */
   obstacles: readonly Obstacle[];
   /** 적의 화살이 노리는 사람. */
@@ -74,6 +81,19 @@ export interface ArrowStepResult {
    */
   eatenMine: number;
   eatenTheirs: number;
+  /**
+   * 이번 스텝에 터진 자리들(DESIGN 8번 · 파열 카드). **수가 아니라 자리를 돌려준다** —
+   * 부르는 쪽이 그 자리에 자국을 세운다(`World`의 `blasts`). 맞히는 일은 이미
+   * 여기서 끝났고, 남는 것은 화면에 그릴 원뿐이다(`entities/types.ts`의 `Blast`).
+   */
+  bursts: Vec2[];
+  /**
+   * 파열이 적을 깎은 횟수. **터진 횟수(`bursts.length`)와 따로 센다** —
+   * 이 카드가 실제로 버는 것은 "몇 번 터졌는가"가 아니라 **터질 때 곁에 누가 있었는가**라,
+   * 둘의 비가 곧 이 카드가 요구하는 것(적을 겹쳐 놓고 잡아라)이 지켜졌는지다.
+   * 밸런스를 재는 쪽이 보는 값이다(`tests/perf/`).
+   */
+  burstHits: number;
 }
 
 /**
@@ -94,6 +114,9 @@ export interface ArrowStepResult {
  *
  * 두 경우 모두 맞힌 적을 `arrow.hitIds`에 적어 두고 다시 맞히지 않는다.
  *
+ * **화살이 적을 쓰러뜨리면 그 자리가 터지기도 한다**(`burstAround` · DESIGN 8번 · 파열).
+ * 화살이 살아남는 길과는 상관없다 — 터지는 것은 화살이 아니라 쓰러진 적이다.
+ *
  * **살아남지 못하는 길이 하나 있다 — 방패병의 방패다**(`blocksArrow`).
  * 막힌 화살은 관통도 튕김도 쓰지 못하고 그 자리에서 끝난다. 카드 한 장이
  * 방패를 무시해 버리면 "돌아서 쏴라"는 이 적의 규칙이 그 카드를 뽑은 판에서만 사라진다.
@@ -111,6 +134,8 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
     shieldBodyHits: 0,
     eatenMine: 0,
     eatenTheirs: 0,
+    bursts: [],
+    burstHits: 0,
   };
 
   for (const arrow of arrows) {
@@ -147,6 +172,9 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
           enemy.aimTimer = 0;
           enemy.respawnTimer = options.respawnDelay;
           result.killed.push(enemy);
+          // 쓰러진 자리가 터진다 (DESIGN 8번 · 파열 카드). **화살이 쓰러뜨린 적만 터진다** —
+          // 아래 `burstAround`가 쓰러뜨린 적은 다시 터지지 않는다(연쇄 금지 · 그 함수 주석).
+          if (options.burstRadius > 0) burstAround(enemy, result, options);
         }
 
         // 맞은 놈을 뒤로 밀어낸다 (DESIGN 8번 · 밀어내기 카드).
@@ -261,6 +289,55 @@ function pushEnemyBack(
     options.obstacles,
   );
   return true;
+}
+
+/**
+ * 쓰러진 적의 자리를 터뜨린다 (DESIGN 8번 · 파열 카드).
+ *
+ * **앞의 카드들과 다른 것을 묻는 장이다 — 적끼리 얼마나 가까운가.** 나머지 열 장은
+ * 전부 나와 적 사이의 일(얼마나 세게 · 얼마나 자주 · 어느 쪽으로)이라 고르는 순간
+ * 값이 정해지지만, 이 장이 실제로 버는 것은 **쓰러지는 놈 곁에 다른 놈이 서 있는가**가
+ * 정한다. 그래서 새로 요구하는 것이 하나 있다: **떼어 놓고 잡지 말고 겹쳐 놓고 잡아라.**
+ * 그 요구는 공짜가 아니다 — 적을 모아 두는 자리는 곧 나도 둘러싸인 자리다.
+ *
+ * **연쇄하지 않는다.** 여기서 쓰러진 적은 다시 터지지 않는다(`stepArrows`가 화살로
+ * 쓰러뜨린 적에게만 이 함수를 부른다). 연쇄를 열면 뭉친 적이 한 발에 통째로 지워져,
+ * "겹쳐 놓고 잡아라"가 요구가 아니라 한 번의 큰 보상이 된다 — 그러면 카드 한 장이
+ * 적 넷이 저마다 묻는 것을 한꺼번에 지운다. 깎는 양(`BURST.damage` 1 = 화살 한 발)이
+ * 어느 적의 체력보다도 작은 것도 같은 이유다: 파열은 아무도 지우지 못하고,
+ * 이미 깎인 놈들을 함께 마무리할 뿐이다.
+ *
+ * **방패는 이것을 받아 내지 못한다.** 방패가 재는 것은 화살이 **날아온 방향**인데
+ * (`blocksArrow`) 터짐에는 방향이 없다. 그렇다고 이 카드가 "돌아서 쏴라"를 지우지는
+ * 않는다 — 터뜨리려면 **그 곁의 다른 적을 먼저 쓰러뜨려야 하고**, 방패병 혼자 서 있으면
+ * 아무 일도 일어나지 않는다.
+ *
+ * **기둥은 막지 않는다**(DESIGN 10번). 폭탄병의 터짐이 그런 것과 같다
+ * (`World.detonate`) — 원 하나가 곧 판정이라는 규칙을 종류마다 다르게 두지 않는다.
+ */
+function burstAround(center: Enemy, result: ArrowStepResult, options: ArrowStepOptions): void {
+  result.bursts.push({ x: center.pos.x, y: center.pos.y });
+  const reachSq = options.burstRadius ** 2;
+  for (const other of options.enemies) {
+    if (!other.alive || other.id === center.id) continue;
+    const dx = other.pos.x - center.pos.x;
+    const dy = other.pos.y - center.pos.y;
+    if (dx * dx + dy * dy > reachSq) continue;
+
+    other.hp -= options.burstDamage;
+    other.hitFlash = 1;
+    result.burstHits += 1;
+    if (other.hp <= 0) {
+      other.alive = false;
+      other.hp = 0;
+      other.aimTimer = 0;
+      other.respawnTimer = options.respawnDelay;
+      // **여기서 쓰러진 적도 처치다** — 부르는 쪽이 코어를 떨어뜨리고 다시 설 자리를
+      // 정해 준다(`World`). 파열로 죽은 적만 코어를 안 떨구면, 같은 처치가 어떻게
+      // 죽였느냐에 따라 값이 달라진다.
+      result.killed.push(other);
+    }
+  }
 }
 
 /**

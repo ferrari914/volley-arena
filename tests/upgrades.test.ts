@@ -36,6 +36,7 @@ const baseStats = (): PlayerStats => ({
   bounce: 0,
   knockback: 0,
   backstep: 0,
+  burstRadius: 0,
 });
 
 const card = (id: string, maxStacks = 3, role: UpgradeRole = 'power'): UpgradeCard => ({

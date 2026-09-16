@@ -316,11 +316,16 @@ export class Renderer {
   }
 
   /**
-   * 터진 자국 (DESIGN 9번 · 폭탄병). 코어·화살과 같은 풀 방식이다.
+   * 터진 자국 (DESIGN 9번 · 폭탄병 / DESIGN 8번 · 파열 카드). 코어·화살과 같은 풀 방식이다.
    *
    * **원의 크기는 처음부터 끝까지 터진 원 그대로다**(`blast.radius`). 퍼져 나가게 하면
    * 자국이 실제로 닿은 곳보다 넓어져서, 원 밖에 서 있던 사람이 "맞을 뻔했다"고 읽는다.
    * 사라지는 것은 크기가 아니라 **투명도**다.
+   *
+   * **색은 자국의 출신이 정한다**(`blast.kind`). 폭탄병의 자국은 호박빛(위험), 파열의
+   * 자국은 찬 흰빛(내가 번 자리)이다 — 크기도 모양도 같아서 갈리는 것은 색뿐이다.
+   * 풀에서 꺼낸 메시에는 앞서 쓰던 색이 남아 있으므로 **세울 때마다 덧칠한다.**
+   * 흐려지는 속도도 자국마다 다르다(`blast.life`) — 파열은 처치마다 터져서 더 짧다.
    */
   private syncBlasts(world: World): void {
     const seen = new Set<number>();
@@ -332,10 +337,13 @@ export class Renderer {
         mesh.visible = true;
         mesh.position.set(blast.pos.x, 0.06, blast.pos.y);
         mesh.scale.setScalar(blast.radius);
+        (mesh.material as THREE.MeshBasicMaterial).color.setHex(
+          blast.kind === 'burst' ? PALETTE.burst : PALETTE.bomberFuse,
+        );
         this.scene.add(mesh);
         this.blastMeshes.set(blast.id, mesh);
       }
-      const left = 1 - Math.min(blast.age / BOMBER.flashTime, 1);
+      const left = 1 - Math.min(blast.age / blast.life, 1);
       (mesh.material as THREE.MeshBasicMaterial).opacity = 0.62 * left;
     }
 

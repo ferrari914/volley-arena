@@ -3,6 +3,7 @@ import {
   ARENA,
   ARROW,
   BOMBER,
+  BURST,
   CHARGER,
   CORE,
   ENEMY,
@@ -111,9 +112,10 @@ export class World {
   readonly enemies: Enemy[];
   readonly cores: XpCore[] = [];
   /**
-   * 터진 자국들 (DESIGN 9번 · 폭탄병). 화면이 잠깐 보여 주고 스스로 사라진다
-   * (`BOMBER.flashTime`). 게임 상태를 바꾸지 않는 유일한 목록이다 —
+   * 터진 자국들 (DESIGN 9번 · 폭탄병 / DESIGN 8번 · 파열 카드). 화면이 잠깐 보여 주고
+   * 스스로 사라진다(자국마다 `life`를 들고 있다). 게임 상태를 바꾸지 않는 유일한 목록이다 —
    * 폭발이 하는 일은 터지는 그 프레임에 다 끝나고, 여기 남는 것은 자국뿐이다.
+   * **둘은 `kind`로 갈린다** — 하나는 나에게 닿는 위험이고 하나는 내가 번 자리다.
    */
   readonly blasts: Blast[] = [];
 
@@ -137,6 +139,15 @@ export class World {
    */
   blastsFired = 0;
   blastHits = 0;
+  /**
+   * 파열이 터진 횟수와, 그중 곁의 적을 깎은 횟수(DESIGN 8번 · 파열 카드).
+   * **폭탄병의 한 쌍(`blastsFired`·`blastHits`)과 같은 자리의 값이다** — 터진 수만 세면
+   * 이 카드가 실제로 무엇을 벌었는지 알 수 없다. 이 카드가 요구하는 것은
+   * "적을 겹쳐 놓고 잡아라"이고, 그 요구가 지켜졌는지는 **터질 때 곁에 누가 있었는가**,
+   * 즉 둘의 비가 말한다(터진 한 번에 평균 몇 명이 깎였는가).
+   */
+  burstsFired = 0;
+  burstHits = 0;
   /**
    * 방패가 받아 낸 내 화살의 수(DESIGN 9번). `bodyHits`와 같은 자리에 있는 값이다 —
    * 화면에는 쓰지 않고 밸런스를 재는 쪽만 본다.
@@ -211,6 +222,7 @@ export class World {
     bounce: 0,
     knockback: 0,
     backstep: 0,
+    burstRadius: 0,
   };
 
   /** 카드별로 몇 번 골랐는지. 다음 제시에서 최대치에 닿은 카드를 빼는 데 쓴다. */
@@ -316,6 +328,8 @@ export class World {
       respawnDelay: ENEMY.respawnDelay,
       bounceRange: ARROW.bounceRange,
       shieldArc: SHIELD.arc,
+      burstRadius: this.stats.burstRadius,
+      burstDamage: BURST.damage,
       obstacles: this.map.obstacles,
       player: this.player,
       enemies: this.enemies,
@@ -327,6 +341,21 @@ export class World {
     this.arrowHits += result.playerHits;
     this.eatenMine += result.eatenMine;
     this.eatenTheirs += result.eatenTheirs;
+    this.burstsFired += result.bursts.length;
+    this.burstHits += result.burstHits;
+    // 터진 자리에 자국을 세운다 (DESIGN 8번 · 파열). **맞히는 일은 이미 끝났다** —
+    // 여기 남는 것은 화면에 그릴 원뿐이라, 폭탄병의 자국과 같은 목록에 든다.
+    for (const at of result.bursts) {
+      this.blasts.push({
+        id: this.nextBlastId++,
+        kind: 'burst',
+        pos: { x: at.x, y: at.y },
+        radius: this.stats.burstRadius,
+        age: 0,
+        life: BURST.flashTime,
+        alive: true,
+      });
+    }
     for (const enemy of result.killed) {
       this.dropCores(enemy.pos);
       // 다시 설 자리는 **눕는 그 순간** 정한다(`pickRespawnSpot`). 3.6초 뒤 일어설 때가
@@ -698,9 +727,11 @@ export class World {
     this.blastsFired += 1;
     this.blasts.push({
       id: this.nextBlastId++,
+      kind: 'bomber',
       pos: { x: blast.at.x, y: blast.at.y },
       radius: blast.radius,
       age: 0,
+      life: BOMBER.flashTime,
       alive: true,
     });
     // 다시 설 자리는 화살에 쓰러진 적과 같은 규칙으로 **눕는 그 순간** 잡아 둔다
@@ -720,7 +751,7 @@ export class World {
     if (this.blasts.length === 0) return;
     for (const blast of this.blasts) {
       blast.age += dt;
-      if (blast.age >= BOMBER.flashTime) blast.alive = false;
+      if (blast.age >= blast.life) blast.alive = false;
     }
     for (let i = this.blasts.length - 1; i >= 0; i -= 1) {
       if (!this.blasts[i]?.alive) this.blasts.splice(i, 1);

@@ -6,7 +6,7 @@ import { createEnemy, createPlayer, type Arrow, type Obstacle } from '../src/ent
 import { movePlayer } from '../src/systems/movement';
 import { stepArrows } from '../src/systems/combat';
 import { blockedByObstacles, insideObstacle, pushOutOfObstacles } from '../src/systems/obstacles';
-import { SHIELD } from '../src/data/config';
+import { BURST, SHIELD } from '../src/data/config';
 import { DT, IDLE, median, play, playMatch, walkToNearestCore } from './support/match';
 
 /**
@@ -290,6 +290,8 @@ describe('기둥 규칙 — 몸도 화살도 코어도 지나가지 못한다', 
       respawnDelay: ENEMY.respawnDelay,
       bounceRange: 6,
       shieldArc: SHIELD.arc,
+      burstRadius: 0,
+      burstDamage: BURST.damage,
       obstacles,
       player: createPlayer(PLAYER.maxHp),
       enemies: [createEnemy(1, 10, 0, ENEMY.maxHp)],
