@@ -10,6 +10,7 @@ import {
   PLAYER,
   REINFORCE,
   REVIVE,
+  LOOTER,
   SHIELD,
   UPGRADE,
   VIEW,
@@ -60,10 +61,19 @@ export interface FrameInput {
  * 종류별 최대 체력과 방패 내구도. 적을 세우는 길이 `spawnEnemy` 하나뿐이라 표도 하나면 된다 —
  * 종류를 하나 더 넣을 때 고칠 자리가 여기와 `systems/enemyAi.ts` 둘로 끝나야 한다.
  */
+/**
+ * 약탈꾼에게 건네는 수치(`LOOTER`) + 코어에 닿았다고 보는 거리.
+ * **`reach`만 여기서 만든다** — 몸 반지름과 코어 반지름을 더한 값이라 설정 한 곳에
+ * 적어 둘 수 없다(돌진형의 `contactRadius`와 같은 자리다). 판마다 바뀌지 않으므로
+ * 프레임마다 다시 만들지 않고 한 번만 만들어 둔다.
+ */
+const LOOTER_OPTIONS = { ...LOOTER, reach: ENEMY.radius + CORE.radius } as const;
+
 function bodyOf(kind: EnemyKind): { maxHp: number; shieldHp: number } {
   if (kind === 'charger') return { maxHp: CHARGER.maxHp, shieldHp: 0 };
   if (kind === 'shield') return { maxHp: SHIELD.maxHp, shieldHp: SHIELD.shieldHp };
   if (kind === 'bomber') return { maxHp: BOMBER.maxHp, shieldHp: 0 };
+  if (kind === 'looter') return { maxHp: LOOTER.maxHp, shieldHp: 0 };
   return { maxHp: ENEMY.maxHp, shieldHp: 0 };
 }
 
@@ -142,6 +152,12 @@ export class World {
    */
   blastsFired = 0;
   blastHits = 0;
+  /**
+   * 약탈꾼이 삼켜 간 코어의 수(DESIGN 9번). `bodyHits`와 같은 자리의 값이다 —
+   * 화면에는 쓰지 않고 밸런스를 재는 쪽만 본다. **이 적이 실제로 무엇을 가져갔는지는
+   * 이 수와 `xpByOrigin`을 나란히 놓아야 보인다**(빼앗긴 것은 대개 맵에 생긴 코어다).
+   */
+  coresStolen = 0;
   /**
    * 방패가 받아 낸 내 화살의 수(DESIGN 9번). `bodyHits`와 같은 자리에 있는 값이다 —
    * 화면에는 쓰지 않고 밸런스를 재는 쪽만 본다.
@@ -311,6 +327,14 @@ export class World {
       if (damagePlayer(this.player, damage, PLAYER.invulnerable)) this.bodyHits += 1;
     }
     for (const blast of acted.blasts) this.detonate(blast);
+    // 약탈꾼이 삼킨 코어(DESIGN 9번). **없애는 것은 여기서 한다** — `stepEnemies`는
+    // 무엇을 삼켰는지만 돌려준다(폭탄병의 원이 누구에게 닿았는지를 거기서 정하지 않는
+    // 것과 같은 규칙이다). 삼킨 코어는 돌아오지 않는다.
+    for (const steal of acted.steals) {
+      if (!steal.core.alive) continue;
+      steal.core.alive = false;
+      this.coresStolen += 1;
+    }
 
     const result = stepArrows(this.arrows, {
       dt,
@@ -627,6 +651,10 @@ export class World {
       charger: CHARGER,
       shield: SHIELD,
       bomber: BOMBER,
+      looter: LOOTER_OPTIONS,
+      // 약탈꾼 하나가 보는 목록이다(`stepLooter`). **그 적만 플레이어가 아닌 것을 보고
+      // 걷는다** — 나머지 넷에게는 이 배열이 없는 것과 같다.
+      cores: this.cores,
       obstacles: this.map.obstacles,
       // 적이 겨누기를 시작해도 되는 창(`data/config.ts`의 `VIEW`). 게임이 화면을 아는
       // 유일한 자리다 — 화면 밖에서 시작된 예고는 아무도 볼 수 없다.

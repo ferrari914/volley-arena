@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA, ARROW, BOMBER, CHARGER, ENEMY, PLAYER, SHIELD, VIEW } from '../src/data/config';
-import { createEnemy, type Enemy, type Obstacle } from '../src/entities/types';
+import { ARENA, ARROW, BOMBER, CHARGER, CORE, ENEMY, LOOTER, PLAYER, SHIELD, VIEW } from '../src/data/config';
+import { createEnemy, createXpCore, type Enemy, type Obstacle, type XpCore } from '../src/entities/types';
 import { stepEnemies, type EnemyStepOptions } from '../src/systems/enemyAi';
 import { sightBlocker } from '../src/systems/obstacles';
 
@@ -14,6 +14,9 @@ const chargerAt = (x: number, y: number): Enemy =>
 /** 방패병 한 마리(DESIGN 9번). 방패를 들려서 세운다. */
 const shieldAt = (x: number, y: number): Enemy =>
   createEnemy(nextId++, x, y, SHIELD.maxHp, 'shield', SHIELD.shieldHp);
+
+/** 약탈꾼에게 건네는 수치(DESIGN 9번). World가 만드는 것과 같은 자리다. */
+const LOOTER_OPTIONS = { ...LOOTER, reach: ENEMY.radius + CORE.radius };
 
 function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
   return {
@@ -40,6 +43,8 @@ function options(overrides: Partial<EnemyStepOptions> = {}): EnemyStepOptions {
     charger: CHARGER,
     shield: SHIELD,
     bomber: BOMBER,
+    looter: LOOTER_OPTIONS,
+    cores: [],
     view: VIEW,
     // 흔들림 없이 곧장 겨눈다. 판정을 볼 때 난수가 끼면 무엇을 보고 있는지 흐려진다.
     random: () => 0.5,
@@ -795,5 +800,134 @@ describe('화면 밖 — 적은 아무도 못 보는 예고를 하지 않는다'
     const shots = run([enemy], 5, { shield: { ...SHIELD, fireRange: 15, speed: 0 } });
     expect(shots.length, '화면 밖에서 쐈다').toBe(0);
     expect(enemy.aimTimer, '아무도 못 보는데 겨누고 있다').toBe(0);
+  });
+});
+
+/**
+ * 약탈꾼 (DESIGN 9번 · 다섯째 종류). 앞의 넷을 재는 검사들이 전부 "무엇으로 때리는가"를
+ * 물었다면, 여기서 묻는 것은 **무엇을 가져가는가와 어디로 걷는가**다.
+ * 이 적은 플레이어를 한 번도 때리지 않으므로 화살·몸통·폭발을 잴 자리가 없다.
+ */
+describe('약탈꾼', () => {
+  const looterAt = (x: number, y: number): Enemy =>
+    createEnemy(nextId++, x, y, LOOTER.maxHp, 'looter');
+
+  let nextCoreId = 1;
+  const coreAt = (x: number, y: number): XpCore =>
+    createXpCore(nextCoreId++, { x, y }, 1, 'ambient', Infinity);
+
+  /** seconds초 동안 돌리고 그동안 삼켜 간 코어를 모아 돌려준다. */
+  function runSteals(
+    enemies: Enemy[],
+    cores: XpCore[],
+    seconds: number,
+    overrides: Partial<EnemyStepOptions> = {},
+  ) {
+    const steals = [];
+    for (let i = 0; i < Math.round(seconds / DT); i += 1) {
+      const stolen = stepEnemies(enemies, options({ cores, ...overrides })).steals;
+      // World가 하는 일을 여기서도 한다 — `stepEnemies`는 코어를 지우지 않는다.
+      for (const steal of stolen) steal.core.alive = false;
+      steals.push(...stolen);
+    }
+    return steals;
+  }
+
+  it('화살도 몸통도 폭발도 없다 (이 적은 때리지 않는다)', () => {
+    const enemy = looterAt(2, 0);
+    const cores = [coreAt(20, 0)];
+    let shots = 0;
+    let contacts = 0;
+    let blasts = 0;
+    for (let i = 0; i < Math.round(12 / DT); i += 1) {
+      const acted = stepEnemies([enemy], options({ cores }));
+      shots += acted.shots.length;
+      contacts += acted.contacts.length;
+      blasts += acted.blasts.length;
+    }
+    expect(shots + contacts + blasts).toBe(0);
+  });
+
+  it('플레이어가 아니라 코어 쪽으로 걷고, 등을 보인다', () => {
+    // 코어는 플레이어 반대편에 둔다. 나머지 넷이라면 곧장 플레이어에게 왔을 자리다.
+    const enemy = looterAt(8, 0);
+    const cores = [coreAt(20, 0)];
+    const before = enemy.pos.x;
+    // 태어날 때는 플레이어를 보고 선다(`createEnemy`). 이 적만 그 자리에서 돌아선다 —
+    // `LOOTER.turnRate`로 반 바퀴를 도는 데 1초쯤 걸리므로 그보다 길게 돌린다.
+    runSteals([enemy], cores, 1.2);
+    expect(enemy.pos.x, '플레이어 쪽으로 왔다').toBeGreaterThan(before + 1);
+    // 몸이 향하는 쪽이 플레이어의 정반대다 — 화면에서 등이 보인다는 뜻이다.
+    expect(Math.abs(enemy.facing), '플레이어를 돌아봤다').toBeLessThan(0.2);
+  });
+
+  it('코어에 닿으면 멈춰 서서 삼킨다 (예고 없이 사라지지 않는다)', () => {
+    const enemy = looterAt(20, 0);
+    const cores = [coreAt(20.5, 0)];
+    runSteals([enemy], cores, DT);
+    expect(enemy.aimTimer).toBeCloseTo(LOOTER.swallow, 5);
+
+    // 삼키는 동안에는 발이 멎는다. 예고가 곧 멈춤이라는 규칙은 종류를 가리지 않는다.
+    const stood = { ...enemy.pos };
+    const mid = runSteals([enemy], cores, LOOTER.swallow / 2);
+    expect(mid).toHaveLength(0);
+    expect(Math.hypot(enemy.pos.x - stood.x, enemy.pos.y - stood.y)).toBeLessThan(1e-6);
+
+    const steals = runSteals([enemy], cores, LOOTER.swallow);
+    expect(steals).toHaveLength(1);
+    expect(steals[0]?.core).toBe(cores[0]);
+    expect(cores[0]?.alive, 'World가 지우기 전까지는 살아 있어야 한다').toBe(false);
+  });
+
+  it('삼키는 중에 쓰러뜨리면 코어는 그 자리에 남는다', () => {
+    // 폭탄병의 심지와 같은 자리다 — 예고에 값이 있으려면 끼어들 수 있어야 한다.
+    const enemy = looterAt(20, 0);
+    const cores = [coreAt(20.5, 0)];
+    runSteals([enemy], cores, DT);
+    expect(enemy.aimTimer).toBeGreaterThan(0);
+
+    enemy.alive = false; // 화살 한 발이 닿았다(`combat.ts`가 하는 일).
+    enemy.respawnTimer = ENEMY.respawnDelay;
+    const steals = runSteals([enemy], cores, LOOTER.swallow + 1);
+    expect(steals).toHaveLength(0);
+    expect(cores[0]?.alive).toBe(true);
+  });
+
+  it('플레이어 곁의 코어는 건드리지 않는다 (손에 닿기 직전에 증발하지 않는다)', () => {
+    const enemy = looterAt(8, 0);
+    const cores = [coreAt(LOOTER.guard - 0.5, 0)];
+    const steals = runSteals([enemy], cores, 6);
+    expect(steals, '발밑의 코어를 집어 갔다').toHaveLength(0);
+    expect(cores[0]?.alive).toBe(true);
+  });
+
+  it('지키는 선은 끌려오기 시작하는 거리보다 넓다', () => {
+    // 이 부등호가 위 검사의 근거다(`CORE.magnetRadius`). 자석이 잡은 코어를
+    // 빼앗기면 "끌려오는 중에는 사라지지 않는다"는 코어 쪽의 약속이 깨진다.
+    expect(LOOTER.guard).toBeGreaterThan(CORE.magnetRadius);
+  });
+
+  it('훔칠 것이 없으면 물러나 서고, 플레이어에게 다가오지 않는다', () => {
+    const enemy = looterAt(6, 0);
+    runSteals([enemy], [], 4);
+    expect(enemy.pos.x).toBeGreaterThanOrEqual(LOOTER.standOff - 0.1);
+    // 물러난 뒤에는 그 선 위에서 떨지 않고 선다.
+    const settled = { ...enemy.pos };
+    runSteals([enemy], [], 2);
+    expect(Math.hypot(enemy.pos.x - settled.x, enemy.pos.y - settled.y)).toBeLessThan(0.2);
+  });
+
+  it('플레이어보다 느리다 (쫓아가면 잡힌다)', () => {
+    // "쫓아가라"가 답이 되려면 이 부등호가 있어야 한다. 빠르면 쫓을 이유가 없어지고,
+    // 이 적은 그냥 "가끔 경험치가 사라지는 일"이 된다.
+    expect(LOOTER.speed).toBeLessThan(PLAYER.speed);
+  });
+
+  it('맵에 놓인 여러 코어 중 제게 가장 가까운 것부터 삼킨다', () => {
+    const enemy = looterAt(20, 0);
+    const near = coreAt(20, 3);
+    const far = coreAt(0, 20);
+    const steals = runSteals([enemy], [far, near], 3);
+    expect(steals[0]?.core).toBe(near);
   });
 });

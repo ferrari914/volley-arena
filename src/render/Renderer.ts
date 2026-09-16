@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '../core/World';
-import { ARENA, ARROW, BOMBER, CHARGER, CORE, ENEMY, SHIELD } from '../data/config';
+import { ARENA, ARROW, BOMBER, CHARGER, CORE, ENEMY, LOOTER, SHIELD } from '../data/config';
 import type { ArenaMap } from '../data/maps';
 import type { Vec2 } from '../core/math';
 import type { ArrowOwner, CoreOrigin, Enemy } from '../entities/types';
@@ -183,6 +183,7 @@ export class Renderer {
       const charger = enemy.kind === 'charger';
       const shield = enemy.kind === 'shield';
       const bomber = enemy.kind === 'bomber';
+      const looter = enemy.kind === 'looter';
       const aiming = enemy.aimTimer > 0;
       const dashing = enemy.dashTimer > 0;
       view.aimRing.visible = aiming;
@@ -195,11 +196,26 @@ export class Renderer {
         view.bodyMaterial.emissive.setHex(PALETTE.bomberFuse);
         view.bodyMaterial.emissiveIntensity = 0.2 + charge * 0.9;
       } else if (aiming) {
-        const aimTime = charger ? CHARGER.windup : shield ? SHIELD.aimTime : ENEMY.aimTime;
+        // 약탈꾼이 코어를 삼키는 동안도 같은 예고를 쓴다(멈춰 서고 고리가 좁혀진다).
+        // **달아오르는 색만 다르다** — 이 적이 저지르는 것은 화살이 아니라 코어라
+        // 몸도 고리도 코어의 색으로 달아오른다(`createEnemy`의 고리 색과 같은 이유).
+        const aimTime = charger
+          ? CHARGER.windup
+          : shield
+            ? SHIELD.aimTime
+            : looter
+              ? LOOTER.swallow
+              : ENEMY.aimTime;
         const charge = 1 - enemy.aimTimer / aimTime;
         view.aimRing.scale.setScalar(2.1 - charge * 1.1);
         view.bodyMaterial.emissive.setHex(
-          charger ? PALETTE.charger : shield ? PALETTE.shield : PALETTE.enemyArrow,
+          charger
+            ? PALETTE.charger
+            : shield
+              ? PALETTE.shield
+              : looter
+                ? PALETTE.core
+                : PALETTE.enemyArrow,
         );
         view.bodyMaterial.emissiveIntensity = 0.15 + charge * 0.5;
       } else if (dashing) {

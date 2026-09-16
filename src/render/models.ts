@@ -69,6 +69,15 @@ export const PALETTE = {
    * 적의 화살(주황)보다 노랗고 밝다.
    */
   bomberFuse: 0xffb03a,
+  /**
+   * 약탈꾼(DESIGN 9번). **다섯 중 유일하게 채도가 낮다** — 붉은 활잡이·보라 돌진형·
+   * 청록 방패병·모래빛 폭탄병은 전부 "나를 노린다"는 색인데, 이 적은 나를 보지도 않는다.
+   * 어두운 이끼빛이라 남색 바닥에서 한 발짝 물러나 보이고, 대신 **등에 진 코어가 밝다** —
+   * 화면에서 이 적을 찾게 만드는 것은 몸이 아니라 그 한 알이어야 한다.
+   */
+  looter: 0x7f8f5c,
+  /** 머리와 손. 몸보다 어두워야 등에 진 코어가 유일하게 밝은 자리로 남는다. */
+  looterDark: 0x4d5836,
   accent: 0xffd479,
   /**
    * 코앞 고리(DESIGN 8번 · 코앞 카드). **카드의 색 그대로다**(`data/upgrades.ts`의 `#22d94f`) —
@@ -359,6 +368,7 @@ export interface EnemyView {
  *   돌진형  — 낮고 넓은 보라 덩어리에 앞으로 뻗은 뿔. 부딪으러 온다.
  *   방패병  — 청록 기둥 앞에 정면을 두른 곡면 판. 그 판이 곧 규칙이다.
  *   폭탄병  — 바닥에 놓인 모래빛 공에 심지 하나. 둥근 것은 이것뿐이다.
+ *   약탈꾼  — 낮은 이끼빛 몸 **등에** 코어 한 알. 부품이 뒤에 달린 것은 이것뿐이다.
  * 낮고 넓게 만든 이유: 같은 반지름이라도 무게가 실려 보여야 "저건 달려온다"로 읽힌다.
  *
  * **폭탄병에게는 팔도 뿔도 없다.** 앞의 셋은 정면이 뜻을 갖지만(겨누는 쪽 · 달려갈 쪽 ·
@@ -378,6 +388,7 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
   const charger = kind === 'charger';
   const shield = kind === 'shield';
   const bomber = kind === 'bomber';
+  const looter = kind === 'looter';
   const look = BODY_LOOK[kind];
   const height = look.height;
   const bodyMaterial = standard(look.color, { roughness: look.roughness });
@@ -415,6 +426,18 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
 
   if (bomber) {
     // 부품 없음 — 위 주석을 보라. 정면을 가리키는 것을 달지 않는다.
+  } else if (looter) {
+    // **등에 진 코어 한 알.** 코어와 같은 모양·같은 색이다(`createCore`) —
+    // 이 적이 무엇을 하는 적인지를 글자 없이 말하는 유일한 부품이고, **뒤통수에 달려 있어서
+    // 등을 보이고 걷는 것이 화면에 그대로 적힌다.** 앞의 넷은 부품이 전부 정면에 있다
+    // (겨누는 팔 · 달려갈 뿔 · 막는 판).
+    const sack = new THREE.Mesh(
+      new THREE.OctahedronGeometry(CORE.radius * 1.3),
+      standard(PALETTE.core, { emissive: PALETTE.core, emissiveIntensity: 0.4, roughness: 0.35 }),
+    );
+    sack.position.set(0, height * 0.66, ENEMY.radius * 0.85);
+    sack.rotation.y = Math.PI / 4;
+    pivot.add(sack);
   } else if (charger) {
     // 앞으로 뻗은 뿔. 돌진 방향이 몸의 정면이라는 것을 화면에 적어 준다
     // (활잡이의 팔·플레이어의 코와 같은 역할이다).
@@ -442,6 +465,9 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
   // 폭탄병의 고리는 **터질 원 그 자체**다(`BOMBER.blastRadius`). 그래서 좁히지 않고
   // 처음부터 닿는 자리를 그대로 그린다 — 그 밖으로 나가는 것이 유일한 답이기 때문이다.
   const ringOuter = bomber ? BOMBER.blastRadius : ENEMY.radius * 1.35;
+  // **약탈꾼의 고리만 뜻이 다르다.** 넷의 고리는 "나를 노린다"이고 이 적의 고리는
+  // "네 코어를 삼키는 중"이라, 색을 노리는 색이 아니라 **코어의 색**으로 둔다
+  // (폭탄병의 고리를 심지와 같은 색으로 둔 것과 같은 규칙 — 고리는 저지를 것의 색이다).
   const ringMaterial = new THREE.MeshBasicMaterial({
     color: charger
       ? PALETTE.charger
@@ -449,7 +475,9 @@ export function createEnemy(kind: EnemyKind = 'archer'): EnemyView {
         ? PALETTE.shield
         : bomber
           ? PALETTE.bomberFuse
-          : PALETTE.enemyArrow,
+          : looter
+            ? PALETTE.core
+            : PALETTE.enemyArrow,
     transparent: true,
     opacity: 0.9,
     side: THREE.DoubleSide,
@@ -517,6 +545,12 @@ const BODY_LOOK: Record<EnemyKind, { color: number; cap: number; height: number;
       height: BOMBER_BODY_HEIGHT,
       roughness: 0.45,
     },
+    looter: {
+      color: PALETTE.looter,
+      cap: PALETTE.looterDark,
+      height: ENEMY.height * 0.78,
+      roughness: 0.6,
+    },
   };
 
 /**
@@ -536,6 +570,10 @@ function bodyGeometry(kind: EnemyKind, height: number): THREE.BufferGeometry {
     return new THREE.BoxGeometry(ENEMY.radius * 1.7, height, ENEMY.radius * 1.5);
   // 바닥에 놓인 공. 각진 몸 셋 사이에서 이것만 둥글어 멀리서도 먼저 갈린다.
   if (kind === 'bomber') return new THREE.SphereGeometry(height / 2, 14, 10);
+  // 아래가 넓고 위가 좁은 5각 기둥. 등에 진 것 때문에 앞으로 웅크린 몸으로 읽힌다 —
+  // 곧게 선 활잡이·방패병과 옆모습에서 먼저 갈린다.
+  if (kind === 'looter')
+    return new THREE.CylinderGeometry(ENEMY.radius * 0.55, ENEMY.radius, height, 5);
   return new THREE.CylinderGeometry(
     ENEMY.radius * (kind === 'shield' ? 0.8 : 1),
     ENEMY.radius * 0.85,

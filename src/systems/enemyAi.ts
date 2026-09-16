@@ -1,5 +1,5 @@
 import { length, rotateToward, type Vec2 } from '../core/math';
-import type { Enemy, Obstacle } from '../entities/types';
+import type { Enemy, Obstacle, XpCore } from '../entities/types';
 import { settleBody } from './movement';
 import { insideObstacle, sightBlocker } from './obstacles';
 
@@ -15,6 +15,7 @@ import { insideObstacle, sightBlocker } from './obstacles';
  *   돌진형(charger)  — 멈춰 서서 웅크린 뒤 → 몸을 던진다
  *   방패병(shield)   — 멈춰 서서 겨눈 뒤 → 화살을 놓는다 (활잡이와 같다)
  *   폭탄병(bomber)   — 멈춰 서서 달아오른 뒤 → 제 몸을 터뜨린다
+ *   약탈꾼(looter)   — 멈춰 서서 웅크린 뒤 → **코어를 삼킨다** (플레이어를 때리지 않는다)
  * 예고 칸을 종류마다 다시 만들지 않은 이유: 예고 없이 아픈 적은 피할 방법이 없고,
  * 예고의 모양이 종류마다 다르면 처음 하는 사람이 매번 새로 배워야 한다.
  *
@@ -40,6 +41,11 @@ import { insideObstacle, sightBlocker } from './obstacles';
  * 멈춰 겨누고 쏘았다.** 기둥에 가린 것과 같은 종류의 일이다 — 예고를 볼 수 없으면
  * 피할 방법이 없다. 다른 것은 그다음 걸음뿐이다: 가려 있으면 시야를 되찾으러 돌고,
  * 화면 밖이면 그냥 다가온다(화면 밖은 언제나 `approachDistance` 밖이다).
+ * **약탈꾼만 다가가는 곳이 플레이어가 아니다**(`stepLooter`). 그래서 이 파일에서 그 적만
+ * `playerPos`를 **가지 않을 자리**로 쓴다 — 플레이어 곁의 코어는 건드리지 않고
+ * (`LOOTER.guard`), 훔칠 것이 없으면 물러나 선다(`LOOTER.standOff`).
+ * 다섯 중 유일하게 **플레이어를 향해 돌지 않는 적**이기도 하다.
+ *
  * **돌진형과 폭탄병에는 이 구간이 없다.** 물러나지도 옆으로 돌지도 않고 곧장 온다 —
  * 그것이 활잡이와 정반대인 지점이고, 둘이 함께 있어야 하는 이유다.
  * 그 둘은 가림도 화면도 묻지 않는다(저지르는 자리가 코앞이라 언제나 보인다).
@@ -81,6 +87,16 @@ export interface EnemyStepOptions {
   shield: ShieldOptions;
   /** 폭탄병(DESIGN 9번)의 수치. 이 적만 쓰는 값이라 전부 여기 있다. */
   bomber: BomberOptions;
+  /** 약탈꾼(DESIGN 9번)의 수치. 이 적만 쓰는 값이라 전부 여기 있다. */
+  looter: LooterOptions;
+  /**
+   * 지금 맵에 놓인 경험치 코어들(DESIGN 3번). **약탈꾼 하나 때문에 여기 있다** —
+   * 다섯 중 그 적만 플레이어가 아닌 것을 보고 걷는다(`stepLooter`).
+   * **이 함수는 코어를 지우지 않는다.** 삼킨 것은 `result.steals`로 돌려주고,
+   * 실제로 없애는 것은 받는 쪽(World)의 일이다 — 폭탄병의 원이 누구에게 닿았는지를
+   * 여기서 정하지 않는 것과 같은 규칙이다.
+   */
+  cores: readonly XpCore[];
   /** 이 맵에 선 기둥들(DESIGN 10번). 적의 몸도 플레이어와 같은 규칙으로 막힌다. */
   obstacles: readonly Obstacle[];
   /**
@@ -143,6 +159,24 @@ export interface BomberOptions {
 }
 
 /**
+ * 약탈꾼만 쓰는 수치. 시작값은 `data/config.ts`의 `LOOTER`에서 온다.
+ * **`reach`만 거기 없다** — 몸 반지름과 코어 반지름을 더한 값이라 World가 채운다
+ * (돌진형의 `contactRadius`와 같은 자리다).
+ */
+export interface LooterOptions {
+  speed: number;
+  turnRate: number;
+  /** 플레이어에게서 이 거리 안의 코어는 건드리지 않는다(m). */
+  guard: number;
+  /** 훔칠 코어가 없을 때 물러나 서는 거리(m). */
+  standOff: number;
+  /** 코어 위에 멈춰 서서 삼키는 시간(s). */
+  swallow: number;
+  /** 코어에 닿았다고 보는 거리(m). 적 반지름 + 코어 반지름. */
+  reach: number;
+}
+
+/**
  * 겨누고 쏘는 박자. 활잡이와 방패병이 같은 코드를 쓰되 값만 갈린다 —
  * 종류마다 겨눔을 새로 만들면 "멈춰 선 적은 곧 무언가 한다"는 예고의 규칙이 갈라진다.
  */
@@ -183,12 +217,21 @@ export interface EnemyStepResult {
   contacts: number[];
   /** 이번 스텝에 터진 폭탄병들. 비어 있는 경우가 대부분이다. */
   blasts: EnemyBlast[];
+  /** 이번 스텝에 약탈꾼이 삼킨 코어들. 없애는 것은 받는 쪽(World)의 일이다. */
+  steals: CoreSteal[];
+}
+
+/** 약탈꾼 하나가 코어 하나를 삼켰다 (DESIGN 9번). */
+export interface CoreSteal {
+  core: XpCore;
+  /** 삼킨 그 약탈꾼. 세는 쪽이 누구인지 알아야 할 때를 위해 함께 돌려준다. */
+  by: Enemy;
 }
 
 /** 적을 한 스텝 움직이고, 이번에 저지른 것들을 돌려준다. */
 export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyStepResult {
   const { dt, playerPos } = options;
-  const result: EnemyStepResult = { shots: [], contacts: [], blasts: [] };
+  const result: EnemyStepResult = { shots: [], contacts: [], blasts: [], steals: [] };
 
   for (const enemy of enemies) {
     if (enemy.hitFlash > 0) enemy.hitFlash = Math.max(0, enemy.hitFlash - dt * 2.5);
@@ -222,6 +265,11 @@ export function stepEnemies(enemies: Enemy[], options: EnemyStepOptions): EnemyS
 
     if (enemy.kind === 'bomber') {
       stepBomber(enemy, enemies, dir, dist, options, result);
+      continue;
+    }
+
+    if (enemy.kind === 'looter') {
+      stepLooter(enemy, enemies, dir, dist, options, result);
       continue;
     }
 
@@ -471,6 +519,105 @@ function stepBomber(
   const move = dist <= bomber.triggerRange ? { x: 0, y: 0 } : { x: dir.x, y: dir.y };
   addSeparation(move, enemy, enemies, options.separation);
   moveBy(enemy, move, bomber.speed, options);
+}
+
+/**
+ * 약탈꾼 한 마리 (DESIGN 9번). **문법은 앞의 넷과 똑같고, 향하는 곳만 다르다** —
+ * 다가간다 → 멈춰 서서 웅크린다 → 코어를 삼킨다.
+ *
+ * - **플레이어를 보지 않는다.** 다섯 중 유일하게 몸이 플레이어를 향해 돌지 않는다
+ *   (나머지 넷은 `rotateToward(..., 플레이어)`가 첫 줄이다). 가는 쪽으로 돌 뿐이라,
+ *   화면에서 이 적은 **등을 보이고 걷는다** — 그것이 이 적을 알아보는 첫 표지다.
+ * - **때리지 않는다.** 화살도 몸통도 폭발도 없다. 가져가는 것은 경험치뿐이고,
+ *   그래서 이 적을 세우는 값은 체력이 아니라 **플레이어가 걸어야 하는 거리**다.
+ * - **플레이어 곁의 코어는 건드리지 않는다**(`guard`). 발밑의 것까지 집어 가면
+ *   가만히 선 채로 잡히는 적이 되고, 무엇보다 손에 닿기 직전의 코어가 증발한다.
+ * - **훔칠 것이 없으면 물러나 선다**(`standOff`). 할 일 없이 곁에 서 있으면
+ *   아프지 않은 적이 자동 조준을 가로챈다(`systems/autoAim.ts`는 가장 가까운 적을 잡는다).
+ *
+ * **삼키는 동안 쓰러뜨리면 코어는 그 자리에 남는다.** 체력이 다하면 `combat.ts`가 눕히고
+ * 여기 오지 않으므로 `result.steals`에 아무것도 담기지 않는다 — 심지가 타는 동안
+ * 쓰러진 폭탄병이 터지지 않는 것과 **같은 자리**다. 그것이 이 예고의 값이다.
+ */
+function stepLooter(
+  enemy: Enemy,
+  enemies: readonly Enemy[],
+  dir: Vec2,
+  dist: number,
+  options: EnemyStepOptions,
+  result: EnemyStepResult,
+): void {
+  const { dt, looter } = options;
+
+  if (enemy.aimTimer > 0) {
+    enemy.aimTimer -= dt;
+    if (enemy.aimTimer > 0) return; // 삼키는 동안에는 발이 멎는다. 그 멈춤이 예고다.
+    enemy.aimTimer = 0;
+    // **삼키는 사이에 플레이어가 주워 갔을 수 있다.** 그래서 코어를 기억해 두지 않고
+    // 끝나는 순간 다시 찾는다 — 없으면 아무 일도 없었던 것이 된다(빈손으로 일어선다).
+    const core = nearestLoot(enemy, options, looter.reach);
+    if (core) result.steals.push({ core, by: enemy });
+    return;
+  }
+
+  const target = nearestLoot(enemy, options, Infinity);
+  if (target) {
+    const toCore = { x: target.pos.x - enemy.pos.x, y: target.pos.y - enemy.pos.y };
+    const gap = length(toCore);
+    enemy.facing = rotateToward(enemy.facing, Math.atan2(toCore.y, toCore.x), looter.turnRate * dt);
+    if (gap <= looter.reach) {
+      enemy.aimTimer = looter.swallow;
+      return;
+    }
+    addSeparation(toCore, enemy, enemies, options.separation);
+    moveBy(enemy, toCore, looter.speed, options);
+    return;
+  }
+
+  // 훔칠 것이 없다. 플레이어에게서 `standOff`까지 물러나 서서 다음 코어를 기다린다.
+  const move = dist < looter.standOff ? { x: -dir.x, y: -dir.y } : { x: 0, y: 0 };
+  // 여기서도 도는 쪽은 **가는 쪽**이다. 서 있을 때는 보던 쪽을 그대로 본다 —
+  // 할 일이 없어졌다고 플레이어를 돌아보면 "이제 나를 노린다"는 거짓말이 된다.
+  if (move.x !== 0 || move.y !== 0) {
+    enemy.facing = rotateToward(enemy.facing, Math.atan2(move.y, move.x), looter.turnRate * dt);
+  }
+  addSeparation(move, enemy, enemies, options.separation);
+  moveBy(enemy, move, looter.speed, options);
+}
+
+/**
+ * 약탈꾼이 노릴 코어 하나 — **제게서 가장 가깝고, 플레이어에게서 `guard` 밖에 있는 것.**
+ * 하나도 없으면 null이다.
+ *
+ * `maxDist`는 두 가지로 쓴다: 목표를 고를 때는 Infinity(맵 전체에서 고른다),
+ * 삼킴이 끝나는 순간에는 `reach`(손이 닿는 자리에 아직 있는가).
+ *
+ * 순서가 정해져 있다(같은 거리면 먼저 생긴 코어). 난수를 쓰지 않으므로 같은 판은 늘
+ * 같은 그림이고, `npm run perf`의 표가 씨앗 하나에 매번 같은 값을 낸다.
+ */
+function nearestLoot(
+  enemy: Enemy,
+  options: EnemyStepOptions,
+  maxDist: number,
+): XpCore | null {
+  const { cores, playerPos, looter } = options;
+  const guardSq = looter.guard * looter.guard;
+  const maxSq = maxDist === Infinity ? Infinity : maxDist * maxDist;
+  let best: XpCore | null = null;
+  let bestSq = Infinity;
+  for (const core of cores) {
+    if (!core.alive) continue;
+    const px = core.pos.x - playerPos.x;
+    const py = core.pos.y - playerPos.y;
+    if (px * px + py * py <= guardSq) continue;
+    const dx = core.pos.x - enemy.pos.x;
+    const dy = core.pos.y - enemy.pos.y;
+    const distSq = dx * dx + dy * dy;
+    if (distSq > maxSq || distSq >= bestSq) continue;
+    bestSq = distSq;
+    best = core;
+  }
+  return best;
 }
 
 function distanceTo(enemy: Enemy, point: Vec2): number {

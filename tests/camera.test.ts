@@ -233,6 +233,12 @@ describe('화면 — 안 보이는 곳에서 겨누고 쏘는 일', () => {
           if (!lookAtBodies) continue;
           for (const enemy of world.enemies) {
             if (!enemy.alive || enemy.aimTimer <= 0) continue;
+            // **약탈꾼의 멈춤은 여기서 세지 않는다**(세션 69). 이 자가 지키는 규칙은
+            // "예고를 볼 수 없으면 피할 방법이 없다"이고, 그것은 **아프게 하는 것**에만
+            // 걸리는 규칙이다. 약탈꾼은 화살도 몸통도 폭발도 없이 코어만 삼키므로
+            // (`data/config.ts`의 `LOOTER`), 그 멈춤을 못 봤다고 해서 맞을 일이 없다 —
+            // 오히려 안 보이는 데서 훔치는 것이 "쫓아가라"의 값이다.
+            if (enemy.kind === 'looter') continue;
             aiming += 1;
             // 몸의 어느 귀퉁이도 화면에 없으면 통째로 화면 밖이다.
             const seen = BODY_CORNERS.some(

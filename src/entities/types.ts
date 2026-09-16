@@ -78,15 +78,17 @@ export interface Arrow {
  * - `charger` — 거리를 지우며 몸으로 부딪는다. 화살을 쏘지 않는다. → 옆으로 비켜라
  * - `shield` — 앞을 막고 걸어와 쏜다. 정면으로 온 화살은 방패가 받는다. → 돌아서 쏴라
  * - `bomber` — 붙어서 제 몸을 터뜨린다. 터지는 원이 붙어 선 자리보다 넓다. → 물러나라
+ * - `looter` — 나를 보지 않고 코어를 주워 삼킨다. 아프게 하지 않는다. → 쫓아가라
  *
- * **넷의 요구가 겹치지 않는다.** 앞의 셋에 대한 답은 전부 "거리를 둔 채 방향을 바꾸는 것"이라
- * 폭탄병에게는 하나도 통하지 않는다(`data/config.ts`의 `BOMBER`).
+ * **다섯의 요구가 겹치지 않는다.** 앞의 셋에 대한 답은 전부 "거리를 둔 채 방향을 바꾸는 것"이라
+ * 폭탄병에게는 하나도 통하지 않고(`data/config.ts`의 `BOMBER`), 넷에 대한 답은 전부
+ * "어떻게 안 맞는가"라 약탈꾼에게는 하나도 통하지 않는다(`LOOTER`) — 그 적은 때리지 않는다.
  *
- * 종류마다 다른 수치는 `data/config.ts`의 `ENEMY`·`CHARGER`·`SHIELD`·`BOMBER`에 있고,
+ * 종류마다 다른 수치는 `data/config.ts`의 `ENEMY`·`CHARGER`·`SHIELD`·`BOMBER`·`LOOTER`에 있고,
  * 행동이 갈리는 곳은 `systems/enemyAi.ts` 한 곳뿐이다
  * (방패가 화살을 받는 자리만 `systems/combat.ts`에 있다 — 판정은 화살 쪽 일이다).
  */
-export type EnemyKind = 'archer' | 'charger' | 'shield' | 'bomber';
+export type EnemyKind = 'archer' | 'charger' | 'shield' | 'bomber' | 'looter';
 
 /**
  * 적이 설 자리 하나. 종류를 적지 않으면 활잡이다(DESIGN 5번의 그 적).
