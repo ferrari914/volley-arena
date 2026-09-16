@@ -291,11 +291,21 @@ describe('안뜰 — 가림이 물러난 자리가 아니라 싸우는 자리에
    * 뜻이고, 실측은 112도다(고리를 11m로 당기면 144도 · 13m로 물리면 112도로 같다).
    * 요새 쪽 선(180도)은 바로 위 묶음이 네 맵 모두에 걸어 둔다 — 실측 136도.
    */
-  it('안뜰만 한복판에서 가려진다 — 앞의 세 맵은 0도다', () => {
+  // **가림을 싸우는 자리(12m 고리) 안에 둔 맵은 둘이다** — 안뜰(기둥 넷)과 바위 뜰(바위 하나 ·
+  // 세션 72). 둘은 같은 고리의 같은 자리에 같은 넓이를 두고 **개수만 다르고**, 그래서
+  // 한복판 가림도 112도와 그 절반인 56도다(아래 '바위 뜰' 묶음이 그 반을 못 박는다).
+  // 나머지 셋은 가림을 전부 벽 앞에 두어 한복판이 0도다.
+  const INSIDE = new Map([
+    ['court', 90],
+    ['boulder', 45],
+  ]);
+
+  it('가림을 싸우는 자리에 둔 두 맵만 한복판에서 가려진다 — 벽 앞에 둔 셋은 0도다', () => {
     for (const map of MAPS) {
       const center = cover({ x: 0, y: 0 }, map.obstacles);
       console.log(`  ${map.name.padEnd(6)} 한복판 가림 ${center}도`);
-      if (map.id === 'court') expect(center, '안뜰의 한복판이 트여 있다').toBeGreaterThan(90);
+      const floor = INSIDE.get(map.id);
+      if (floor !== undefined) expect(center, `${map.id}의 한복판이 트여 있다`).toBeGreaterThan(floor);
       else expect(center, `${map.id}의 한복판이 가려 있다`).toBe(0);
     }
   });
@@ -305,6 +315,76 @@ describe('안뜰 — 가림이 물러난 자리가 아니라 싸우는 자리에
     for (const pillar of findMap('court').obstacles) {
       expect(Math.hypot(pillar.x, pillar.y) - pillar.radius).toBeLessThan(ENEMY.approachDistance);
     }
+  });
+});
+
+/**
+ * **바위 뜰 — 가림이 몇 개인가**(다섯째 맵 · 세션 72).
+ *
+ * 이 맵이 있는 이유 전부가 여기 있다. 앞의 네 맵은 가림을 늘 여러 개로 나누어 세웠고
+ * (여섯 · 셋 · 넷), 넷이 함께 물은 것은 **"가림이 어디 있는가"** 하나였다.
+ * 바위 뜰은 **안뜰과 같은 고리의 같은 자리에 같은 넓이**를 두고 **개수만 하나로 줄인다.**
+ * 여기가 무너지면 이 맵은 그냥 '기둥이 큰 안뜰'이 되어, 갈린 수치가 개수 때문인지
+ * 넓이 때문인지 아무도 말할 수 없게 된다.
+ */
+describe('바위 뜰 — 같은 넓이를 하나로 뭉쳤다. 갈리는 것은 개수뿐이다', () => {
+  const boulderMap = findMap('boulder');
+  const courtMap = findMap('court');
+  const rock = boulderMap.obstacles[0] as Obstacle;
+  const area = (obstacles: readonly Obstacle[]): number =>
+    obstacles.reduce((sum, o) => sum + Math.PI * o.radius * o.radius, 0);
+
+  it('바위가 하나뿐이고, 안뜰 넷과 넓이가 같고, 그 넷이 선 자리 중 하나에 선다', () => {
+    expect(boulderMap.obstacles.length, '바위가 하나가 아니다').toBe(1);
+    // 넓이가 갈리면 이 맵이 묻는 것이 사라진다(`data/maps.ts`의 바위 뜰 주석).
+    expect(area(boulderMap.obstacles), '안뜰 넷과 넓이가 다르다').toBeCloseTo(area(courtMap.obstacles), 6);
+    // 같은 고리 위, 안뜰 기둥 넷 중 한 자리.
+    expect(Math.hypot(rock.x, rock.y)).toBeCloseTo(
+      Math.hypot((courtMap.obstacles[0] as Obstacle).x, (courtMap.obstacles[0] as Obstacle).y),
+      6,
+    );
+    const sameSpot = courtMap.obstacles.some(
+      (p) => Math.hypot(p.x - rock.x, p.y - rock.y) < 1e-6,
+    );
+    expect(sameSpot, '바위가 안뜰 기둥이 선 네 자리 밖에 있다').toBe(true);
+  });
+
+  it('넓이가 같은데 가림은 절반이다 — 넷으로 쪼개면 앞면의 폭이 2배가 된다', () => {
+    const one = cover({ x: 0, y: 0 }, boulderMap.obstacles);
+    const four = cover({ x: 0, y: 0 }, courtMap.obstacles);
+    console.log(`  한복판 가림 — 바위 뜰(하나) ${one}도 · 안뜰(넷) ${four}도 · 비 ${(four / one).toFixed(2)}`);
+    // 실측 56도와 112도. 선은 재서 맞춘 값이 아니라 √4 = 2라는 관계 그 자체이고,
+    // 각을 2도 칸으로 세므로 한 칸씩의 어긋남만 허용한다.
+    expect(four / one, '쪼갠 쪽이 두 배로 가리지 않는다').toBeGreaterThan(1.8);
+    expect(four / one, '쪼갠 쪽이 두 배보다 크게 가린다').toBeLessThan(2.2);
+  });
+
+  /**
+   * **뭉친 가림은 나만 막는다.** 적은 안 보이면 보이는 자리로 걸어가므로
+   * (`systems/enemyAi.ts`의 `clearSightMove`) 가림이 하나면 두 걸음이면 트인다.
+   * 내 화살은 그대로 먹힌다 — 자동 조준은 기둥을 보지 않는다(`systems/autoAim.ts`).
+   * 그 비(내 화살 먹힘 / 적 화살 먹힘)가 이 맵의 요구를 한 줄로 말한다:
+   * **바위 반대편에 적을 두지 마라.**
+   */
+  it('내 화살만 먹는다 — 그 비가 기둥이 여럿인 세 맵보다 크다 (씨앗 20개)', () => {
+    const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
+    const ratio = (map: ArenaMap): number => {
+      const runs = SEEDS.map((seed) => playMatch(seed, 600, walkToNearestCore, undefined, map));
+      const sum = (pick: (r: (typeof runs)[number]) => number) => runs.reduce((s, r) => s + pick(r), 0);
+      const mine = sum((r) => r.eatenMine) / sum((r) => r.hits + r.eatenMine);
+      const theirs = sum((r) => r.eatenTheirs) / sum((r) => r.enemyShots);
+      console.log(
+        `  ${map.name.padEnd(6)} 내 화살 먹힘 ${mine.toFixed(3)} · 적 화살 먹힘 ${theirs.toFixed(3)} · 비 ${(mine / theirs).toFixed(2)}`,
+      );
+      return mine / theirs;
+    };
+
+    const boulder = ratio(boulderMap);
+    for (const map of MAPS.filter((m) => m.obstacles.length > 1)) {
+      expect(boulder, `${map.id}보다 비가 크지 않다`).toBeGreaterThan(ratio(map));
+    }
+    // 실측 3.47(기둥 뜰 1.79 · 그늘 뜰 2.47 · 안뜰 2.40).
+    expect(boulder, '뭉친 가림이 적 화살도 함께 먹고 있다').toBeGreaterThan(3);
   });
 });
 
