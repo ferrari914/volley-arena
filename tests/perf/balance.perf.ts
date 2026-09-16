@@ -7,6 +7,7 @@ import {
   backOffBomber,
   circleShield,
   median,
+  neverStandStill,
   play,
   playMatch,
   preferPower,
@@ -119,7 +120,13 @@ const walking = table(walkToNearestCore);
  * 돌다가 반드시 맞는다**(돌기는 거리를 그대로 둔다 — `data/config.ts`의 `BOMBER`).
  * 그 사람으로 재면 방패병이 아니라 그 사람의 빈 구멍이 찍힌다.
  */
-const circling = table(backOffBomber(circleShield));
+/**
+ * **`neverStandStill`을 한 겹 더 씌웠다**(세션 75 · 투석병). 세션 74가
+ * `tests/progression.test.ts`에 씌운 그 겹이고, 까닭은 `tail.perf.ts`의 같은 자리에
+ * 표와 함께 적어 두었다 — **코어가 떨어져 발이 멎는 몇 초를 투석병이 고스란히 가져간다.**
+ * 그 겹이 없으면 아래 ①(먹힌 비율)이 방패병이 아니라 멈춰 선 발을 잰다.
+ */
+const circling = table(neverStandStill(backOffBomber(circleShield)));
 
 describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
   it('180판이 밸런스 선 안에 든다', () => {

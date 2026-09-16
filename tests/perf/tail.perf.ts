@@ -6,6 +6,7 @@ import {
   backOffBomber,
   circleShield,
   dodgeCharger,
+  neverStandStill,
   playMatch,
   takeAny,
   walkToNearestCore,
@@ -78,8 +79,28 @@ const BLOCK = 120;
  */
 const PEOPLE: readonly { name: string; input: (world: World) => FrameInput }[] = [
   { name: '걷는 사람', input: walkToNearestCore },
-  { name: '비키는 사람', input: backOffBomber(dodgeCharger) },
-  { name: '도는 사람', input: backOffBomber(circleShield) },
+  /**
+   * **아래 둘은 `neverStandStill`로 한 겹 더 감싸 둔다**(세션 75 · 투석병).
+   * 세션 74가 `tests/progression.test.ts`의 같은 두 사람에게 씌운 그 겹인데
+   * **이 파일에는 안 씌워져서, 여기 두 줄이 조용히 투석병을 재고 있었다.**
+   *
+   * 두 사람 다 코어가 다 떨어지면 발이 멎고(`walkToNearestCore`가 갈 곳을 못 찾는다),
+   * 그 몇 초가 **던지는 순간의 자리로 떨어지는 돌**에게는 전부다. 같은 480판을 씌우기 전과
+   * 뒤로 재면 이렇게 갈린다(맨 위 사람은 어느 쪽에서도 안 씌운다):
+   * | 150초 안에 쓰러진 판 | 걷는 사람 | 비키는 사람 | 도는 사람 |
+   * |---|---|---|---|
+   * | 여섯(투석병 없음) · 안 씌움 | 32 | 2 | 6 |
+   * | 일곱(세운 그대로) · 안 씌움 | 51 | 8 | **25** |
+   * | 일곱(세운 그대로) · 씌움 | 51 | 7 | **19** |
+   * | 일곱(세션 75의 값) · 씌움 | 41 | 1 | 16 |
+   * **씌우지 않으면 아래 ②(답을 아는 사람의 꼬리는 절반 아래)가 게임이 아니라 자의 빈
+   * 구멍을 잰다** — 도는 사람의 25 중 여섯 판은 방패병이 아니라 **멈춰 선 발**이 만든 값이고,
+   * 그 여섯 판이 ②를 1판 차(50 대 51)까지 몰아붙이고 있었다.
+   * 맨 위 `걷는 사람`은 감싸지 않는다. 그 사람은 **아무 답도 모르는 사람**이고,
+   * 이 표의 기준선은 전부 그 사람의 것이다(감싸면 세션 55부터의 표와 견줄 수 없다).
+   */
+  { name: '비키는 사람', input: neverStandStill(backOffBomber(dodgeCharger)) },
+  { name: '도는 사람', input: neverStandStill(backOffBomber(circleShield)) },
 ];
 
 /**
