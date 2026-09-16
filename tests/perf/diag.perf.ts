@@ -17,6 +17,7 @@ import { World } from '../../src/core/World';
 import type { FrameInput } from '../../src/core/World';
 import { MAPS } from '../../src/data/maps';
 import { backOffBomber, circleShield, DT, IDLE, play, walkToNearestCore } from '../support/match';
+import { clamp, wrapAngle } from '../../src/core/math';
 import { AIM, ARROW, ENEMY, SHIELD } from '../../src/data/config';
 import { sightBlocker } from '../../src/systems/obstacles';
 
@@ -329,6 +330,160 @@ describe('맞는 순간 적이 무엇을 하고 있었는가', () => {
         `${person.name}: 맞힘 ${hits} · 그중 겨누는 중 ${((onWindup / hits) * 100).toFixed(1)}% ` +
           `(${onWindup}) · 한 발 1씩 더 깎았다면 총피해 ${hits + onWindup} · ` +
           `한 판 ${(secs / 60).toFixed(0)}초 · 처치 ${(kills / 60).toFixed(1)}`,
+      );
+    }
+  });
+});
+
+/**
+ * **맞는 순간 내가 어디에 서 있었는가** — 내 화살이 몸에 닿을 때 그 적의 등 쪽이었나.
+ *
+ * 위의 셋과 한 줄에 선 네 번째 자다. 앞의 셋이 **거리**(적끼리 · 나와 적)와 **때**를
+ * 물었다면 이 자는 **각**을 묻는다. 세션 65가 열두째 화력 카드의 후보로 이 값을 대 보고,
+ * **만들기 전에 여기서 재고 접었다.**
+ *
+ * **왜 재 봤는가.** 세션 64가 남긴 규칙은 "카드의 값은 **왼쪽 스틱으로 움직일 수 있어야
+ * 한다**"였고(`data/upgrades.ts` 머리말), 등 뒤는 그 조건을 겉보기에 만족했다 —
+ * 적을 돌아 들어가는 것은 발로 하는 일이다. 게다가 **게임이 이미 한 곳에서 같은 각을 쓴다**:
+ * 방패병의 정면 부채꼴(`SHIELD.arc` 75°)이고, DESIGN 9번이 그 적에게 건 요구가
+ * 바로 "돌아서 쏴라"다.
+ *
+ * **재 보니 각은 왼쪽 스틱으로 움직일 수 있는 값이 아니었다 — 적이 나를 보기 때문이다.**
+ * 씨앗 60개 · 뒤 150°(방패의 정면을 그대로 뒤집은 값):
+ * | 사람 | 맞힘 | 각 p75 | 각 p90 | **뒤 150°** | 활잡이 / 돌진형 / 방패병 / 폭탄병 |
+ * |---|---|---|---|---|---|
+ * | 걷는 사람(손 안 댐) | 23424 | 0.4° | 15.5° | **1.5%** | 0.3 / 0.7 / 8.4 / 0.7% |
+ * | 도는 사람 | 24360 | 0.4° | 30.3° | 2.1% | 0.3 / 0.7 / 11.3 / 0.2% |
+ * | 돌아 들어가는 사람 | 25488 | 1.2° | 50.6° | **4.7%** | 0.2 / 9.9 / 13.3 / 0.1% |
+ *
+ * **맞힘의 4분의 3이 정면 1° 안에서 난다.** 왼쪽 스틱을 통째로 이 한 가지에 쓰는 사람도
+ * 1.5%를 4.7%로 올릴 뿐이다(코앞은 같은 자리에서 13.5%를 46.5%로 올렸다 — 세 배가 아니라
+ * 서른 배 큰 판이다). **이 값을 정하는 것은 카드도 사람도 아니고 적의 `turnRate`다**:
+ * 플레이어(7.2m/s)가 거리 d에서 도는 각속도 `7.2 / d`가 적이 따라 도는 속도와 같아지는
+ * 거리는 활잡이·폭탄병 **2.25m** · 돌진형 2.77m · 방패병 9m다. 곧 **활잡이와 폭탄병의
+ * 등은 2.25m 안으로 파고들어야만 열리고**, 그 거리는 이미 코앞 카드가 값을 매긴 자리다.
+ *
+ * **남는 것은 방패병과 돌진형 둘뿐인데, 그 둘은 이미 그 각에 값을 매겨 두었다.**
+ * 방패병의 등은 `blocksArrow`가 이미 연다(정면 8발 대 옆구리 3발). 돌진형의 등이 열리는
+ * 것은 몸을 던지는 동안 `facing`이 잠기기 때문이고(`dashTimer`), 그 순간 옆으로 비키는
+ * 것이 DESIGN이 그 적에게 건 요구 그 자체다. **각을 사는 카드는 적 넷 중 둘에게는 아무 말도
+ * 못 하고, 나머지 둘에게는 게임이 이미 하는 말을 한 번 더 한다.**
+ *
+ * **그러므로 맞는 각에 값을 매기는 카드는 적이 나를 보는 동안 닫혀 있다.**
+ * 이 갈래를 다시 열 일이 있다면(등을 보이고 걷는 적, 또는 적의 `turnRate`를 깎는 수단이
+ * 생긴다면) 여기부터 다시 재라.
+ *
+ * 재는 자리는 위의 '나와 적 사이의 거리'와 같은 프레임이다. 다만 **각은 화살이 날아온
+ * 방향이 아니라 내가 선 자리로 잰다**(`atan2(나 - 적)`) — `combat.ts`의 `blocksArrow`는
+ * 속도로 재지만(한 프레임에 몸통보다 멀리 나아간 화살이 몸 반대편에서 판정되므로),
+ * 여기서 물어야 하는 것은 "그 화살이 어디서 왔는가"가 아니라 **"고른 사람이 어디에 서
+ * 있었는가"**다. 카드가 사는 것은 자리이지 화살이 아니다.
+ *
+ *   npx vitest run --config vitest.perf.config.ts tests/perf/diag.perf.ts
+ */
+describe('맞는 순간 내가 어디에 서 있었는가', () => {
+  /** 등으로 치는 부채꼴의 반각(rad). 방패의 정면(`SHIELD.arc` 75°)을 그대로 뒤집은 값이다. */
+  const BACK = SHIELD.arc;
+
+  /**
+   * **등 뒤로 돌아 들어가는 사람.** 자동 조준이 잡은 적(`lockedEnemy` — 내 화살이 가는 곳)의
+   * 뒤로 돌면서 `orbit`m을 지킨다. **왼쪽 스틱만 쓴다** — 오른쪽 스틱은 손대지 않는다.
+   * 그래야 재는 것이 '자리'가 되고, 표적을 고르는 일(세션 64가 닫은 갈래)이 섞이지 않는다.
+   *
+   * 도는 규칙은 `circleShield`와 같다(지금 서 있는 쪽으로 돌고, 붙는 몫과 도는 몫을 더해
+   * 정규화한다 · `tests/support/match.ts`). 다른 것은 **적 넷을 가리지 않는다**는 것뿐이다.
+   *
+   * **돌아가는 쪽에 유리하게 골랐다** — 접는 쪽이 이기게 두면 접은 근거가 약해진다.
+   * 거리를 셋(1.4 · 2.2 · 3.0m), 등 부채꼴에 들면 도는 것을 멈추는 쪽과 계속 도는 쪽을
+   * 재서 가장 높은 값을 남겼다(뒤 150° 기준): 멈추면 2.7% · 계속 돌면 **4.7%**다.
+   * 적이 곧 따라 돌므로 **등은 서 있는 자리가 아니라 계속 돌아야 하는 자리**다.
+   * (1.4m까지 붙이면 4.9%로 거의 같고 맞힘이 준다. 2.2m가 총피해로 가장 낫다.)
+   */
+  const flank =
+    (orbit: number) =>
+    (world: World): FrameInput => {
+      const target = world.lockedEnemy;
+      if (!target || !target.alive) return walkToNearestCore(world);
+      const dx = world.player.pos.x - target.pos.x;
+      const dy = world.player.pos.y - target.pos.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 1e-6) return walkToNearestCore(world);
+      // 적이 보는 방향에서 내가 몇 도나 비켜 서 있는가. `circleShield`가 재는 것과 같은 각이다.
+      const off = wrapAngle(Math.atan2(dy, dx) - target.facing);
+      const sign = off >= 0 ? 1 : -1;
+      const pull = clamp((dist - orbit) / 2, -1, 1);
+      const move = {
+        x: (-dy / dist) * sign - (dx / dist) * pull,
+        y: (dx / dist) * sign - (dy / dist) * pull,
+      };
+      const len = Math.hypot(move.x, move.y);
+      if (len < 1e-6) return walkToNearestCore(world);
+      return { move: { x: move.x / len, y: move.y / len }, aim: null };
+    };
+
+  const PEOPLE = [
+    { name: '걷는 사람', input: walkToNearestCore },
+    { name: '도는 사람', input: backOffBomber(circleShield) },
+    { name: '돌아 들어가는 사람', input: backOffBomber(flank(2.2)) },
+  ] as const;
+
+  /** 종류별로 갈라 찍는다 — 각이 열리는 적과 끝내 안 열리는 적이 여기서 갈린다. */
+  const KINDS = [
+    ['archer', '활잡이'],
+    ['charger', '돌진형'],
+    ['shield', '방패병'],
+    ['bomber', '폭탄병'],
+  ] as const;
+
+  it('등 뒤에서 얼마나 맞히는가', () => {
+    for (const person of PEOPLE) {
+      const angles: number[] = [];
+      const byKind = new Map<string, { hits: number; back: number }>();
+      let secs = 0;
+      let kills = 0;
+      for (let i = 0; i < 60; i += 1) {
+        const world = new World({ seed: 20260909 + i });
+        for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
+          const before = world.enemies.map((e) => ({ id: e.id, hp: e.hp }));
+          play(world, 1, person.input);
+          for (const e of world.enemies) {
+            const was = before.find((b) => b.id === e.id);
+            // 체력이 줄었으면 내 화살이 몸에 닿은 것이다(위의 '나와 적 사이의 거리'와 같은 규칙).
+            if (!was || e.hp >= was.hp) continue;
+            const off = Math.abs(
+              wrapAngle(
+                Math.atan2(world.player.pos.y - e.pos.y, world.player.pos.x - e.pos.x) - e.facing,
+              ),
+            );
+            angles.push(off);
+            const row = byKind.get(e.kind) ?? { hits: 0, back: 0 };
+            row.hits += 1;
+            if (off >= Math.PI - BACK) row.back += 1;
+            byKind.set(e.kind, row);
+          }
+        }
+        secs += world.elapsed;
+        kills += world.kills;
+      }
+      angles.sort((a, b) => a - b);
+      const deg = (p: number) => (((angles[Math.floor(angles.length * p)]! * 180) / Math.PI)).toFixed(1);
+      const beyond = (rad: number) =>
+        ((angles.filter((a) => a >= rad).length / angles.length) * 100).toFixed(1);
+      const back = angles.filter((a) => a >= Math.PI - BACK).length;
+      console.log(
+        `${person.name}: 맞힘 ${angles.length} · 정면에서 비껴난 각 p50 ${deg(0.5)}° · ` +
+          `p75 ${deg(0.75)}° · p90 ${deg(0.9)}° | 뒤 150°(방패의 거울) ${beyond(Math.PI - BACK)}% · ` +
+          `뒤 90° ${beyond(Math.PI * 0.75)}% · 등 60° ${beyond((Math.PI * 5) / 6)}% | ` +
+          `1씩 더 깎았다면 총피해 ${angles.length + back} · 한 판 ${(secs / 60).toFixed(0)}초 · ` +
+          `처치 ${(kills / 60).toFixed(1)}`,
+      );
+      console.log(
+        `  종류별 뒤 150° — ` +
+          KINDS.map(([kind, label]) => {
+            const row = byKind.get(kind);
+            if (!row) return `${label} —`;
+            return `${label} ${((row.back / row.hits) * 100).toFixed(1)}%(${row.hits})`;
+          }).join(' · '),
       );
     }
   });
