@@ -14,9 +14,10 @@
  */
 import { describe, it } from 'vitest';
 import { World } from '../../src/core/World';
+import type { FrameInput } from '../../src/core/World';
 import { MAPS } from '../../src/data/maps';
 import { backOffBomber, circleShield, IDLE, play, walkToNearestCore } from '../support/match';
-import { ENEMY, SHIELD } from '../../src/data/config';
+import { ARROW, ENEMY, SHIELD } from '../../src/data/config';
 import { sightBlocker } from '../../src/systems/obstacles';
 
 const SEEDS = Array.from({ length: 8 }, (_, i) => 20260909 + i);
@@ -121,6 +122,100 @@ describe('적끼리의 거리', () => {
       console.log(
         `${walker.name}: 처치 ${gaps.length} · 곁의 적까지 중앙 ${at(0.5)}m · p10 ${at(0.1)} · p25 ${at(0.25)} | ` +
           `그 안에 든 처치 — 2.2m ${within(2.2)}% · 4.5m ${within(4.5)}% · 8m ${within(8)}%`,
+      );
+    }
+  });
+});
+
+/**
+ * **나와 적 사이가 얼마나 가까운가** — 내 화살이 적의 몸에 닿는 그 순간의 거리.
+ *
+ * 왜 재 두는가: 위의 '적끼리의 거리'와 **짝을 이루는 자**다. 그 자가 닫은 갈래
+ * ("적끼리의 거리를 보는 효과")를 대신해 열한째 카드가 간 자리가 여기이고
+ * (`pointblank` · 코앞 · 세션 62), **이 자가 그 카드의 값을 정했다**
+ * (`ARROW.pointBlankRange` 6m).
+ *
+ * **두 자의 답이 갈리는 지점이 이 프로젝트가 배운 것이다.** 적끼리의 거리는
+ * 누가 어떻게 움직여도 같았다(11.8m 대 12.3m) — 그것은 아레나가 정하는 값이라
+ * 카드가 살 수 없었다. 나와 적 사이는 **사람이 움직인다**: 아래 표에서 걷는 사람과
+ * 파고드는 사람이 세 배 가까이 갈린다. 카드가 새 요구를 걸려면 **고른 사람이
+ * 손으로 바꿀 수 있는 값**이어야 하고, 그것을 여기서 먼저 재고 넣는다.
+ *
+ * 재는 자리는 `systems/combat.ts`가 재는 자리와 **같은 프레임 · 같은 좌표**다 —
+ * 화살은 스텝의 맨 끝에서 움직이므로(`core/World.ts`) 스텝이 끝난 뒤의 두 자리가
+ * 곧 닿던 순간의 두 자리다. 한 프레임에 같은 적이 두 발을 맞으면 한 번으로 세는데,
+ * 아래 '맞힘'과 `world.hits`를 나란히 찍어 그 몫이 얼마나 되는지 함께 보인다.
+ *
+ *   npx vitest run --config vitest.perf.config.ts tests/perf/diag.perf.ts
+ */
+describe('나와 적 사이의 거리', () => {
+  /**
+   * 가장 가까운 적이 `hug`m 밖이면 그쪽으로 걷고, 안에 들면 코어를 줍는 사람.
+   *
+   * **도는 사람과 같은 규칙으로 폭탄병에서만 물러난다**(`backOffBomber`). 안 씌우면
+   * 한 판이 68초로 끝나 재는 것이 카드가 아니라 그 사람의 자살이 된다(실측).
+   * 씌워도 붙는 일 자체는 그대로다 — 심지가 타는 프레임에만 비켜서기 때문이다.
+   * 그래도 한 판은 짧아진다. 그 값도 아래 줄에 함께 찍는다:
+   * **코앞이 공짜가 아니라는 것이 그 자리다.**
+   */
+  const dive =
+    (hug: number) =>
+    (world: World): FrameInput => {
+      let best: (typeof world.enemies)[number] | null = null;
+      let bestDist = Infinity;
+      for (const e of world.enemies) {
+        if (!e.alive) continue;
+        const d = Math.hypot(e.pos.x - world.player.pos.x, e.pos.y - world.player.pos.y);
+        if (d < bestDist) {
+          bestDist = d;
+          best = e;
+        }
+      }
+      if (!best || bestDist <= hug) return walkToNearestCore(world);
+      return {
+        move: {
+          x: (best.pos.x - world.player.pos.x) / bestDist,
+          y: (best.pos.y - world.player.pos.y) / bestDist,
+        },
+        aim: null,
+      };
+    };
+
+  const PEOPLE = [
+    { name: '걷는 사람', input: walkToNearestCore },
+    { name: '도는 사람', input: backOffBomber(circleShield) },
+    { name: '파고드는 사람', input: backOffBomber(dive(5)) },
+  ] as const;
+
+  it('닿는 순간 얼마나 붙어 있었는가', () => {
+    for (const person of PEOPLE) {
+      const gaps: number[] = [];
+      let hits = 0;
+      let secs = 0;
+      for (let i = 0; i < 60; i += 1) {
+        const world = new World({ seed: 20260909 + i });
+        for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
+          const before = world.enemies.map((e) => ({ id: e.id, hp: e.hp }));
+          play(world, 1, person.input);
+          for (const e of world.enemies) {
+            const was = before.find((b) => b.id === e.id);
+            // 체력이 줄었으면 내 화살이 몸에 닿은 것이다. 방패가 받아 낸 화살은 체력을
+            // 건드리지 않고(`systems/combat.ts`), 적을 깎는 다른 길은 없다.
+            if (!was || e.hp >= was.hp) continue;
+            gaps.push(Math.hypot(e.pos.x - world.player.pos.x, e.pos.y - world.player.pos.y));
+          }
+        }
+        hits += world.hits;
+        secs += world.elapsed;
+      }
+      gaps.sort((a, b) => a - b);
+      const at = (p: number) => gaps[Math.floor(gaps.length * p)]!.toFixed(1);
+      const within = (m: number) =>
+        ((gaps.filter((g) => g <= m).length / gaps.length) * 100).toFixed(1);
+      console.log(
+        `${person.name}: 맞힘 ${gaps.length}(hits ${hits}) · 한 판 ${(secs / 60).toFixed(0)}초 · ` +
+          `중앙 ${at(0.5)}m · p25 ${at(0.25)} | 그 안에 든 맞힘 — 4m ${within(4)}% · ` +
+          `6m ${within(ARROW.pointBlankRange)}% · 8m ${within(8)}%`,
       );
     }
   });
