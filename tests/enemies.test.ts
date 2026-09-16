@@ -944,3 +944,73 @@ describe('약탈꾼', () => {
     expect(steals[0]?.core).toBe(near);
   });
 });
+
+/**
+ * **투석병** (DESIGN 9번 · 여섯째 종류 · 세션 73·74).
+ *
+ * 앞의 다섯은 전부 "나와 그 적 사이"를 묻는다(거리·각·방향). 이 적만 묻는 것이
+ * **내가 서 있는 땅**이라, 여기서 지키는 것도 그 한 가지다:
+ * **떨어지는 자리는 던지는 순간의 내 자리이고, 기둥은 그것을 막지 못한다.**
+ */
+describe('투석병', () => {
+  const lobberAt = (x: number, y: number): Enemy =>
+    createEnemy(nextId++, x, y, LOBBER.maxHp, 'lobber');
+
+  /** seconds초 동안 돌리고 그동안 띄운 돌을 모아 돌려준다. */
+  function lobs(enemies: Enemy[], seconds: number, overrides: Partial<EnemyStepOptions> = {}) {
+    const thrown = [];
+    for (let i = 0; i < Math.round(seconds / DT); i += 1) {
+      thrown.push(...stepEnemies(enemies, options(overrides)).lobs);
+    }
+    return thrown;
+  }
+
+  it('돌은 지금 플레이어가 선 그 자리로 떨어진다 — 겨냥이 아니라 복사다', () => {
+    const at = { x: 3, y: -4 };
+    const thrown = lobs([lobberAt(3, 6)], 3, { playerPos: at });
+    expect(thrown.length).toBeGreaterThanOrEqual(1);
+    for (const lob of thrown) {
+      expect(Math.hypot(lob.to.x - at.x, lob.to.y - at.y)).toBeLessThan(1e-6);
+    }
+  });
+
+  it('기둥이 사이에 있어도 던진다 — 하늘로 넘어가기 때문이다', () => {
+    // 같은 자리에 선 활잡이는 쏘지 않는다(`sightBlocker`). 그 대비가 이 적의 자리다.
+    const wall: Obstacle = { x: 0, y: 4, radius: 2.5 };
+    const blocked = { obstacles: [wall] };
+    // 창을 1.2초로 잡는다 — 투석병이 한 발(들기 0.6초)을 띄우기에 넉넉하고,
+    // 활잡이가 기둥을 돌아 시야를 되찾기에는 짧다(그쪽은 `desiredMove`가 옆으로 돈다).
+    expect(lobs([lobberAt(0, 9)], 1.2, blocked).length).toBeGreaterThanOrEqual(1);
+    expect(run([enemyAt(0, 9)], 1.2, blocked).length).toBe(0);
+  });
+
+  it('화면 밖에서는 들지 않는다 — 몸의 예고를 볼 수 없는 자리다', () => {
+    // 나머지와 같은 규칙이다(`outOfView`). 예고 없이 아픈 적은 피할 방법이 없다.
+    // 화면 아래쪽(+y)이 사방 중 가장 좁다(`VIEW.back` 12.3). 사정거리(15) 안이지만
+    // 그 밖에 선 적은 들지 않는다 — 앞쪽 같은 거리에 선 적은 든다.
+    expect(lobs([lobberAt(0, -13)], 3).length).toBeGreaterThanOrEqual(1);
+    // 화면 아래쪽(+y)을 1m로 좁혀 세운다. 자리를 멀리 잡으면 사정거리(15)가 먼저 걸려
+    // 무엇이 막았는지 알 수 없다 — 여기서 재는 것은 거리가 아니라 화면이다.
+    const narrow = { view: { forward: VIEW.forward, back: 1 } };
+    expect(lobs([lobberAt(0, 10)], 3, narrow).length).toBe(0);
+  });
+
+  it('들고 있는 동안 쓰러뜨리면 돌은 떠나지 않는다', () => {
+    // 심지가 타는 동안 쓰러뜨린 폭탄병·삼키는 중에 쓰러뜨린 약탈꾼과 같은 자리다.
+    // 그것이 예고(`windup`)의 값이고, 예고가 값이 없으면 멈춰 설 이유도 없다.
+    const enemy = lobberAt(0, 10);
+    lobs([enemy], LOBBER.windup * 0.5);
+    expect(enemy.aimTimer).toBeGreaterThan(0);
+    enemy.alive = false;
+    // 다시 서기 전까지를 본다(`ENEMY.respawnDelay`). 되살아난 적은 다시 들기 시작한다.
+    enemy.respawnTimer = 99;
+    expect(lobs([enemy], 2).length).toBe(0);
+  });
+
+  it('활잡이보다 드물게 던진다 — 한 발이 반드시 닿는 자리에 떨어지기 때문이다', () => {
+    expect(LOBBER.cooldown).toBeGreaterThan(ENEMY.fireCooldown);
+    // 날아가는 동안이 이 적이 주는 유일한 피할 시간이다. 걸어 나갈 거리(반지름)를
+    // 플레이어 속도로 나눈 값보다 넉넉해야 한다 — 알아보는 시간이 그 나머지다.
+    expect(LOBBER.flight).toBeGreaterThan(LOBBER.blastRadius / PLAYER.speed);
+  });
+});
