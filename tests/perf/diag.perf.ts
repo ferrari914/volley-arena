@@ -16,8 +16,8 @@ import { describe, it } from 'vitest';
 import { World } from '../../src/core/World';
 import type { FrameInput } from '../../src/core/World';
 import { MAPS } from '../../src/data/maps';
-import { backOffBomber, circleShield, IDLE, play, walkToNearestCore } from '../support/match';
-import { ARROW, ENEMY, SHIELD } from '../../src/data/config';
+import { backOffBomber, circleShield, DT, IDLE, play, walkToNearestCore } from '../support/match';
+import { AIM, ARROW, ENEMY, SHIELD } from '../../src/data/config';
 import { sightBlocker } from '../../src/systems/obstacles';
 
 const SEEDS = Array.from({ length: 8 }, (_, i) => 20260909 + i);
@@ -216,6 +216,119 @@ describe('나와 적 사이의 거리', () => {
         `${person.name}: 맞힘 ${gaps.length}(hits ${hits}) · 한 판 ${(secs / 60).toFixed(0)}초 · ` +
           `중앙 ${at(0.5)}m · p25 ${at(0.25)} | 그 안에 든 맞힘 — 4m ${within(4)}% · ` +
           `6m ${within(ARROW.pointBlankRange)}% · 8m ${within(8)}%`,
+      );
+    }
+  });
+});
+
+/**
+ * **맞는 순간 적이 무엇을 하고 있었는가** — 내 화살이 몸에 닿을 때 그 적이 겨누는 중이었나.
+ *
+ * 위의 두 자와 한 줄에 선 세 번째 자다. 앞의 둘이 **거리**를 물었다면(적끼리 · 나와 적),
+ * 이 자는 **때**를 묻는다 — 화력 다섯 장이 한 번도 묻지 않은 것이다(연사·다중 발사·관통·
+ * 튕김은 "더 많이 · 더 자주", 코앞은 "어디에 서 있는가"). 세션 64가 그 자리에 열두째 장
+ * ("겨누는 적을 1 더 깎는다")을 세우려다, **만들기 전에 여기서 재고 접었다.**
+ *
+ * 재는 것은 `e.aimTimer > 0`, 곧 **저지르기 직전의 적**이다. 네 종류가 이 타이머 하나를
+ * 함께 쓰므로(`entities/types.ts`) 활잡이의 겨눔 · 돌진형의 웅크림 · 폭탄병의 심지 ·
+ * 방패병의 겨눔이 한 줄로 읽힌다. 화면에도 이미 그려져 있고(적이 붉게 달아오르고 발밑
+ * 고리가 좁혀진다 · `ENEMY.aimTime`), **게임이 이미 한 곳에서 같은 규칙을 쓴다** —
+ * 방패병은 겨누는 동안 방패를 내린다(`systems/combat.ts`의 `blocksArrow`:
+ * "가장 위험한 순간이 곧 가장 무른 순간").
+ *
+ * **재 보니 그 카드는 노릴 수 없는 카드였다.** 아래 표의 맨 오른쪽 두 칸이 그것이다:
+ * 손을 안 대고 걷기만 해도 맞힘의 5분의 1이 겨누는 적에게 들어가는데(19%),
+ * 오른쪽 스틱으로 **일부러 노리면 겨눔 몫은 6%p 오르고 맞힘 자체가 그보다 많이 줄어**
+ * 총피해가 도리어 내려간다. 노리는 사람을 두 번 다듬어도(사거리 12m로 좁히고,
+ * 화살이 닿기 전에 쏴 버릴 적은 건너뛰고) 걷는 사람을 넘지 못했다.
+ *
+ * **이유는 카드가 아니라 자동 조준이다.** 자동 조준은 늘 가장 가까운 적을 잡고
+ * (`systems/autoAim.ts`), **가장 가까운 적이 곧 가장 자주 겨누는 적이다**(사거리 안에
+ * 오래 머무르므로). 그래서 "겨누는 놈으로 조준을 돌려라"라는 요구는 이미 하고 있는 일을
+ * 다시 시키는 것이거나, 더 먼 놈을 보느라 손해를 보는 일 둘 중 하나가 된다.
+ *
+ * **그러므로 표적을 고르는 일에 값을 매기는 카드는 자동 조준이 있는 동안 닫혀 있다.**
+ * 값을 걸려면 **왼쪽 스틱으로 움직일 수 있는 것**이어야 한다(`data/upgrades.ts`에
+ * 세 장의 결과를 나란히 적어 두었다). 이 갈래를 다시 열려면 여기부터 다시 재라.
+ *
+ * 재는 자리는 `systems/combat.ts`가 재는 자리와 같다 — 적이 먼저 움직이고
+ * (`updateEnemies`) 화살이 스텝의 맨 끝에서 닿으므로(`core/World.ts`), 스텝이 끝난 뒤의
+ * `aimTimer`가 곧 닿던 순간의 값이다. **쓰러뜨린 한 발만 예외다**: 눕는 순간 combat이
+ * `aimTimer`를 0으로 지우므로, 그때는 스텝 "전"의 값이 한 프레임분(DT)보다 컸는지로 본다
+ * (그 프레임에 겨눔을 새로 시작하면서 동시에 쓰러진 한 발은 놓친다 — 드물다).
+ *
+ *   npx vitest run --config vitest.perf.config.ts tests/perf/diag.perf.ts
+ */
+describe('맞는 순간 적이 무엇을 하고 있었는가', () => {
+  /**
+   * **겨누는 적으로 조준을 돌리는 사람.** 걷는 것은 `inner`가 하고 이 사람은 손만 쓴다
+   * (오른쪽 스틱 · `FrameInput.aim`). 겨누는 적이 없으면 손을 떼 자동 조준에 맡긴다.
+   *
+   * **노리는 쪽에 유리하게 두 번 다듬었다** — 접는 쪽이 이기게 두면 접은 근거가 약해진다:
+   * 화살이 가는 동안 이미 쏴 버릴 적은 건너뛰고(`d / speed < aimTimer`), 너무 먼 적을
+   * 쫓다 가까운 적을 놓치지 않게 12m로 끊는다. 22m까지 열어 보면 겨눔 몫은 25.7%까지
+   * 오르지만 총피해는 26762로 더 내려간다(걷는 사람 27944).
+   *
+   * **보는 것은 화면에 있는 것뿐이다**(`dodgeCharger`·`circleShield`와 같은 규칙) —
+   * 달아오른 몸과 좁혀지는 발밑 고리다. 아직 겨누지 않은 적이 곧 겨눌 것을 미리 아는
+   * 사람은 만들지 않는다. 그런 사람이 재는 값은 사람이 낼 수 없는 값이다.
+   */
+  /** 이보다 먼 적은 노리지 않는다(m). 넓히면 겨눔 몫은 오르고 총피해는 내려간다. */
+  const SNIPE_RANGE = 12;
+
+  const snipeWindup =
+    (inner: (w: World) => FrameInput) =>
+    (world: World): FrameInput => {
+      const base = inner(world);
+      let best: (typeof world.enemies)[number] | null = null;
+      let bestDist = Math.min(SNIPE_RANGE, AIM.autoRange);
+      for (const e of world.enemies) {
+        if (!e.alive || e.aimTimer <= 0) continue;
+        const d = Math.hypot(e.pos.x - world.player.pos.x, e.pos.y - world.player.pos.y);
+        if (d / ARROW.speed >= e.aimTimer) continue;
+        if (d <= bestDist) {
+          bestDist = d;
+          best = e;
+        }
+      }
+      if (!best) return base;
+      return {
+        move: base.move,
+        aim: { x: best.pos.x - world.player.pos.x, y: best.pos.y - world.player.pos.y },
+      };
+    };
+
+  const PEOPLE = [
+    { name: '걷는 사람', input: walkToNearestCore },
+    { name: '도는 사람', input: backOffBomber(circleShield) },
+    { name: '틈을 노리는 사람', input: snipeWindup(backOffBomber()) },
+  ] as const;
+
+  it('겨누는 중인 적을 얼마나 맞히는가', () => {
+    for (const person of PEOPLE) {
+      let hits = 0;
+      let onWindup = 0;
+      let secs = 0;
+      let kills = 0;
+      for (let i = 0; i < 60; i += 1) {
+        const world = new World({ seed: 20260909 + i });
+        for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
+          const before = world.enemies.map((e) => ({ id: e.id, hp: e.hp, aim: e.aimTimer }));
+          play(world, 1, person.input);
+          for (const e of world.enemies) {
+            const was = before.find((b) => b.id === e.id);
+            if (!was || e.hp >= was.hp) continue;
+            hits += 1;
+            if (e.alive ? e.aimTimer > 0 : was.aim > DT) onWindup += 1;
+          }
+        }
+        secs += world.elapsed;
+        kills += world.kills;
+      }
+      console.log(
+        `${person.name}: 맞힘 ${hits} · 그중 겨누는 중 ${((onWindup / hits) * 100).toFixed(1)}% ` +
+          `(${onWindup}) · 한 발 1씩 더 깎았다면 총피해 ${hits + onWindup} · ` +
+          `한 판 ${(secs / 60).toFixed(0)}초 · 처치 ${(kills / 60).toFixed(1)}`,
       );
     }
   });
