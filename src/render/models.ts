@@ -70,6 +70,12 @@ export const PALETTE = {
    */
   bomberFuse: 0xffb03a,
   accent: 0xffd479,
+  /**
+   * 코앞 고리(DESIGN 8번 · 코앞 카드). **카드의 색 그대로다**(`data/upgrades.ts`의 `#22d94f`) —
+   * 방금 고른 카드와 바닥에 생긴 고리가 같은 색이어야 "저 고리가 저 카드다"로 읽힌다
+   * (폭탄병의 심지와 터질 원을 같은 색으로 둔 것과 같은 이유다).
+   */
+  pointBlank: 0x22d94f,
   core: 0x7bffcf,
   coreDrop: 0xa6ff5e,
 } as const;
@@ -171,6 +177,39 @@ function createGrid(): THREE.LineSegments {
   );
   lines.position.y = 0.02;
   return lines;
+}
+
+/**
+ * **코앞 고리** — 코앞 카드를 고른 사람의 발밑에 생기는 6m 고리(`ARROW.pointBlankRange`).
+ *
+ * 카드를 한 장도 안 골랐으면 보이지 않는다. 이 고리가 하는 일은 하나다 —
+ * **"여기 안에 들어온 놈은 더 아프다"를 글이 아니라 자리로 말하는 것.**
+ * 카드에 적힌 6m는 읽어도 화면에서 어디까지인지 알 수 없다.
+ *
+ * **플레이어 그룹에 넣지 않는다.** 그 그룹은 맞은 순간 1.16배로 부풀었다 돌아오므로
+ * (`Renderer.sync`의 `pop`), 안에 넣으면 맞을 때마다 고리가 7m로 커졌다 줄어든다 —
+ * 재는 자가 흔들려 보이는 것은 없느니만 못하다.
+ *
+ * 얇고 옅게 둔다(두께 0.14m · 0.28). 벽에 붙어 서면 고리가 아레나 밖으로 비어져 나가는데
+ * (적의 겨눔 고리도 그렇다), 옅으면 바닥에 그은 선으로 읽히고 짙으면 물건으로 읽힌다.
+ */
+export function createPointBlankRing(): THREE.Mesh {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(ARROW.pointBlankRange - 0.14, ARROW.pointBlankRange, 72),
+    new THREE.MeshBasicMaterial({
+      color: PALETTE.pointBlank,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  ring.name = 'pointBlankRing';
+  ring.rotation.x = -Math.PI / 2;
+  // 격자(0.02)와 발밑 그림자 고리(0.03)보다 위. 같은 높이에 두면 z-파이팅으로 깜빡인다.
+  ring.position.y = 0.045;
+  ring.visible = false;
+  return ring;
 }
 
 /** 플레이어. -Z 방향을 앞으로 삼는다(Three.js 기본 정면). */

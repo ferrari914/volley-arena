@@ -14,6 +14,7 @@ import {
   createEnemy,
   createLockMarker,
   createPlayer,
+  createPointBlankRing,
   PALETTE,
   SHIELD_POSE,
   type EnemyView,
@@ -41,6 +42,8 @@ export class Renderer {
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
   private readonly playerView = createPlayer();
+  /** 코앞 카드를 고른 사람의 발밑 고리(DESIGN 8번). 고르지 않았으면 보이지 않는다. */
+  private readonly pointBlankRing = createPointBlankRing();
   private readonly enemyViews: EnemyView[] = [];
   private readonly lockMarker = createLockMarker();
   /** 화살 메시. 주인을 함께 들고 있어야 회수할 때 맞는 쪽 풀로 돌려보낸다(코어와 같은 규칙). */
@@ -77,6 +80,7 @@ export class Renderer {
 
     this.scene.add(createArena());
     this.scene.add(this.playerView.group);
+    this.scene.add(this.pointBlankRing);
     this.scene.add(this.lockMarker);
     this.addLights();
 
@@ -125,6 +129,13 @@ export class Renderer {
     this.playerView.shield.visible = player.invulnerable > 0;
     if (player.invulnerable > 0) {
       this.playerView.shieldMaterial.opacity = 0.14 + 0.1 * (0.5 + 0.5 * Math.sin(now * 0.011));
+    }
+
+    // 코앞 고리는 플레이어를 따라다니되 **그룹 밖에 있다** — 맞은 순간의 `pop`에
+    // 함께 부풀면 거리를 재는 자가 흔들린다(`createPointBlankRing`).
+    this.pointBlankRing.visible = world.stats.pointBlank > 0;
+    if (this.pointBlankRing.visible) {
+      this.pointBlankRing.position.set(player.pos.x, this.pointBlankRing.position.y, player.pos.y);
     }
 
     this.syncEnemies(world, dt);

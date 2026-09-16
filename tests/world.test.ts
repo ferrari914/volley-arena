@@ -297,6 +297,7 @@ describe('World', () => {
       bounce: 0,
       knockback: 0,
       backstep: 0,
+      pointBlank: 0,
     });
   });
 

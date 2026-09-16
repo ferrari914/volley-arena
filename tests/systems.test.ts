@@ -20,6 +20,7 @@ const arrow = (
   pierce = 0,
   bounce = 0,
   knockback = 0,
+  pointBlank = 0,
 ): Arrow => ({
   id: 1,
   owner,
@@ -31,6 +32,7 @@ const arrow = (
   pierce,
   bounce,
   knockback,
+  pointBlank,
   alive: true,
 });
 
@@ -45,6 +47,7 @@ function options(overrides: Partial<Parameters<typeof stepArrows>[1]> = {}) {
     invulnerable: PLAYER.invulnerable,
     respawnDelay: ENEMY.respawnDelay,
     bounceRange: ARROW.bounceRange,
+    pointBlankRange: ARROW.pointBlankRange,
     shieldArc: SHIELD.arc,
     obstacles: [],
     player: createPlayer(PLAYER.maxHp),

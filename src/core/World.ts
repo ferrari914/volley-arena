@@ -121,6 +121,11 @@ export class World {
   elapsed = 0;
   /** 적을 맞힌 횟수. 적에게 체력이 생긴 뒤로는 처치 수와 다르다. */
   hits = 0;
+  /**
+   * 그중 **코앞에서 닿아 더 깎은 횟수**(DESIGN 8번 · 코앞 카드). `hits`의 부분집합이다.
+   * 화면에는 쓰지 않고 밸런스를 재는 쪽이 본다 — 둘의 비가 "얼마나 파고들었는가"다.
+   */
+  pointBlankHits = 0;
   /** 쓰러뜨린 적의 수. HUD의 "처치"이자 7번(결과 화면)이 그대로 쓸 값이다. */
   kills = 0;
   /**
@@ -211,6 +216,7 @@ export class World {
     bounce: 0,
     knockback: 0,
     backstep: 0,
+    pointBlank: 0,
   };
 
   /** 카드별로 몇 번 골랐는지. 다음 제시에서 최대치에 닿은 카드를 빼는 데 쓴다. */
@@ -315,12 +321,14 @@ export class World {
       invulnerable: PLAYER.invulnerable,
       respawnDelay: ENEMY.respawnDelay,
       bounceRange: ARROW.bounceRange,
+      pointBlankRange: ARROW.pointBlankRange,
       shieldArc: SHIELD.arc,
       obstacles: this.map.obstacles,
       player: this.player,
       enemies: this.enemies,
     });
     this.hits += result.hits;
+    this.pointBlankHits += result.pointBlankHits;
     this.kills += result.killed.length;
     this.blockedShots += result.blocked;
     this.shieldBodyHits += result.shieldBodyHits;
@@ -866,6 +874,9 @@ export class World {
       // 밀어내기도 플레이어의 카드다. 적의 화살이 사람을 밀면 터질 원 밖으로 밀려나는
       // 일이 생겨, 맞는 것이 오히려 사는 길이 되는 프레임이 생긴다.
       knockback: owner === 'player' ? Math.max(0, this.stats.knockback) : 0,
+      // 코앞도 플레이어의 카드다. 적의 화살까지 거리를 보면 붙어 선 것이 두 배로
+      // 아픈 일이 되어, 이 카드가 요구하는 "파고들어라"를 게임이 도로 막는다.
+      pointBlank: owner === 'player' ? Math.max(0, this.stats.pointBlank) : 0,
       alive: true,
     });
   }

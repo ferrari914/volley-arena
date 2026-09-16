@@ -16,6 +16,8 @@ export interface ArrowStepOptions {
   respawnDelay: number;
   /** 튕긴 화살이 다음 상대를 찾는 거리(m). 이 안에 아무도 없으면 튕기지 못하고 사라진다. */
   bounceRange: number;
+  /** 코앞(DESIGN 8번)이 듣는 거리(m). 닿는 순간 플레이어와 그 적 사이가 이 안이어야 한다. */
+  pointBlankRange: number;
   /** 방패병의 방패가 막는 정면 부채꼴의 반각(rad, DESIGN 9번). */
   shieldArc: number;
   /** 이 맵에 선 기둥들(DESIGN 10번). 빈 배열이면 아무것도 막지 않는다. */
@@ -49,6 +51,12 @@ export interface ArrowStepResult {
   playerHits: number;
   /** 방패에 막힌 화살 수(DESIGN 9번). 몸을 맞힌 것이 아니므로 `hits`와 따로 센다. */
   blocked: number;
+  /**
+   * **코앞에서 닿아 더 깎은 화살의 수**(DESIGN 8번). `hits`의 부분집합이다 —
+   * 둘의 비가 곧 "얼마나 파고들었는가"이고, 그것이 이 카드가 고른 사람에게 묻는 전부다.
+   * 카드를 고르지 않았으면 늘 0이다(`arrow.pointBlank`가 0이라 거리를 재지도 않는다).
+   */
+  pointBlankHits: number;
   /**
    * **방패병의 몸에 꽂힌 화살 수**(DESIGN 9번). `blocked`의 짝이다 —
    * 둘을 더하면 **방패병에게 날아가 닿은 화살 전부**이고, 그 둘의 비가
@@ -108,6 +116,7 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
     damageTaken: 0,
     playerHits: 0,
     blocked: 0,
+    pointBlankHits: 0,
     shieldBodyHits: 0,
     eatenMine: 0,
     eatenTheirs: 0,
@@ -137,9 +146,18 @@ export function stepArrows(arrows: Arrow[], options: ArrowStepOptions): ArrowSte
           break;
         }
 
-        enemy.hp -= arrow.damage;
+        // 코앞에서 닿았으면 더 깎는다 (DESIGN 8번 · 코앞 카드).
+        // **방패에는 붙지 않는다** — 위쪽 분기가 `arrow.damage`만 먹인다. 붙여 주면
+        // 판(5) 두 발 + 몸(3) 두 발로 정면이 뚫려, "돌아서 쏴라"는 이 적의 규칙이
+        // 그 카드를 뽑은 판에서만 사라진다(관통·튕김을 방패가 먹는 것과 같은 자리다).
+        const close =
+          arrow.pointBlank > 0 &&
+          Math.hypot(enemy.pos.x - player.pos.x, enemy.pos.y - player.pos.y) <=
+            options.pointBlankRange;
+        enemy.hp -= close ? arrow.damage + arrow.pointBlank : arrow.damage;
         enemy.hitFlash = 1;
         result.hits += 1;
+        if (close) result.pointBlankHits += 1;
         if (enemy.kind === 'shield') result.shieldBodyHits += 1;
         if (enemy.hp <= 0) {
           enemy.alive = false;

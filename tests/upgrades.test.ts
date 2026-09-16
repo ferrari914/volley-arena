@@ -36,6 +36,7 @@ const baseStats = (): PlayerStats => ({
   bounce: 0,
   knockback: 0,
   backstep: 0,
+  pointBlank: 0,
 });
 
 const card = (id: string, maxStacks = 3, role: UpgradeRole = 'power'): UpgradeCard => ({
@@ -840,6 +841,126 @@ describe('뒷걸음', () => {
       return Math.hypot(world.player.pos.x - from.x, world.player.pos.y - from.y);
     };
     expect(away(2)).toBeCloseTo(away(0), 6);
+  });
+});
+
+/**
+ * DESIGN 8번 열한째 카드 — 코앞.
+ *
+ * **화력 넉 장이 한 번도 묻지 않은 것을 묻는 첫 장이라, 볼 자리가 하나 더 있다: 거리.**
+ * 값이 더해지는가 · 플레이어의 화살만 들고 나가는가까지는 밀어내기와 같은 자리이고,
+ * 여기서 새로 보는 것은 **같은 화살이 거리에 따라 다르게 깎는가**와
+ * **방패가 이 장을 먹지 않는가**다. 뒤엣것이 없으면 정면으로 붙어 부수는 길이 열려
+ * "돌아서 쏴라"는 방패병의 규칙이 이 카드를 뽑은 판에서만 사라진다.
+ */
+describe('코앞', () => {
+  const pointBlankCard = UPGRADE_CARDS.find((c) => c.id === 'pointblank');
+  if (!pointBlankCard) throw new Error('코앞 카드가 없다');
+
+  it('겹칠 때마다 더해진다 (0 → 1 → 2)', () => {
+    // 시작값이 0이라 곱셈이 뜻을 잃는다 — 밀어내기·뒷걸음과 같은 이유로 덧셈이다.
+    let stats = baseStats();
+    expect(stats.pointBlank).toBe(0);
+    stats = applyUpgrade(stats, pointBlankCard);
+    expect(stats.pointBlank).toBeCloseTo(1, 6);
+    stats = applyUpgrade(stats, pointBlankCard);
+    expect(stats.pointBlank).toBeCloseTo(2, 6);
+  });
+
+  it('플레이어의 화살만 코앞을 들고 나간다', () => {
+    // 적의 화살까지 거리를 보면 붙어 선 것이 두 배로 아픈 일이 되어,
+    // 이 카드가 요구하는 "파고들어라"를 게임이 도로 막는다.
+    const world = new World({ enemies: [] });
+    world.stats = applyUpgrade(world.stats, pointBlankCard);
+    world.addArrow({ x: 0, y: 0 }, { x: 1, y: 0 }, 'player');
+    world.addArrow({ x: 0, y: 0 }, { x: 1, y: 0 }, 'enemy');
+    expect(world.arrows.find((a) => a.owner === 'player')?.pointBlank).toBeCloseTo(1, 6);
+    expect(world.arrows.find((a) => a.owner === 'enemy')?.pointBlank).toBe(0);
+  });
+
+  /**
+   * 적 하나를 그 자리에 못 박고 한 발을 맞혀, **그 한 발이 깎은 체력**을 돌려준다.
+   * 적이 제 걸음으로 다가오거나 물러나면 무엇을 재는지 알 수 없으므로 자리를 고정한다
+   * (다중 발사·튕김 쪽의 `volleyHits`와 같은 방식이다).
+   */
+  function damageAt(stacks: number, distance: number): number {
+    const world = new World({ enemies: [{ x: distance, y: 0 }] });
+    for (let i = 0; i < stacks; i += 1)
+      world.stats = applyUpgrade(world.stats, pointBlankCard!);
+    const enemy = world.enemies[0]!;
+    const at = { x: enemy.pos.x, y: enemy.pos.y };
+    for (let i = 0; i < 300; i += 1) {
+      enemy.pos = { x: at.x, y: at.y };
+      enemy.hp = enemy.maxHp;
+      world.player.hp = world.player.maxHp;
+      const hits = world.hits;
+      world.step(IDLE, DT);
+      if (world.hits > hits) return enemy.maxHp - enemy.hp;
+    }
+    throw new Error('한 발도 못 맞혔다');
+  }
+
+  it('선 안에서는 더 깎고, 선 밖에서는 그대로다', () => {
+    // 선은 `ARROW.pointBlankRange`(6m)다. 안쪽 4m와 바깥쪽 9m로 잰다 —
+    // 선 바로 위(6m)는 화살이 나는 동안 적이 반 뼘만 움직여도 갈리므로 자로 쓰지 않는다.
+    expect(damageAt(0, 4)).toBe(1);
+    expect(damageAt(1, 4)).toBe(2);
+    expect(damageAt(2, 4)).toBe(3);
+    // 밖에서는 카드를 몇 장 겹쳐도 한 발이 1이다. 이 줄이 이 카드의 전부다.
+    expect(damageAt(0, 9)).toBe(1);
+    expect(damageAt(2, 9)).toBe(1);
+  });
+
+  it('몇 발이 코앞에서 닿았는지를 센다', () => {
+    // 밸런스를 재는 쪽이 보는 값이다(`World.pointBlankHits`) — 맞힘과의 비가
+    // 곧 "얼마나 파고들었는가"다. 카드를 고르지 않았으면 거리를 재지도 않는다.
+    const counted = (stacks: number, distance: number): [number, number] => {
+      const world = new World({ enemies: [{ x: distance, y: 0 }] });
+      for (let i = 0; i < stacks; i += 1)
+        world.stats = applyUpgrade(world.stats, pointBlankCard!);
+      const enemy = world.enemies[0]!;
+      const at = { x: enemy.pos.x, y: enemy.pos.y };
+      for (let i = 0; i < 300; i += 1) {
+        enemy.pos = { x: at.x, y: at.y };
+        enemy.hp = enemy.maxHp;
+        world.player.hp = world.player.maxHp;
+        world.step(IDLE, DT);
+      }
+      return [world.hits, world.pointBlankHits];
+    };
+    const [nearHits, nearClose] = counted(1, 4);
+    expect(nearHits).toBeGreaterThan(0);
+    expect(nearClose).toBe(nearHits);
+    expect(counted(1, 9)[1]).toBe(0);
+    expect(counted(0, 4)[1]).toBe(0);
+  });
+
+  it('방패는 코앞을 먹지 않는다 — 붙어도 정면은 정면이다', () => {
+    // 방패병을 코앞(4m)에 세우고 정면으로 쏜다. 판이 닳는 속도가 카드와 무관해야 한다.
+    // 붙어서 정면으로 부수는 길이 열리면 "돌아서 쏴라"가 그 판에서만 사라진다.
+    const shieldWear = (stacks: number): number => {
+      const world = new World({ enemies: [{ x: 4, y: 0, kind: 'shield' }] });
+      for (let i = 0; i < stacks; i += 1)
+        world.stats = applyUpgrade(world.stats, pointBlankCard!);
+      const enemy = world.enemies[0]!;
+      const at = { x: enemy.pos.x, y: enemy.pos.y };
+      const full = enemy.shieldHp;
+      for (let i = 0; i < 300; i += 1) {
+        // 자리도 보는 쪽도 못 박는다 — 겨누는 동안에는 방패가 내려가므로(`blocksArrow`)
+        // 그 프레임이 섞이면 무엇을 재는지 알 수 없다.
+        enemy.pos = { x: at.x, y: at.y };
+        enemy.facing = Math.PI; // 플레이어(원점) 쪽을 본다.
+        enemy.aimTimer = 0;
+        enemy.shieldHp = full;
+        world.player.hp = world.player.maxHp;
+        const blocked = world.blockedShots;
+        world.step(IDLE, DT);
+        if (world.blockedShots > blocked) return full - enemy.shieldHp;
+      }
+      throw new Error('한 발도 안 막혔다');
+    };
+    expect(shieldWear(0)).toBe(1);
+    expect(shieldWear(2)).toBe(1);
   });
 });
 

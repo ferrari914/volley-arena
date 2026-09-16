@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA, ENEMY, PLAYER, REINFORCE } from '../src/data/config';
+import { ARENA, ARROW, ENEMY, PLAYER, REINFORCE } from '../src/data/config';
 import { MAPS, findMap, DEFAULT_MAP, type ArenaMap } from '../src/data/maps';
 import { World } from '../src/core/World';
 import { createEnemy, createPlayer, type Arrow, type Obstacle } from '../src/entities/types';
@@ -24,7 +24,7 @@ import { DT, IDLE, median, play, playMatch, walkToNearestCore } from './support/
 
 /**
  * 이 파일이 쓰는 화살은 한 종류뿐이다 — 한복판에서 +x로 똑바로 날아가는 플레이어의 화살.
- * 기둥이 막는가만 보므로 관통도 튕김도 밀어내기도 0이다(막힘은 그것들보다 먼저 온다).
+ * 기둥이 막는가만 보므로 관통도 튕김도 밀어내기도 코앞도 0이다(막힘은 그것들보다 먼저 온다).
  */
 const straightArrow = (id: number, speed: number): Arrow => ({
   id,
@@ -37,6 +37,7 @@ const straightArrow = (id: number, speed: number): Arrow => ({
   pierce: 0,
   bounce: 0,
   knockback: 0,
+  pointBlank: 0,
   alive: true,
 });
 
@@ -289,6 +290,7 @@ describe('기둥 규칙 — 몸도 화살도 코어도 지나가지 못한다', 
       invulnerable: PLAYER.invulnerable,
       respawnDelay: ENEMY.respawnDelay,
       bounceRange: 6,
+      pointBlankRange: ARROW.pointBlankRange,
       shieldArc: SHIELD.arc,
       obstacles,
       player: createPlayer(PLAYER.maxHp),
