@@ -69,14 +69,6 @@ export const PALETTE = {
    * 적의 화살(주황)보다 노랗고 밝다.
    */
   bomberFuse: 0xffb03a,
-  /**
-   * 파열이 낸 자국(DESIGN 8번 · 파열 카드). **`bomberFuse`에서 가장 멀리 두었다.**
-   * 두 자국은 같은 크기의 채워진 원이라 화면에서 갈리는 것은 색뿐인데,
-   * 하나는 "나에게 닿으면 아프다"이고 하나는 "내가 번 자리"다. 비슷하면 화면이
-   * 처치마다 거짓 경고를 낸다 — 호박빛에 맞서 찬 흰빛으로 둔 이유다.
-   * **카드의 색과 같은 값이다**(`data/upgrades.ts`의 `burst`).
-   */
-  burst: 0xdff3ff,
   accent: 0xffd479,
   core: 0x7bffcf,
   coreDrop: 0xa6ff5e,
@@ -691,14 +683,12 @@ export function createLockMarker(): THREE.Mesh {
  * 읽혀, 이미 끝난 일이 다시 위협으로 보인다.
  *
  * 반지름 1로 만들어 두고 `scale`로 키운다 — 터질 원의 크기는 게임 쪽 값이라
- * (`BOMBER.blastRadius` · 파열은 그 사람의 `burstRadius`) 그리는 쪽이 따로 알 필요가 없다.
+ * (`BOMBER.blastRadius`) 그리는 쪽이 따로 알 필요가 없다.
  */
 export function createBlast(): THREE.Mesh {
   const mesh = new THREE.Mesh(
     new THREE.CircleGeometry(1, 40),
     new THREE.MeshBasicMaterial({
-      // 색은 세울 때 자국의 출신대로 바꿔 넣는다(`render/Renderer.ts`) — 재료를 메시마다
-      // 따로 들고 있어서 풀에서 꺼내 쓸 때 덧칠할 수 있다.
       color: PALETTE.bomberFuse,
       transparent: true,
       opacity: 0.6,

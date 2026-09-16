@@ -15,7 +15,7 @@
 import { describe, it } from 'vitest';
 import { World } from '../../src/core/World';
 import { MAPS } from '../../src/data/maps';
-import { IDLE, play } from '../support/match';
+import { backOffBomber, circleShield, IDLE, play, walkToNearestCore } from '../support/match';
 import { ENEMY, SHIELD } from '../../src/data/config';
 import { sightBlocker } from '../../src/systems/obstacles';
 
@@ -63,6 +63,64 @@ describe('활잡이의 시간', () => {
       console.log(
         `${spot.name}: 판 ${(secs / SEEDS.length).toFixed(0)}초 · 초당 ${(shots / secs).toFixed(2)}발 | ` +
           `죽어있음 ${p(bucket.dead)} · 사거리밖 ${p(bucket.far)} · 가림 ${p(bucket.blocked)} · 쿨다운 ${p(bucket.wait)} · 겨눔 ${p(bucket.aim)}`,
+      );
+    }
+  });
+});
+
+/**
+ * **적끼리 얼마나 가까운가** — 적이 쓰러지는 그 순간, 가장 가까운 다른 적까지의 거리.
+ *
+ * 왜 재 두는가: **"적끼리의 거리"를 보는 카드가 이 아레나에서 값을 벌 수 있는지**를
+ * 한 줄로 답하는 자다. 세션 60이 그런 카드를 하나 만들었다(파열 — 쓰러진 적이 터져
+ * 곁의 적을 깎는다). 만들기는 다 만들었는데, 세션 61이 재 보니 **곁에 아무도 없었다** —
+ * 중앙 11.8m다. 카드가 감당할 만한 반지름(2.2m)에 드는 처치는 **0.4%**고,
+ * 실제로 240판을 돌려도 터짐 한 번에 0.02명을 깎았다. 그 카드는 되돌렸다
+ * (`git revert` 한 줄로 돌아온다 — `docs/STATUS.md` 세션 61).
+ *
+ * **이 값은 카드가 아니라 아레나가 정한다**: 반지름 25m 안에 적이 다섯이고
+ * (`data/maps.ts`의 표준 배치), 저마다 제 자리에서 걸어와 제 사거리에서 선다.
+ * 그러니 뭉치는 일이 애초에 없다 — 플레이어에게는 적을 모으는 수단도 없다
+ * (밀어내기는 도리어 떼어 놓는다). **적이 떼로 나오게 되기 전까지는
+ * 적끼리의 거리를 보는 효과를 만들지 마라.** 만들려면 여기부터 다시 재라.
+ *
+ *   npx vitest run --config vitest.perf.config.ts tests/perf/diag.perf.ts
+ */
+describe('적끼리의 거리', () => {
+  /** 걷는 사람과 도는 사람. 둘 다 적을 제 둘레로 끌어모으는 쪽인데도 값이 같다. */
+  const WALKERS = [
+    { name: '걷는 사람', input: walkToNearestCore },
+    { name: '도는 사람', input: backOffBomber(circleShield) },
+  ] as const;
+
+  it('쓰러지는 순간 곁에 누가 있었는가', () => {
+    for (const walker of WALKERS) {
+      const gaps: number[] = [];
+      for (let i = 0; i < 120; i += 1) {
+        const world = new World({ seed: 20260909 + i });
+        for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
+          // 스텝 "전"의 자리와 생사를 들고 있어야 한다 — 쓰러진 뒤에 재면 그 프레임에
+          // 함께 움직인 값이 섞인다.
+          const before = world.enemies.map((e) => ({ ...e.pos, id: e.id, alive: e.alive }));
+          play(world, 1, walker.input);
+          for (const e of world.enemies) {
+            const was = before.find((b) => b.id === e.id);
+            if (!was?.alive || e.alive) continue;
+            let best = Infinity;
+            for (const other of before) {
+              if (other.id === e.id || !other.alive) continue;
+              best = Math.min(best, Math.hypot(other.x - was.x, other.y - was.y));
+            }
+            if (Number.isFinite(best)) gaps.push(best);
+          }
+        }
+      }
+      gaps.sort((a, b) => a - b);
+      const at = (p: number) => gaps[Math.floor(gaps.length * p)]!.toFixed(1);
+      const within = (m: number) => ((gaps.filter((g) => g <= m).length / gaps.length) * 100).toFixed(1);
+      console.log(
+        `${walker.name}: 처치 ${gaps.length} · 곁의 적까지 중앙 ${at(0.5)}m · p10 ${at(0.1)} · p25 ${at(0.25)} | ` +
+          `그 안에 든 처치 — 2.2m ${within(2.2)}% · 4.5m ${within(4.5)}% · 8m ${within(8)}%`,
       );
     }
   });

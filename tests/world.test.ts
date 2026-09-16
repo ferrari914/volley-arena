@@ -5,7 +5,6 @@ import {
   ARENA,
   ARROW,
   BOMBER,
-  BURST,
   CHARGER,
   CORE,
   ENEMY,
@@ -298,7 +297,6 @@ describe('World', () => {
       bounce: 0,
       knockback: 0,
       backstep: 0,
-      burstRadius: 0,
     });
   });
 
@@ -402,91 +400,6 @@ describe('World — 폭탄병이 터진 자리', () => {
     expect(world.blasts).toHaveLength(0);
     // 자국이 남아 있는 동안 두 번 아프지 않는다 — 폭발이 하는 일은 그 프레임에 다 끝난다.
     expect(world.player.hp).toBe(hpAfterBlast);
-  });
-});
-
-/**
- * **파열이 낸 처치도 처치다** (DESIGN 8번 · 열한째 카드 · 세션 60).
- *
- * 한 프레임의 규칙(누가 깎이고 무엇이 연쇄하지 않는가)은 `tests/systems.test.ts`에 있다.
- * 여기서 재는 것은 **그 처치가 판에 어떻게 셈해지는가**다 — 코어와 처치 수와 다시 설
- * 자리를 쥔 쪽이 World이고, 화살이 눕힌 적과 파열이 눕힌 적이 여기서 갈리면
- * "어떻게 죽였는가"에 따라 같은 처치의 값이 달라진다.
- */
-describe('World — 파열이 쓰러뜨린 적', () => {
-  /** 파열 사거리 안에 둘을 세운 판. 플레이어 앞(+x)에 나란히 선다. */
-  const pair = (): World =>
-    new World({
-      enemies: [
-        { x: 6, y: 0 },
-        { x: 7.6, y: 0 },
-      ],
-    });
-
-  /** 카드를 고른 사람으로 만든다. 카드를 실제로 뽑아 고르는 길은 `tests/upgrades.test.ts`가 잰다. */
-  function withBurst(world: World, radius = 2.2): World {
-    world.stats.burstRadius = radius;
-    return world;
-  }
-
-  /**
-   * 앞의 적이 화살에 쓰러질 때까지 돌린다. **둘을 매 프레임 제자리에 붙들어 둔다** —
-   * 적은 걸어오므로 그냥 돌리면 쓰러지는 순간의 사이 거리를 판이 정해 버리고,
-   * 재려는 것(그 처치가 어떻게 셈해지는가)이 자리 운을 탄다.
-   * 뒤의 적은 파열 한 번에 눕는 체력으로 둔다 — 화살은 늘 가장 가까운 앞의 적에게 간다.
-   */
-  function killFront(world: World): void {
-    const [front, back] = world.enemies as [Enemy, Enemy];
-    for (let i = 0; i < 60 * 20 && front.alive; i += 1) {
-      front.pos = { x: 6, y: 0 };
-      back.pos = { x: 7.6, y: 0 };
-      back.hp = BURST.damage;
-      world.step(idle, DT);
-    }
-  }
-
-  it('곁에 선 적이 함께 쓰러지면 처치로 세고 코어도 떨군다', () => {
-    const world = withBurst(pair());
-    killFront(world);
-    // 화살이 눕힌 하나와 파열이 눕힌 하나.
-    expect(world.kills).toBe(2);
-    expect(world.enemies.every((e) => !e.alive)).toBe(true);
-    expect(world.cores.filter((c) => c.origin === 'drop')).toHaveLength(2);
-    // 다시 설 자리도 함께 잡혔다 — 둘 다 눕는 그 순간 잡는다(`pickRespawnSpot`).
-    for (const enemy of world.enemies) {
-      expect(Math.hypot(enemy.standAt.x, enemy.standAt.y)).toBeLessThanOrEqual(ARENA.radius);
-    }
-  });
-
-  it('카드가 없으면 곁의 적은 멀쩡하다', () => {
-    const world = pair();
-    killFront(world);
-    expect(world.kills).toBe(1);
-    expect(world.burstsFired).toBe(0);
-    expect(world.enemies[1]?.alive).toBe(true);
-  });
-
-  it('터진 자국이 제 색과 제 수명으로 선다 (폭탄병의 자국과 갈린다)', () => {
-    const world = withBurst(pair());
-    killFront(world);
-    const mark = world.blasts[0];
-    expect(world.burstsFired).toBeGreaterThan(0);
-    expect(mark?.kind, '폭탄병의 자국과 같은 색으로 그려진다').toBe('burst');
-    expect(mark?.radius).toBe(2.2);
-    expect(mark?.life).toBe(BURST.flashTime);
-
-    // 자국은 스스로 사라지고, 남아 있는 동안 아무것도 더 깎지 않는다.
-    const hpLeft = world.enemies.map((e) => e.hp);
-    run(world, BURST.flashTime + 0.1);
-    expect(world.blasts.filter((b) => b.kind === 'burst')).toHaveLength(0);
-    expect(world.enemies.map((e) => e.hp)).toEqual(hpLeft);
-  });
-
-  it('터진 횟수와 깎은 횟수를 따로 센다 (곁에 아무도 없으면 0이다)', () => {
-    const world = withBurst(new World({ enemies: [{ x: 6, y: 0 }] }));
-    for (let i = 0; i < 60 * 20 && world.kills === 0; i += 1) world.step(idle, DT);
-    expect(world.burstsFired).toBe(1);
-    expect(world.burstHits, '곁에 아무도 없었다').toBe(0);
   });
 });
 

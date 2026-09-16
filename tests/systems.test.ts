@@ -4,7 +4,7 @@ import { findNearestEnemy } from '../src/systems/autoAim';
 import { stepArrows } from '../src/systems/combat';
 import { segmentPointDistanceSq } from '../src/core/math';
 import { createEnemy, createPlayer, type Arrow, type ArrowOwner } from '../src/entities/types';
-import { ARROW, BOMBER, BURST, CHARGER, ENEMY, PLAYER, SHIELD } from '../src/data/config';
+import { ARROW, BOMBER, CHARGER, ENEMY, PLAYER, SHIELD } from '../src/data/config';
 
 let nextId = 1;
 const enemyAt = (x: number, y: number): ReturnType<typeof createEnemy> =>
@@ -46,10 +46,6 @@ function options(overrides: Partial<Parameters<typeof stepArrows>[1]> = {}) {
     respawnDelay: ENEMY.respawnDelay,
     bounceRange: ARROW.bounceRange,
     shieldArc: SHIELD.arc,
-    // 파열은 카드를 고른 사람만 쓴다(`burstRadius` 0 = 안 고른 사람).
-    // 보는 쪽은 아래 '파열' 묶음에서 이 값을 덮어 쓴다.
-    burstRadius: 0,
-    burstDamage: BURST.damage,
     obstacles: [],
     player: createPlayer(PLAYER.maxHp),
     enemies: [],
@@ -574,91 +570,5 @@ describe('stepArrows — 밀어내기', () => {
       options({ enemies: [enemy], obstacles: [pillar] }),
     );
     expect(enemy.pos.x).toBeCloseTo(before, 6);
-  });
-});
-
-/**
- * DESIGN 8번 열한째 카드 — 파열 (세션 60).
- *
- * 앞의 열 장과 다른 것을 보는 첫 장이다. 나머지는 전부 **나와 적 사이**의 일이라
- * 고르는 순간 값이 정해지지만, 이 장이 실제로 버는 것은 **적끼리 얼마나 가까운가**가
- * 정한다. 그래서 지키는 것도 다르다 — "얼마나 아픈가"가 아니라
- * **"누가 곁에 서 있었고, 그 뒤에 무엇이 더 일어나지 않는가"**다.
- *
- * 터지지 않는 자리가 이 카드의 전부다. 연쇄가 열리거나 한 번에 적을 지울 만큼 세지면,
- * 카드 한 장이 적 넷의 요구(계속 움직여라·옆으로 비켜라·돌아서 쏴라·물러나라)를
- * **처치 한 번으로** 지운다 — 겹쳐 놓고 잡을 이유가 아니라 아무 데서나 터지는 보상이 된다.
- */
-describe('stepArrows — 파열', () => {
-  /** 원점의 적. 화살 한 발에 눕도록 체력 1로 세운다(터뜨리는 쪽이다). */
-  const dying = () => createEnemy(nextId++, 0, 0, 1);
-  /** 곁에 선 적. 체력이 넉넉해야 "깎였는가"를 볼 수 있다. */
-  const bystander = (x: number, y: number, kind: Parameters<typeof createEnemy>[4] = 'archer') =>
-    createEnemy(nextId++, x, y, 99, kind, kind === 'shield' ? 99 : 0);
-
-  /** +x로 날아가는 화살 한 발을 한 프레임 먹인다. 속력 120이라 원점을 지난다. */
-  const shoot = (enemies: ReturnType<typeof createEnemy>[], burstRadius: number) =>
-    stepArrows([arrow(-2, 0, 120, 0)], options({ enemies, burstRadius }));
-
-  it('쓰러진 자리 곁의 적이 함께 깎인다', () => {
-    const near = bystander(2, 0);
-    const result = shoot([dying(), near], 2.2);
-    expect(result.bursts).toHaveLength(1);
-    expect(result.burstHits).toBe(1);
-    expect(near.hp).toBe(99 - BURST.damage);
-  });
-
-  it('원 밖은 깎이지 않는다 (그리는 원이 곧 깎는 원이다)', () => {
-    // 화면의 자국이 이 반지름 그대로 그려진다(`render/Renderer.ts`) — 어긋나면
-    // 무엇이 닿는 자리인지를 화면에서 배울 수 없다.
-    const far = bystander(2.4, 0);
-    const result = shoot([dying(), far], 2.2);
-    expect(result.burstHits).toBe(0);
-    expect(far.hp).toBe(99);
-  });
-
-  it('카드가 없으면 아무것도 터지지 않는다', () => {
-    const near = bystander(1.2, 0);
-    const result = shoot([dying(), near], 0);
-    expect(result.bursts).toHaveLength(0);
-    expect(near.hp).toBe(99);
-  });
-
-  it('쓰러지지 않으면 터지지 않는다 — 터지는 것은 화살이 아니라 적이다', () => {
-    const tough = createEnemy(nextId++, 0, 0, 99);
-    const near = bystander(1.2, 0);
-    const result = shoot([tough, near], 2.2);
-    expect(result.hits).toBe(1);
-    expect(result.bursts).toHaveLength(0);
-    expect(near.hp).toBe(99);
-  });
-
-  it('파열로 쓰러진 적은 처치로 세되 다시 터뜨리지 않는다 (연쇄 금지)', () => {
-    // 연쇄를 열면 뭉친 적이 한 발에 통째로 지워져, "겹쳐 놓고 잡아라"가
-    // 요구가 아니라 한 번의 큰 보상이 된다.
-    const chain = createEnemy(nextId++, 1.2, 0, BURST.damage);
-    const behind = bystander(2.4, 0); // 첫 자리에서는 멀고, 연쇄가 열리면 닿는 자리.
-    const result = shoot([dying(), chain, behind], 2.2);
-    expect(chain.alive).toBe(false);
-    expect(result.killed).toHaveLength(2);
-    expect(result.bursts, '두 번째 자국 = 연쇄가 열렸다').toHaveLength(1);
-    expect(behind.hp).toBe(99);
-  });
-
-  it('방패는 이것을 받아 내지 못한다 — 터짐에는 날아온 방향이 없다', () => {
-    // 그래도 "돌아서 쏴라"는 남는다: 터뜨리려면 **그 곁의 다른 적을 먼저 쓰러뜨려야** 한다.
-    const guard = bystander(2, 0, 'shield');
-    guard.facing = Math.PI; // 정면으로 화살을 막는 자세 그대로.
-    shoot([dying(), guard], 2.2);
-    expect(guard.hp).toBe(99 - BURST.damage);
-    expect(guard.shieldHp, '방패는 깎이지 않는다 — 화살을 받은 것이 아니다').toBe(99);
-  });
-
-  it('이미 쓰러져 있는 적은 세지 않는다', () => {
-    const down = bystander(1.2, 0);
-    down.alive = false;
-    const result = shoot([dying(), down], 2.2);
-    expect(result.burstHits).toBe(0);
-    expect(down.hp).toBe(99);
   });
 });
