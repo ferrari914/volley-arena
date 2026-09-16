@@ -15,7 +15,7 @@
 import { describe, it } from 'vitest';
 import { World } from '../../src/core/World';
 import type { FrameInput } from '../../src/core/World';
-import { MAPS } from '../../src/data/maps';
+import { MAPS, type ArenaMap } from '../../src/data/maps';
 import { backOffBomber, circleShield, DT, IDLE, play, walkToNearestCore } from '../support/match';
 import { clamp, wrapAngle } from '../../src/core/math';
 import { AIM, ARROW, ENEMY, SHIELD } from '../../src/data/config';
@@ -28,6 +28,10 @@ const SPOTS = [
   { map: 1, name: '기둥 한복판', r: 0, deg: 0 },
   { map: 1, name: '기둥 r20·60', r: 20, deg: 60 },
   { map: 1, name: '기둥 r22·330', r: 22, deg: 330 },
+  // 네째 맵(세션 66). **한복판인데 '가림' 칸이 0이 아닌 유일한 줄이다** — 앞의 세 맵은
+  // 가림을 전부 벽 앞에 두어서 한복판에 선 사람에게는 기둥이 없는 것과 같다
+  // (`data/maps.ts`의 안뜰 주석 · 한복판 가림 0도 대 112도).
+  { map: 3, name: '안뜰 한복판', r: 0, deg: 0 },
 ];
 
 describe('활잡이의 시간', () => {
@@ -186,6 +190,13 @@ describe('나와 적 사이의 거리', () => {
     { name: '걷는 사람', input: walkToNearestCore },
     { name: '도는 사람', input: backOffBomber(circleShield) },
     { name: '파고드는 사람', input: backOffBomber(dive(5)) },
+    /**
+     * **손을 안 대는 같은 사람을 안뜰에 세운 줄**(세션 66). 위 셋은 전부 빈 뜰이다 —
+     * 사람이 바뀔 때 이 값이 얼마나 움직이는지는 그 셋이 말하고, 이 줄은 **맵이 바뀔 때**를
+     * 말한다. 네째 맵이 노린 것이 바로 이 값이라(`data/maps.ts`의 안뜰 주석), 그 주장을
+     * 매 바퀴 한 줄로 다시 보게 둔다. 걷는 사람과 짝지어 읽어라 — 다른 것은 맵뿐이다.
+     */
+    { name: '걷는 사람 · 안뜰', input: walkToNearestCore, map: MAPS[3] as ArenaMap },
   ] as const;
 
   it('닿는 순간 얼마나 붙어 있었는가', () => {
@@ -194,7 +205,7 @@ describe('나와 적 사이의 거리', () => {
       let hits = 0;
       let secs = 0;
       for (let i = 0; i < 60; i += 1) {
-        const world = new World({ seed: 20260909 + i });
+        const world = new World({ seed: 20260909 + i, map: 'map' in person ? person.map : MAPS[0]! });
         for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
           const before = world.enemies.map((e) => ({ id: e.id, hp: e.hp }));
           play(world, 1, person.input);
@@ -214,7 +225,7 @@ describe('나와 적 사이의 거리', () => {
       const within = (m: number) =>
         ((gaps.filter((g) => g <= m).length / gaps.length) * 100).toFixed(1);
       console.log(
-        `${person.name}: 맞힘 ${gaps.length}(hits ${hits}) · 한 판 ${(secs / 60).toFixed(0)}초 · ` +
+        `${person.name.padEnd(8)}: 맞힘 ${gaps.length}(hits ${hits}) · 한 판 ${(secs / 60).toFixed(0)}초 · ` +
           `중앙 ${at(0.5)}m · p25 ${at(0.25)} | 그 안에 든 맞힘 — 4m ${within(4)}% · ` +
           `6m ${within(ARROW.pointBlankRange)}% · 8m ${within(8)}%`,
       );
