@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { FrameInput, World } from '../../src/core/World';
 import { UPGRADE_CARDS } from '../../src/data/upgrades';
+import { DEFAULT_MAP, MAPS, type ArenaMap } from '../../src/data/maps';
 import {
   backOffBomber,
   circleShield,
   dodgeCharger,
   playMatch,
+  takeAny,
   walkToNearestCore,
 } from '../support/match';
 
 /**
- * **아래쪽 꼬리를 재는 표 — 세 사람 × 씨앗 480개 (세션 55 · 58).**
+ * **아래쪽 꼬리를 재는 표 — 세 사람 × 씨앗 480개 (세션 55 · 58) + 맵 한 줄 (세션 68).**
  *
  * 왜 따로 있나: **`npm test`의 120판으로는 카드 한 장의 몫을 가를 수 없다.**
  * 세션 53이 밀어내기(`repel`)를 넣으며 120판으로 재고 "걷는 사람의 꼬리가 9 → 16으로
@@ -55,7 +57,7 @@ import {
  * 보조 카드를 늘리는 바퀴가 실제로 봐야 하는 값은 화력 몫이 아니라 그 속이다.
  *
  * `npm test`가 아니라 `npm run perf`에 두는 이유는 `balance.perf.ts`와 같다 — 느리다
- * (1440판 · 이 기계에서 25초). 매 바퀴 지키는 문턱은 `tests/progression.test.ts`에 있고,
+ * (1920판 · 이 기계에서 34초). 매 바퀴 지키는 문턱은 `tests/progression.test.ts`에 있고,
  * 거기는 **꼬리가 있는지**(큰 차이)만 본다. 여기는 **꼬리가 얼마나 되는지**(작은 차이)를 잰다.
  * 카드나 적을 넣고 빼는 바퀴는 넣기 전후로 이 표를 돌려 나란히 놓아라.
  */
@@ -69,12 +71,65 @@ const BLOCK = 120;
 /**
  * 세 사람. `tests/progression.test.ts`의 세 사람과 같은 발이다.
  * 맨 위가 **아무 답도 모르는 사람**이고, 꼬리를 재는 자리는 늘 그 사람이다.
+ *
+ * **셋 다 빈 뜰에 선다**(`playMatch`의 `map` 기본값). 그 기본값은 옮기지 않는다 —
+ * 지금까지 쌓인 표가 전부 그 맵의 것이라, 옮기면 옛 표와 견줄 수 없다.
+ * 맵이 바뀔 때를 묻는 자리는 아래 `COURT`에 따로 세워 두었다.
  */
 const PEOPLE: readonly { name: string; input: (world: World) => FrameInput }[] = [
   { name: '걷는 사람', input: walkToNearestCore },
   { name: '비키는 사람', input: backOffBomber(dodgeCharger) },
   { name: '도는 사람', input: backOffBomber(circleShield) },
 ];
+
+/**
+ * **네째 줄 — 맨 위의 같은 사람을 안뜰에 세운다**(세션 68 · DESIGN 10번).
+ *
+ * 왜 세웠나: **카드 균형을 재는 자가 전부 빈 뜰 한 맵에서만 돌고 있었다.** 세션 66이
+ * 네째 맵을 세우며 그 맵이 6m 안에서 나는 맞힘을 13.5 → 20.9%로 올린 것을 쟀는데
+ * (`diag.perf.ts`의 '나와 적 사이의 거리'), 그 6m는 `pointblank`(코앞)가 값을 매긴
+ * 바로 그 고리다(`ARROW.pointBlankRange` · 세션 62). 곧 **열한 장 중 한 장은 안뜰에서
+ * 더 셀 수 있는데, 그것을 보는 자가 없었다.**
+ *
+ * 위 셋과 다른 것은 맵뿐이다. 걷는 사람과 짝지어 읽어라
+ * (`diag.perf.ts`가 '걷는 사람 · 안뜰'을 세운 것과 같은 꼴).
+ *
+ * ---
+ *
+ * **재고 나온 답: 카드는 맵을 안 탄다. 꼬리가 탄다.** 같은 480판을 네 맵에 다 돌렸다
+ * (걷는 사람 · `takeAny`):
+ *
+ * | 걷는 사람 480판 | 150초 안에 쓰러짐 | 120판씩 | 한 판 | 판당 | 화력 몫 | 회복 몫 |
+ * |---|---|---|---|---|---|---|
+ * | 빈 뜰 | **28 (5.8%)** | 8 / 7 / 7 / 6 | 148.2초 | 12.19장 | 67.8% | 4.6% |
+ * | 기둥 뜰 | **65 (13.5%)** | 19 / 15 / 16 / 15 | 145.5초 | 11.81장 | 68.0% | 4.5% |
+ * | 그늘 뜰 | 36 (7.5%) | 5 / 9 / 8 / 14 | 147.0초 | 12.01장 | 68.7% | 5.1% |
+ * | **안뜰** | **63 (13.1%)** | 20 / 17 / 8 / 18 | 145.8초 | 11.75장 | 67.1% | 4.9% |
+ *
+ * **오른쪽 두 칸은 맵을 타지 않는다** — 화력 몫이 67.1~68.7%(1σ 0.6%p), 회복 몫이
+ * 4.5~5.1%(1σ 0.27%p)로 넷이 한 칸에 모여 있다. 그럴 수밖에 없다: 이 표의 고르는 사람은
+ * 섞인 석 장 중 첫 장을 집고(`takeAny`), 보조의 **수**는 `UPGRADE.maxSupport`가 못 박는다.
+ * **고르기는 맵을 볼 수 없다.** 세션 67이 ④(회복의 몫)를 "가장 먼저 울 칸"으로 꼽았지만
+ * 울지 않았고, 울 수 있는 칸이 아니었다. 그러므로 **카드 균형을 재는 자는 한 맵으로 족하다** —
+ * 이 줄을 늘려 열한 장을 맵마다 다시 재는 길은 여기서 닫는다.
+ *
+ * **대신 왼쪽 칸이 크게 갈렸다. 그리고 안뜰이 특별해서가 아니다** — 기둥 뜰이 13.5%로
+ * 똑같이 갈린다. 가르는 것은 **기둥이 있는가**다. 아무 답도 모르는 사람은 코어만 보고 걷고
+ * (`walkToNearestCore`), 자동 조준은 기둥을 안 본다(`systems/autoAim.ts`) — 그 사람에게
+ * 기둥은 가림이 아니라 먹히는 화살이다. 그늘 뜰이 7.5%로 가운데인 것도 같은 말이다
+ * (기둥이 셋뿐이고 한쪽에만 섰다).
+ *
+ * **그래서 세션 66의 "한 판 길이는 그대로다"는 좁은 자로 본 것이었다.** 그때 본 값은
+ * 60판의 평균(149 대 147초)이고, 그 차 2초 안에 이 5.8 → 13.1%가 통째로 들어 있다.
+ * 150초에서 끊는 평균은 꼬리를 거의 못 본다 — **이 파일이 있는 이유가 그것이다**(맨 위 주석).
+ * 정정할 것은 세션 66의 수치가 아니라 그 한 줄의 읽기다: 안뜰은 붙어야 하는 맵이 맞고,
+ * **붙을 줄 모르는 사람에게는 갑절로 위험한 맵이기도 하다.**
+ */
+const COURT: { name: string; input: (world: World) => FrameInput; map: ArenaMap } = {
+  name: '걷는 사람 · 안뜰',
+  input: walkToNearestCore,
+  map: MAPS[3] as ArenaMap,
+};
 
 const roleOf = new Map(UPGRADE_CARDS.map((card) => [card.id, card.role]));
 
@@ -96,13 +151,18 @@ interface Run {
  * 같은 씨앗·같은 발·같은 자리라 결과가 같을 수밖에 없는 판을 두 번 돌린 셈이다
  * (그때 잰 5862장·64.6%가 이 길에서도 그대로 나온다).
  */
-function runPerson(name: string, input: (world: World) => FrameInput): Run {
+function runPerson(
+  name: string,
+  input: (world: World) => FrameInput,
+  /** 어느 아레나에서 재는가. 안 넘기면 `playMatch`의 기본값(빈 뜰)이다. */
+  map: ArenaMap = DEFAULT_MAP,
+): Run {
   const dead: number[] = [];
   const byCard = new Map<string, number>();
   let cards = 0;
   let power = 0;
   for (const seed of SEEDS) {
-    const result = playMatch(seed, SHORTEST, input);
+    const result = playMatch(seed, SHORTEST, input, takeAny, map);
     if (result.defeated) dead.push(seed);
     for (const id of result.cards) {
       cards += 1;
@@ -142,17 +202,21 @@ function composition(run: Run): string {
     .map((c) => `${c.id} ${share(c.n)}`)
     .join(' · ');
   return (
-    `  ${run.name.padEnd(7, ' ')} ${String(run.cards).padStart(4, ' ')}장 · ` +
+    `  ${run.name.padEnd(11, ' ')} ${String(run.cards).padStart(4, ' ')}장 · ` +
     `판당 ${(run.cards / SEEDS.length).toFixed(2)}장 · 화력 ${share(run.power)} · ` +
     `보조 [${support}]`
   );
 }
 
-describe(`아래쪽 꼬리 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
+describe(`아래쪽 꼬리 — 세 사람 + 맵 한 줄 × 씨앗 ${SEEDS.length}개`, () => {
   it('꼬리는 아무 답도 모르는 사람에게만 있다', () => {
     const rows = PEOPLE.map((p) => runPerson(p.name, p.input));
     const plain = rows[0]?.dead.length ?? 0;
     const knowing = rows.slice(1);
+    // 맵이 바뀔 때를 묻는 네째 줄. **아래 ①~④는 여기를 안 본다** — 저 선들은 전부
+    // 빈 뜰에서 고른 값이라, 다른 맵의 줄을 섞으면 무엇이 울렸는지 알 수 없게 된다.
+    // 이 줄이 지키는 선은 따로 아래 ⑤에 있다.
+    const court = runPerson(COURT.name, COURT.input, COURT.map);
 
     console.log(
       [
@@ -160,15 +224,17 @@ describe(`아래쪽 꼬리 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
         `  씨앗 ${SEEDS[0]}..${SEEDS[SEEDS.length - 1]} · ${SEEDS.length}판 · ${SHORTEST}초에서 끊는다`,
         `  카드 ${UPGRADE_CARDS.length}장 (보조 ${UPGRADE_CARDS.filter((c) => c.role === 'support').length}장)`,
         '',
-        ...rows.map(
+        ...[...rows, court].map(
           (r) =>
-            `  ${r.name.padEnd(7, ' ')} ${String(r.dead.length).padStart(3, ' ')}/${SEEDS.length}판 ` +
+            `  ${r.name.padEnd(11, ' ')} ${String(r.dead.length).padStart(3, ' ')}/${SEEDS.length}판 ` +
             `(${((r.dead.length / SEEDS.length) * 100).toFixed(1)}% · 1σ ${sigma(r.dead.length, SEEDS.length).toFixed(1)}%p) · ` +
             `${BLOCK}판씩: ${r.blocks.join(' / ')}`,
         ),
         '',
         '  고른 카드의 속 — 보조 카드를 늘린 바퀴는 이 줄을 넣기 전후로 나란히 놓아라',
         ...rows.map(composition),
+        '  맨 위와 같은 사람 · 맵만 다르다 — 카드가 맵을 타는지 보는 줄이다(세션 68)',
+        composition(court),
         '',
       ].join('\n'),
     );
@@ -224,5 +290,41 @@ describe(`아래쪽 꼬리 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
     expect(Math.min(...mendShare), '고른 카드 중 회복의 몫 — 세 사람 중 최소').toBeGreaterThan(
       0.035,
     );
+
+    // ⑤ **고른 카드의 속은 맵을 타지 않는다**(세션 68 · 실측 화력 67.8 대 67.1% · 회복 4.6 대 4.9%).
+    //
+    // 위 ①~④는 전부 빈 뜰 한 맵에서 고른 선이다. 그 선들이 한 맵에서만 서 있어도 되는
+    // 까닭을 **이 줄이 매 바퀴 다시 보여 준다** — 고르는 사람은 섞인 석 장 중 첫 장을 집고
+    // (`takeAny`) 보조의 수는 `maxSupport`가 못 박으므로, 고르기가 맵을 볼 길이 없다.
+    // 넷을 다 재도 화력 몫은 67.1~68.7%에 모여 있다(위 `COURT` 주석의 표).
+    //
+    // **여기가 울면 그 전제가 깨진 것이다.** 카드가 맵을 타기 시작했거나(맵마다 다른 속도로
+    // 자라 레벨이 갈리거나), `rollUpgradeChoices`가 게임 상태를 보고 뽑기 시작한 것이다.
+    // 그때 물을 것은 "어느 맵에 맞출까"가 아니라 **"카드가 맵을 타는 것이 흠인가"**다 —
+    // 타는 것이 맵을 고르는 재미일 수도 있다. 표를 먼저 놓고 판단하라.
+    //
+    // 선은 4%p — 실측 차 0.7%p에서 3.8σ 물러난 자리다(두 몫의 차의 1σ가 0.86%p).
+    // 회복은 ④와 같은 3.5% 바닥을 안뜰에서도 지키게 둔다(실측 4.9% · 5.2σ).
+    const powerGap = Math.abs(
+      court.power / court.cards - (plainRun?.power ?? 0) / (plainRun?.cards ?? 1),
+    );
+    expect(powerGap, '화력 몫 — 빈 뜰과 안뜰의 차').toBeLessThan(0.04);
+    expect(
+      (court.byCard.get('mend') ?? 0) / court.cards,
+      '고른 카드 중 회복의 몫 — 안뜰',
+    ).toBeGreaterThan(0.035);
+
+    // ⑥ **꼬리는 맵을 탄다. 그 몫이 지금보다 더 커지지는 않는다**(실측 63/480 · 13.1%).
+    //
+    // ⑤와 짝을 이루는 선이다. 갈리지 않는 것을 ⑤가 잡아 두었으니, 여기는 **실제로 갈리는
+    // 칸**을 잡는다. 빈 뜰 5.8% 대 안뜰 13.1%로 갑절이 넘는데, **안뜰이 특별해서가 아니라
+    // 기둥이 있어서다** — 기둥 뜰도 13.5%다(위 표). 아무 답도 모르는 사람은 코어만 보고 걷고
+    // 자동 조준은 기둥을 안 보므로, 그 사람에게 기둥은 가림이 아니라 먹히는 화살이다.
+    //
+    // **그러니 이 갑절은 고칠 고장이 아니라 맵이 묻는 물음이다**(DESIGN 10번). 대신
+    // 그 물음이 대답할 수 없을 만큼 커지는 것은 막는다. 선은 20%(96판) — 실측 63판에서
+    // 4.7σ 물러난 자리다(1σ 7판). 여기가 울면 기둥 있는 맵이 답 모르는 사람에게
+    // 너무 가팔라진 것이고, 고칠 곳은 카드가 아니라 **기둥 배치나 자동 조준**이다.
+    expect(court.dead.length, `안뜰의 꼬리 · 빈 뜰 ${plain}판`).toBeLessThan(96);
   });
 });
