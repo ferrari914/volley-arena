@@ -865,7 +865,7 @@ body[data-input='touch'] .up-card__key {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 10px)
     calc(var(--safe-l) + 12px);
   background: radial-gradient(circle at 50% 45%, rgba(14, 26, 56, 0.72), rgba(6, 9, 20, 0.92));
@@ -888,23 +888,29 @@ body[data-input='touch'] .up-card__key {
 /*
  * 맵이 셋 이상이 되어도 이 줄은 고치지 않는다 — 가로로 늘어놓다가 넘치면 접힌다.
  * 가로 화면의 세로 길이가 390px뿐이라 카드 높이를 먼저 아낀다.
+ *
+ * **다섯째 맵에서 실제로 접혔다**(세션 72 · 넉 장 838px > 들어갈 자리 820px). 접히자마자
+ * 두 줄이 되어 제목과 안내가 안전 영역 밖으로 나갔다(노치 화면에서 위아래 28.7px씩).
+ * 고친 곳은 **카드 높이 하나**다 — 폭(158px)은 그대로 두었다. 폭을 줄이면 한 줄 설명이
+ * 석 줄로 접혀 넉 장이 다 같이 커지고(세션 67의 `measureMapBlurbs`), 그러면 줄인 높이가
+ * 도로 돌아온다. 높이를 아끼는 자리는 그림이다: 96 → 68px.
  */
 #map-select-list {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .map-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   width: 158px;
   /* 손가락으로 누를 것이므로 애플이 말하는 44px 최소 크기를 넉넉히 넘긴다. */
-  min-height: 168px;
-  padding: 10px 10px 12px;
+  min-height: 132px;
+  padding: 8px 8px 10px;
   border-radius: 16px;
   border: 1px solid rgba(234, 240, 255, 0.22);
   background: rgba(234, 240, 255, 0.06);
@@ -940,10 +946,15 @@ body[data-input='touch'] .up-card__key {
   text-align: center;
 }
 
-/* 맵을 위에서 내려다본 그림. 색은 실제 화면과 같은 자리에서 가져온다. */
+/*
+ * 맵을 위에서 내려다본 그림. 색은 실제 화면과 같은 자리에서 가져온다.
+ * **크기는 남는 자리가 정한다**(세션 72): 맵이 다섯이 되어 카드가 두 줄로 접히자
+ * 96px에서는 두 줄이 화면 밖으로 나갔다. 68px이면 가장 좁은 화면(노치 가로 844x390 ·
+ * 세로로 349px이 남는다)에서 제목·안내까지 다 들어간다.
+ */
 .map-thumb {
-  width: 96px;
-  height: 96px;
+  width: 68px;
+  height: 68px;
 }
 
 .map-thumb-floor {
