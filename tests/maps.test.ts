@@ -74,6 +74,36 @@ describe('맵 데이터 — 맵을 하나 더 넣는 사람이 지켜야 하는 
     expect(DEFAULT_MAP.obstacles).toEqual([]);
   });
 
+  // **표준 배치를 못 박아 둔다.** 이 검사가 우는 것은 고장이 났다는 뜻이 아니라,
+  // **지금 밸런스 표를 다시 재야 한다는 뜻이다.**
+  //
+  // 왜 이것이 있는가: 세션 69가 다섯째 적(약탈꾼)을 자리 하나 늘려 세우면서
+  // `npm run perf`를 돌리지 않고 커밋했고, 그 표의 ②(보조를 먼저 고르는 사람의 중앙값)가
+  // 141 → 116초로 선(120) 밖으로 나가 있었다. **매 바퀴 도는 `npm test`는 그것을 못 본다** —
+  // 그 선은 180판이 필요해서 `tests/perf/balance.perf.ts`에만 있고, perf는 DESIGN의
+  // '검사 명령'에 없어 아무도 돌리지 않는다(세션 56이 같은 일을 이미 한 번 적어 두었다.
+  // 그때는 폭탄병과 카드 두 장이 지나가는 동안 ④가 빨간 채로 두 바퀴를 지났다).
+  //
+  // 그래서 **배치를 건드리는 손을 여기서 멈춰 세운다.** 값을 여기 맞춰 고치기 전에
+  // `npm run perf`를 넣기 전후로 돌리고, 두 표를 STATUS.md에 나란히 놓아라.
+  it('표준 적 배치가 못 박은 표와 같다 — 이 줄을 고치는 바퀴는 npm run perf를 돌려라', () => {
+    const PINNED = [
+      { x: 0, y: -13, kind: 'bomber' },
+      { x: 12, y: 6, kind: 'charger' },
+      { x: -12, y: 6, kind: 'shield' },
+      { x: 18, y: -9 },
+      { x: -18, y: -9 },
+      { x: -18, y: 9, kind: 'looter' },
+    ];
+    // 네 맵이 모두 같은 배치를 쓴다(맵이 가르는 것은 기둥뿐이다 · `data/maps.ts`).
+    for (const map of MAPS) {
+      expect(
+        map.enemies,
+        `${map.id}의 적 배치가 못 박은 표와 다르다 — npm run perf를 넣기 전후로 돌렸는가?`,
+      ).toEqual(PINNED);
+    }
+  });
+
   for (const map of MAPS) {
     describe(`${map.name}(${map.id})`, () => {
       it('기둥이 아레나 안에 있고, 벽 사이로 지나갈 수 있다', () => {
