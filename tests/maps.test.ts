@@ -237,13 +237,43 @@ describe('그늘 뜰 — 물러날 곳이 둘로 갈린다', () => {
     expect(Math.max(...openSide), '트인 쪽에도 가림이 있다').toBe(0);
   });
 
-  it('앞의 두 맵은 어느 쪽으로 물러나도 같다 — 고를 것이 없다', () => {
+  it('앞의 두 맵은 어느 쪽으로 물러나도 같다 — 고를 것이 없다 (견줌)', () => {
     // 견줌이 없으면 위 검사가 "그늘 뜰이 특별한가"를 말하지 못한다.
     for (const map of [DEFAULT_MAP, findMap('pillars')]) {
       const ring = SHADE.concat(OPEN).map((d) => coverToward(d, map));
       expect(Math.max(...ring) - Math.min(...ring), `${map.id}는 방향에 따라 갈린다`).toBeLessThan(
         30,
       );
+    }
+  });
+});
+
+describe('안뜰 — 가림이 물러난 자리가 아니라 싸우는 자리에 있다', () => {
+  /**
+   * 이 맵이 있는 이유 전부가 여기 있다. **앞의 세 맵은 가림을 전부 벽 앞에 두었다** —
+   * 기둥 뜰의 고리(17m)는 기둥 앞면까지가 13.8m라 적이 다가와 서는 거리(12m) 밖이고,
+   * 그래서 셋 다 **한복판 가림이 0도**다. 물러나야 가림이 생긴다.
+   *
+   * 안뜰은 그 고리를 적이 서는 거리(12m) 위로 들여, 시작하는 자리에서부터 기둥이
+   * 사이에 들게 한다. 여기가 무너지면 이 맵은 기둥 수만 다른 기둥 뜰이 된다.
+   *
+   * **선은 90도다** — 재서 맞춘 값이 아니라 "한복판에서 사분면 하나는 막혀 있다"는
+   * 뜻이고, 실측은 112도다(고리를 11m로 당기면 144도 · 13m로 물리면 112도로 같다).
+   * 요새 쪽 선(180도)은 바로 위 묶음이 네 맵 모두에 걸어 둔다 — 실측 136도.
+   */
+  it('안뜰만 한복판에서 가려진다 — 앞의 세 맵은 0도다', () => {
+    for (const map of MAPS) {
+      const center = cover({ x: 0, y: 0 }, map.obstacles);
+      console.log(`  ${map.name.padEnd(6)} 한복판 가림 ${center}도`);
+      if (map.id === 'court') expect(center, '안뜰의 한복판이 트여 있다').toBeGreaterThan(90);
+      else expect(center, `${map.id}의 한복판이 가려 있다`).toBe(0);
+    }
+  });
+
+  it('기둥이 적이 서는 고리 위에 선다 — 그것이 앞의 세 맵과 갈리는 자리다', () => {
+    // 이 한 줄이 위 검사의 이유다. 고리를 바깥으로 물리면 한복판 가림이 0으로 돌아간다.
+    for (const pillar of findMap('court').obstacles) {
+      expect(Math.hypot(pillar.x, pillar.y) - pillar.radius).toBeLessThan(ENEMY.approachDistance);
     }
   });
 });
@@ -371,13 +401,17 @@ describe('기둥이 선 판 — 한 판을 돌려서 본다', () => {
     const open = eatenShare(DEFAULT_MAP);
     const withPillars = eatenShare(map);
     const shade = eatenShare(findMap('shade'));
+    const court = eatenShare(findMap('court'));
     console.log(
       `내 화살이 기둥에 박힌 몫 — 빈 뜰 ${open.toFixed(3)} · ` +
-        `기둥 뜰 ${withPillars.toFixed(3)} · 그늘 뜰 ${shade.toFixed(3)}`,
+        `기둥 뜰 ${withPillars.toFixed(3)} · 그늘 뜰 ${shade.toFixed(3)} · 안뜰 ${court.toFixed(3)}`,
     );
     expect(open, '기둥이 없는 맵에서 화살이 먹혔다').toBe(0);
     expect(withPillars, '기둥이 화살을 먹지 않는다 — 그림만 다른 맵이다').toBeGreaterThan(0.25);
     expect(shade, '그늘 뜰의 기둥이 화살을 먹지 않는다').toBeGreaterThan(0.15);
+    // 안뜰은 기둥이 넷뿐인데도 기둥 뜰만큼 먹는다(실측 0.590 · 기둥 뜰 0.696) —
+    // 벽 앞이 아니라 싸우는 자리에 서 있기 때문이다.
+    expect(court, '안뜰의 기둥이 화살을 먹지 않는다').toBeGreaterThan(0.25);
   });
 });
 
