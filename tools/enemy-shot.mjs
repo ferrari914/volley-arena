@@ -1,10 +1,10 @@
 /**
  * 적을 눈으로 보려고 만든 도구다. 두 가지를 찍는다.
  *
- *   npm run shot:enemy                      # 네 종류를 한 마리씩 가까이서
+ *   npm run shot:enemy                      # 다섯 종류를 한 마리씩 가까이서
  *   npm run shot:enemy -- shield calm worn flash aim
  *   npm run shot:enemy -- bomber aim flash  # 심지가 타는 동안과 터진 자국
- *   npm run shot:enemy -- crowd             # 적이 상한(17마리)까지 찬 화면
+ *   npm run shot:enemy -- crowd             # 적이 상한(18마리)까지 찬 화면
  *   npm run shot:enemy -- crowd 13
  *   npm run shot:enemy -- crowd veteran     # 그 자리까지 실제로 싸워 올라간 사람의 화면
  *   npm run shot:enemy -- crowd map=pillars # 다른 아레나에서 (DESIGN 10번 · `data/maps.ts`)
@@ -43,8 +43,8 @@ const OUT = 'shots';
 const STATES = ['live', 'calm', 'aim', 'worn', 'flash'];
 /** 적 종류(DESIGN 9번). `data/config.ts`에 하나 늘 때마다 여기에도 넣는다. */
 const KINDS = ['archer', 'charger', 'shield', 'bomber', 'looter'];
-/** 무리 화면의 기본 목표 수. `REINFORCE`의 상한(5 + maxExtra)과 같은 값이다. */
-const CROWD_DEFAULT = 17;
+/** 무리 화면의 기본 목표 수. `REINFORCE`의 상한(처음 배치 6 + maxExtra)과 같은 값이다. */
+const CROWD_DEFAULT = 18;
 /**
  * **다 모인 뒤 찍기까지 기다리는 시간(ms).** 창을 연 시각이 아니라 화면이 제 모양을 갖춘
  * 시각에서 잰다 — 다 채우는 데 걸리는 시간은 목표 수마다 다르고, `veteran`은 판을 실제로
