@@ -194,6 +194,8 @@ export interface LobberOptions {
   turnRate: number;
   /** 이 거리 안이면 돌을 들어 올린다(m). */
   fireRange: number;
+  /** 이보다 가까우면 물러난다(m). 활잡이의 `keepDistance`와 같은 자리이고 값만 다르다. */
+  keepDistance: number;
   /** 돌을 들고 멈춰 서 있는 시간(s). */
   windup: number;
   /** 던지고 다음 돌을 들기까지의 시간(s). */
@@ -700,7 +702,15 @@ function stepLobber(
     return;
   }
 
-  const move = desiredMove(enemy, dir, dist, options, null);
+  const move = desiredMove(
+    enemy,
+    dir,
+    dist,
+    options,
+    null,
+    options.approachDistance,
+    lobber.keepDistance,
+  );
   addSeparation(move, enemy, enemies, options.separation);
   moveBy(enemy, move, lobber.speed, options);
 }
@@ -854,8 +864,14 @@ function desiredMove(
   options: EnemyStepOptions,
   /** 시야를 막고 있는 기둥. null이면 보인다. */
   blocker: Obstacle | null,
+  /**
+   * 이 둘만 종류마다 갈린다(m). 투석병 하나 때문에 인자로 나와 있다 —
+   * 그 적은 붙을 이유가 없어 활잡이보다 바깥에 선다(`data/config.ts`의 `LOBBER.keepDistance`).
+   */
+  approachDistance: number = options.approachDistance,
+  keepDistance: number = options.keepDistance,
 ): Vec2 {
-  if (dist > options.approachDistance) return { x: dir.x, y: dir.y };
+  if (dist > approachDistance) return { x: dir.x, y: dir.y };
   // **보이지 않으면 거리 구간보다 이것이 먼저다.** 가려 있는데 물러나거나 느릿느릿 도는 것은
   // 그 자리에 눌러앉는 것과 같다 — 기둥 뒤가 요새가 되는 것이 바로 거기서 온다.
   // 옆걸음은 `strafeRatio`를 쓰지 않고 **전속력**이다. 시야를 되찾는 동안에는 쏘지 못하므로,
@@ -866,9 +882,9 @@ function desiredMove(
       dir,
       blocker,
       options,
-      (options.keepDistance + options.approachDistance) / 2,
+      (keepDistance + approachDistance) / 2,
     );
-  if (dist < options.keepDistance) return { x: -dir.x, y: -dir.y };
+  if (dist < keepDistance) return { x: -dir.x, y: -dir.y };
   // 사이 구간: 플레이어를 중심으로 옆으로 돈다. 도는 방향은 적마다 갈라 두어
   // 전부 같은 쪽으로 돌면서 한 줄로 뭉치는 것을 막는다.
   const side = enemy.id % 2 === 0 ? 1 : -1;
