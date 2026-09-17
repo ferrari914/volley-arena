@@ -32,8 +32,27 @@ import {
  * **×1 줄은 `balance.perf.ts`의 `walking` 표와 같은 판이다**(같은 씨앗 60개 · 같은 세 사람 ·
  * 같은 기본 맵). 선 안 112/180판이 두 자에서 같게 나온다 — 이 자가 게임을 제대로 잡고
  * 있다는 뜻이고, 배를 곱한 줄을 그 줄과 나란히 읽을 수 있다는 뜻이다.
+ *
+ * **넷째 묶음은 반지름이 아니라 자다**(`×1(딴 씨앗)` · 세션 87이 얹었다). 배를 ×1로 둔 채
+ * **씨앗만 예순 개를 갈아 끼운 줄**이고, 그것이 이 표의 **흔들림 바닥**이다. 세션 86이
+ * `layout.perf.ts`에서 세운 규칙을 이 표에도 세운 것인데 — **60판짜리 표에서 값을 견줄 때는
+ * 같은 값을 딴 씨앗 블록으로 한 번 더 돌린 줄을 함께 세워라** — 세션 85가 이 표를 처음 쟀을
+ * 때는 그 줄이 없었다. 아래 ④가 그 줄로 위 세 답을 다시 판별한다. **셋 다 살아남았고,
+ * 이제는 폭이 아니라 폭÷바닥으로 적혀 있다**(0.4 · 0.5 · **10.8**).
+ * 바닥이 사람마다 다르다는 것도 그 줄이 알려 준다 — 아무거나 19초 · 화력 11초 · 보조 6초.
+ *
+ * **선 안 판 수는 바닥 위에서 읽지 마라.** 같은 ×1이 씨앗만 갈아 끼우면 112 → 130/180판이다.
+ * 이 표에서 줄을 세울 수 있는 칸은 중앙값이고, 선 안 수는 그 중앙값을 거드는 값이다.
  */
 const SEEDS = Array.from({ length: 60 }, (_, i) => 20260909 + i);
+
+/**
+ * **흔들림 바닥을 재는 딴 씨앗 예순 개.** 위와 겹치지 않게 뒤에 이어 붙인다.
+ * `layout.perf.ts`(세션 86)의 넷째 줄과 같은 자다 — 그 자가 없었을 때 세션 86은
+ * 판 길이가 226 / 250 / 264초로 벌어지는 것을 **배치가 가른 것으로 읽을 뻔했다.**
+ * 같은 배치를 딴 씨앗으로 돌리면 226 → 257초였으니, 그 폭은 잰 것이 아니라 구른 것이다.
+ */
+const OTHER_SEEDS = Array.from({ length: 60 }, (_, i) => 20260909 + 120 + i);
 
 /** `tests/progression.test.ts`·`balance.perf.ts`와 같은 선. 세 자가 같은 자를 써야 견줄 수 있다. */
 const SHORTEST = 150;
@@ -54,10 +73,12 @@ const SCALES = [0.9, 1, 1.25] as const;
 
 interface Scaled {
   scale: number;
+  /** 표에 찍는 이름. 흔들림 바닥 줄만 배가 같고 씨앗이 다르다. */
+  label: string;
   rows: { name: string; rows: MatchResult[] }[];
 }
 
-function runAt(scale: number): Scaled {
+function runAt(scale: number, seeds: readonly number[] = SEEDS, label = `×${scale}`): Scaled {
   const baseRadius = ARENA.radius;
   const baseSpawn = REINFORCE.spawnRadius;
   const mul = (v: number): number => Number((v * scale).toFixed(3));
@@ -70,9 +91,10 @@ function runAt(scale: number): Scaled {
     };
     return {
       scale,
+      label,
       rows: PEOPLE.map((p) => ({
         name: p.name,
-        rows: SEEDS.map((seed) => playMatch(seed, 600, walkToNearestCore, p.choose, map)),
+        rows: seeds.map((seed) => playMatch(seed, 600, walkToNearestCore, p.choose, map)),
       })),
     };
   } finally {
@@ -102,15 +124,17 @@ const medianOf = (t: Scaled, name: string): number =>
 
 describe(`아레나 반지름 — 세 크기 × 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
   it('반지름은 한쪽으로만 도는 손잡이다', () => {
-    const tables = SCALES.map(runAt);
+    const tables = SCALES.map((scale) => runAt(scale));
+    /** 배는 그대로 두고 씨앗만 갈아 끼운 줄. **이 줄은 반지름이 아니라 자다.** */
+    const floor = runAt(1, OTHER_SEEDS, '×1(딴 씨앗)');
 
     console.log(
       [
         '',
         `  적의 사거리 ${ENEMY.fireRange}m는 함께 곱하지 않는다 — 이 표가 재는 것이 그 차다`,
-        ...tables.flatMap((t) => [
+        ...[...tables, floor].flatMap((t) => [
           '',
-          `  반지름 ${(ARENA.radius * t.scale).toFixed(1)}m (×${t.scale}) · ` +
+          `  반지름 ${(ARENA.radius * t.scale).toFixed(1)}m (${t.label}) · ` +
             `증원 고리 ${(REINFORCE.spawnRadius * t.scale).toFixed(1)}m`,
           ...t.rows.map((r) => line(r.name, r.rows)),
           line('모두', t.rows.flatMap((r) => r.rows)),
@@ -142,6 +166,7 @@ describe(`아레나 반지름 — 세 크기 × 세 사람 × 씨앗 ${SEEDS.len
 
     // ② **그런데 잘 고르는 두 사람은 거의 안 움직인다.** ×0.9에서 ×1.25까지 세 배 반의
     // 넓이를 오가는 동안 화력을 먼저 고르는 사람은 272 → 266초다(실측 ×0.75에서도 258초).
+    // **그 6초는 흔들림 바닥 11초의 절반이다**(아래 ④) — 곧 "거의"가 아니라 제자리다.
     // 곧 반지름이 파는 것은 **난이도 전체가 아니라 아래쪽 꼬리 하나**다.
     // 이 두 줄이 3~5분 안에 머무는 한, 반지름은 "맵마다 다른 게임"을 만들지 못한다 —
     // 고르는 화면에서 두 맵을 갈라 줄 만한 차이가 나는 것은 못 고르는 사람에게뿐이다.
@@ -158,5 +183,35 @@ describe(`아레나 반지름 — 세 크기 × 세 사람 × 씨앗 ${SEEDS.len
     // 늦어지는데, 그것은 적이 걸어오는 데 드는 시간이지 새 규칙이 아니다.
     expect(medianOf(wide, '보조 먼저')).toBeGreaterThan(medianOf(base, '보조 먼저'));
     expect(medianOf(base, '보조 먼저')).toBeGreaterThan(medianOf(narrow, '보조 먼저'));
+
+    // ④ **위 세 줄이 잰 것인지 구른 것인지를 여기서 가른다**(세션 87 · 규칙은 세션 86이 세웠다).
+    // `floor`는 반지름이 아니라 **씨앗만 갈아 끼운 줄**이다(배는 ×1 그대로). 그 줄과 ×1 줄의
+    // 차가 이 자의 **흔들림 바닥**이고, 배들 사이의 폭은 그 바닥의 갑절을 넘어야 잰 것이 된다.
+    //
+    // **실측 — 바닥과 폭**(사람마다 바닥이 다르다는 것이 이 줄의 또 하나의 답이다):
+    //   | 사람 | ×1 vs 딴 씨앗 = 바닥 | ×0.9~×1.25 폭 | 폭 ÷ 바닥 |
+    //   |---|---|---|---|
+    //   | 아무거나 | 226 vs 245 = **19초** | 246~254 = 8초 | **0.4** |
+    //   | 화력 먼저 | 269 vs 280 = **11초** | 266~272 = 6초 | **0.5** |
+    //   | **보조 먼저** | 122 vs 128 = **6초** | 93~158 = 65초 | **10.8** |
+    //
+    // 곧 ②의 "잘 고르는 두 사람은 제자리다"는 **바닥 안에서의 제자리**이고(폭이 바닥의 절반),
+    // ①·③이 읽은 것은 **바닥의 열 배짜리 신호**다. 세션 85의 표가 ×0.75에서 224초,
+    // ×0.9에서 246초로 되짚어 올라갔던 것도 이 줄이 설명한다 — 그 20초는 바닥 19초 안이다.
+    const FLOOR_MARGIN = 2;
+    for (const { name } of PEOPLE) {
+      const noise = Math.abs(medianOf(base, name) - medianOf(floor, name));
+      const signal = Math.abs(medianOf(wide, name) - medianOf(narrow, name));
+      const bar = Math.max(noise, 1) * FLOOR_MARGIN;
+      const note =
+        `${name} · ×0.9~×1.25 폭 ${signal.toFixed(0)}초 · ` +
+        `흔들림 바닥 ${medianOf(base, name).toFixed(0)} vs ${medianOf(floor, name).toFixed(0)}초`;
+      // 반대쪽 끝 한 사람만 바닥을 넘는다 — 그것이 ①·③이 읽은 신호다.
+      // 이 선이 우는 날은 그 신호가 잡음으로 내려앉은 날이고, 그때 ①·③은 더 이상 답이 아니다.
+      if (name === '보조 먼저') expect(signal, note).toBeGreaterThan(bar);
+      // 잘 고르는 두 사람은 바닥 안에 머문다 — ②의 "제자리"가 정말 제자리라는 뜻이다.
+      // **"제자리"를 바닥보다 좁게 말할 수는 없다.** 이 선의 헐거움은 자의 헐거움 그대로다.
+      else expect(signal, note).toBeLessThan(bar);
+    }
   });
 });
