@@ -90,7 +90,8 @@ export function walkToNearestCore(world: World): FrameInput {
 }
 
 /**
- * 달려드는 돌진형의 직선에서 옆으로 비키는 사람. 그것 말고는 `walkToNearestCore`와 같다.
+ * 달려드는 돌진형의 직선에서 옆으로 비키는 사람. 비킬 일이 없는 프레임에는 `inner`가 걷는다
+ * (`backOffBomber`와 같은 문법 — 세 겹을 쌓아야 하는 자리가 생겨 감쌀 수 있게 갈랐다).
  *
  * **DESIGN 9번이 돌진형에게 요구하는 단 하나의 대응이 이것이다** —
  * "옆으로 비키면 빗나가고, 뒤로 달아나는 것만으로는 못 피한다".
@@ -102,23 +103,34 @@ export function walkToNearestCore(world: World): FrameInput {
  * 돌진 방향은 튀어나가는 순간에 정해지고 그때까지 몸이 따라 돈다(`systems/enemyAi.ts`).
  * 화면에 보이는 것(달려오는 몸과 그 방향)만 보고 판단하므로, 사람이 할 수 없는 일을 하지 않는다.
  */
-export function dodgeCharger(world: World): FrameInput {
-  const contactRadius = ENEMY.radius + PLAYER.radius;
-  for (const enemy of world.enemies) {
-    if (!enemy.alive || enemy.kind !== 'charger' || enemy.dashTimer <= 0) continue;
-    const ahead = { x: Math.cos(enemy.facing), y: Math.sin(enemy.facing) };
-    const dx = world.player.pos.x - enemy.pos.x;
-    const dy = world.player.pos.y - enemy.pos.y;
-    // 이미 지나갔으면 비킬 것이 없다.
-    if (dx * ahead.x + dy * ahead.y < 0) continue;
-    // 직선에서 옆으로 얼마나 벗어나 있는가. 넉넉히 벗어나 있으면 어차피 빗나간다.
-    const side = dx * -ahead.y + dy * ahead.x;
-    if (Math.abs(side) > contactRadius + 0.6) continue;
-    const sign = side >= 0 ? 1 : -1;
-    return { move: { x: -ahead.y * sign, y: ahead.x * sign }, aim: null };
-  }
-  return walkToNearestCore(world);
+export function sidestepCharger(
+  inner: (world: World) => FrameInput = walkToNearestCore,
+): (world: World) => FrameInput {
+  return (world) => {
+    const contactRadius = ENEMY.radius + PLAYER.radius;
+    for (const enemy of world.enemies) {
+      if (!enemy.alive || enemy.kind !== 'charger' || enemy.dashTimer <= 0) continue;
+      const ahead = { x: Math.cos(enemy.facing), y: Math.sin(enemy.facing) };
+      const dx = world.player.pos.x - enemy.pos.x;
+      const dy = world.player.pos.y - enemy.pos.y;
+      // 이미 지나갔으면 비킬 것이 없다.
+      if (dx * ahead.x + dy * ahead.y < 0) continue;
+      // 직선에서 옆으로 얼마나 벗어나 있는가. 넉넉히 벗어나 있으면 어차피 빗나간다.
+      const side = dx * -ahead.y + dy * ahead.x;
+      if (Math.abs(side) > contactRadius + 0.6) continue;
+      const sign = side >= 0 ? 1 : -1;
+      return { move: { x: -ahead.y * sign, y: ahead.x * sign }, aim: null };
+    }
+    return inner(world);
+  };
 }
+
+/**
+ * 비킬 일이 없는 프레임에는 코어를 보고 걷는 사람. **지금까지의 `dodgeCharger`와
+ * 같은 사람이고 같은 값을 낸다** — 감쌀 수 있게 한 겹으로 갈랐을 뿐이다
+ * (`backOffBomber`·`neverStandStill`과 같은 문법).
+ */
+export const dodgeCharger = sidestepCharger();
 
 /**
  * 방패병을 옆구리로 도는 사람. 그것 말고는 `walkToNearestCore`와 같다.

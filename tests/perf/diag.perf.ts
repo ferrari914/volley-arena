@@ -16,7 +16,15 @@ import { describe, it } from 'vitest';
 import { World } from '../../src/core/World';
 import type { FrameInput } from '../../src/core/World';
 import { MAPS, type ArenaMap } from '../../src/data/maps';
-import { backOffBomber, circleShield, DT, IDLE, play, walkToNearestCore } from '../support/match';
+import {
+  backOffBomber,
+  circleShield,
+  DT,
+  IDLE,
+  play,
+  sidestepCharger,
+  walkToNearestCore,
+} from '../support/match';
 import { clamp, wrapAngle } from '../../src/core/math';
 import { AIM, ARENA, ARROW, ENEMY, SHIELD } from '../../src/data/config';
 import { sightBlocker } from '../../src/systems/obstacles';
@@ -612,6 +620,186 @@ describe('맞는 순간 내가 어디에 서 있었는가', () => {
             if (!row) return `${label} —`;
             return `${label} ${((row.back / row.hits) * 100).toFixed(1)}%(${row.hits})`;
           }).join(' · '),
+      );
+    }
+  });
+});
+
+
+/**
+ * **맞는 순간 내 발이 멎어 있었는가** — 내 화살이 몸에 닿을 때 왼쪽 스틱이 놓여 있었나.
+ *
+ * 위의 넷과 한 줄에 선 다섯 번째 자다. 앞의 넷은 **거리**(적끼리 · 나와 적) · **때** ·
+ * **각**을 물었고 넷 중 셋이 닫혔다. 이 자가 묻는 것은 **왼쪽 스틱의 길이**다 —
+ * 열한 장 중 어느 것도 한 번도 본 적이 없는 값이고, 뒷걸음이 그 사실을 적어 두었다
+ * (`systems/movement.ts`의 `backstepBoost`: *"길이를 빼고 방향만 본다"*).
+ * 코앞은 스틱이 **나를 어디에 데려다 놓았는가**를 보고, 뒷걸음은 **어느 쪽으로
+ * 미는가**를 본다. 남은 한 칸이 **얼마나 미는가**, 그 끝이 **아예 안 미는가**다.
+ *
+ * **세션 92가 열두째 화력 카드를 세우기 전에 여기서 쟀다. 이번에는 열렸다** —
+ * 세션 61·64·65·81이 같은 자리에서 넷을 접은 뒤 처음이다.
+ * 씨앗 60개 · 150초에서 끊는다 · '멎음'은 스틱 길이가 `AIM.deadzone`(0.18)보다 짧은 프레임:
+ * | 사람 | 맞힘 | **멎은 채 난 맞힘** | 멎은 프레임 | 1씩 더 깎았다면 | 한 판 | 레벨 | 처치 |
+ * |---|---|---|---|---|---|---|---|
+ * | 걷는 사람(손 안 댐) | 24661 | **0.9%** | 0.9% | 24880 | 145초 | 14.0 | 127 |
+ * | 도는 사람 | 26963 | 0.2% | 0.2% | 27009 | 149초 | 14.2 | 138 |
+ * | 멎는 사람 22m(보이면 멎는다) | 8626 | **85.3%** | 87.5% | 15987 | **55초** | **4.7** | 35 |
+ * | 멎는 사람 10m | 14145 | 62.0% | 59.0% | 22908 | 86초 | 9.0 | 63 |
+ * | 멎는 사람 9m | 18170 | 50.8% | 45.8% | 27392 | **108초** | 11.0 | 84 |
+ * | **멎는 사람 8m** | **25413** | **31.7%** | 26.1% | **33473** | **143초** | **13.6** | **123** |
+ * | 멎는 사람 6m | 26520 | 11.1% | 6.5% | 29461 | 150초 | 14.2 | 135 |
+ * | 멎는 사람 4m | 26790 | 2.3% | 1.6% | 27404 | 150초 | 14.2 | 136 |
+ *
+ * **(1) 시작점이 거의 0이다 — 이 자리에서 처음이다.** 손을 안 댄 사람은 맞힘의 **0.9%**만
+ * 멎은 채로 낸다(코어가 다 떨어져 발이 멎는 몇 초다 · 세션 74). 세션 81이 먼 거리를 접은
+ * 까닭이 정확히 그 반대였다 — 거기서는 손을 안 대도 43.7%가 이미 열려 있어서 **카드가 살
+ * 것이 얼마 안 남아 있었다.** 여기서는 카드가 사는 것이 거의 전부 새 것이다.
+ *
+ * **(2) 벼랑이 8 → 9m에 있다. 그 앞까지는 공짜다.** 8m에서 멎는 사람은 멎은 몫이
+ * **31.7%**인데 한 판 143초 · 레벨 13.6 · 처치 123으로 **걷는 사람과 같은 판을 산다**
+ * (145초 · 14.0 · 127). 한 칸만 넓혀 9m로 가면 108초 · 레벨 11.0이고, 22m까지 열면
+ * 55초 · 레벨 4.7로 무너진다. **이 8m라는 선은 이 자가 고른 수가 아니라 적이 정한 수다** —
+ * 활잡이가 물러서기 시작하는 거리가 8m고 방패병이 6m다(`data/config.ts`). 곧
+ * **적이 제 사거리에 서는 동안 멎어 있는 것은 공짜고, 걸어오는 적을 서서 기다리는 것은
+ * 판의 절반을 치른다.**
+ *
+ * **(3) `data/upgrades.ts`의 두 문턱을 둘 다 넘는다.**
+ * **①(왼쪽 스틱으로 움직이는 값인가)** — 0.9 → 31.7%(공짜인 선에서) · 85.3%(끝까지 밀면).
+ * 코앞이 같은 자리에서 13.5 → 46.5%였다(×3.4). 여기는 **×35**이고, 그것은 시작점이
+ * 거의 0이기 때문이다. **②(폭이 카드 한 장 값을 내는가)** — 8m에서 멎는 사람이 버는 것이
+ * **총피해 +31.7%**이고 화력 자리 한 장이 가져가는 것은 12.6%다(세션 61). **갑절 반이다.**
+ * 등 뒤(+3.1~7.5%)가 여기서 걸려 닫혔다.
+ *
+ * **(4) 그런데 끝까지 밀면 진다 — 그것이 이 카드가 공짜가 아닌 자리다.** 22m에서 멎는
+ * 사람은 멎은 몫이 85.3%로 가장 큰데 **카드를 얹은 총피해가 15987로 걷는 사람(24880)보다
+ * 작다.** 세션 81의 물러나는 사람과 같은 모양이다(벌린 폭의 값이 한 판의 절반). 다른 것은
+ * **그 앞에 공짜인 구간이 있다**는 것이고, 그래서 이 축은 닫히지 않는다 —
+ * 카드가 묻는 것이 "멈춰라"가 아니라 **"언제 멈춰도 되는가"**가 된다.
+ *
+ * **재는 사람은 멎는 쪽에 유리하게 세웠다**(`armed` — 심지·떨어질 돌·몸을 던진 돌진형
+ * 셋에서는 비킨다). 그러지 않으면 재는 것이 카드가 아니라 그 사람의 빈 구멍이 된다
+ * (세션 51·74). **활잡이·방패병의 화살에는 답을 주지 않았다** — 서 있는 사람에게 그
+ * 화살이 반드시 꽂히는 것이 이 카드가 치르는 값 그 자체다.
+ *
+ * 재는 자리는 위의 세 자와 같은 프레임이다(체력이 줄면 내 화살이 몸에 닿은 것이다).
+ * **스틱은 그 프레임에 이 사람이 민 값 그대로다** — 화살이 떠난 순간이 아니라 닿은 순간의
+ * 스틱이다(코앞이 닿는 순간의 거리를 재는 것과 같은 규칙). 화살이 날아가는 시간은
+ * 중앙 거리 9.4m에서 0.28초이므로(`ARROW.speed` 34m/s), 쏘는 순간으로 재는 카드를
+ * 만든다면 이 표보다 조금 더 큰 값이 나온다.
+ *
+ *   npx vitest run --config vitest.perf.config.ts tests/perf/diag.perf.ts
+ */
+describe('맞는 순간 내 발이 멎어 있었는가', () => {
+  /**
+   * 스틱이 이보다 짧으면 **발이 멎은 것**이다. 게임이 이미 쓰는 데드존 그대로라
+   * (`AIM.deadzone`), 여기서 세는 프레임은 화면에서 실제로 발이 멎어 보이는 프레임이다.
+   */
+  const STILL = AIM.deadzone;
+
+  /**
+   * 떨어질 돌의 원에서 걸어 나가는 사람(DESIGN 9번 · 투석병). 나갈 일이 없는 프레임에는
+   * `inner`가 걷는다 — `backOffBomber`와 같은 문법이고, 보는 것도 화면에 있는 것뿐이다
+   * (떨어질 자리에 원이 그려져 있다 · `entities/types.ts`의 `Lob`).
+   *
+   * **멎는 사람에게 이 한 겹이 없으면 재는 것이 카드가 아니라 투석병이 된다** —
+   * 돌은 던지는 순간의 내 자리로 떨어지므로, 서 있는 사람은 반드시 맞는다(세션 74).
+   */
+  const stepOutOfLob =
+    (inner: (w: World) => FrameInput) =>
+    (world: World): FrameInput => {
+      for (const lob of world.lobs) {
+        if (!lob.alive) continue;
+        const dx = world.player.pos.x - lob.to.x;
+        const dy = world.player.pos.y - lob.to.y;
+        const dist = Math.hypot(dx, dy);
+        // 이미 원 밖이다. 남은 비행 시간 동안 더 벌어질 만큼만 여유를 둔다(0.4m).
+        if (dist > lob.radius + 0.4) continue;
+        if (dist < 1e-6) return { move: { x: 1, y: 0 }, aim: null };
+        return { move: { x: dx / dist, y: dy / dist }, aim: null };
+      }
+      return inner(world);
+    };
+
+  /** 산 적이 `range`m 안에 있으면 발을 멈추고 쏘는 사람. 아무도 없으면 코어를 줍는다. */
+  const stand =
+    (range: number) =>
+    (world: World): FrameInput => {
+      for (const e of world.enemies) {
+        if (!e.alive) continue;
+        const d = Math.hypot(e.pos.x - world.player.pos.x, e.pos.y - world.player.pos.y);
+        if (d <= range) return IDLE;
+      }
+      return walkToNearestCore(world);
+    };
+
+  /**
+   * **멎는 쪽에 유리하게 세 답을 다 아는 사람이다** — 접는 쪽이 이기게 두면 접은 근거가
+   * 약해진다(세션 64의 `snipeWindup`과 같은 규칙). 심지가 타면 원 밖으로 나가고
+   * (`backOffBomber`), 돌이 떨어질 자리에서 비키고(`stepOutOfLob`), 몸을 던진 돌진형의
+   * 직선에서 비킨다(`sidestepCharger`). 그 셋이 아닌 프레임에만 멎는다.
+   *
+   * **활잡이·방패병의 화살에는 답이 없다. 그것이 이 카드의 값이다** —
+   * 서 있는 사람에게는 그 화살이 반드시 꽂힌다.
+   */
+  const armed = (range: number) =>
+    backOffBomber(stepOutOfLob(sidestepCharger(stand(range))));
+
+  const PEOPLE = [
+    { name: '걷는 사람', input: walkToNearestCore },
+    { name: '도는 사람', input: backOffBomber(circleShield) },
+    /**
+     * **멎는 선을 여덟 자리 재서 여섯을 남겼다.** 지운 것은 11 · 7 · 5m이고(이웃과 같은
+     * 이야기를 한다) 12m는 22m와 거의 같아서 지웠다(80.7% · 56초). 남긴 여섯이
+     * **벼랑(8 → 9m)을 가운데 두고 양쪽을 보인다** — 이 줄들을 지우면 "여기까지는 공짜"를
+     * 다시 낼 방법이 없다.
+     */
+    { name: '멎는 사람 22m', input: armed(AIM.autoRange) },
+    { name: '멎는 사람 10m', input: armed(10) },
+    { name: '멎는 사람 9m', input: armed(9) },
+    { name: '멎는 사람 8m', input: armed(8) },
+    { name: '멎는 사람 6m', input: armed(6) },
+    { name: '멎는 사람 4m', input: armed(4) },
+  ] as const;
+
+  it('멎은 채로 얼마나 맞히는가', () => {
+    for (const person of PEOPLE) {
+      let hits = 0;
+      let stillHits = 0;
+      let frames = 0;
+      let stillFrames = 0;
+      let secs = 0;
+      let levels = 0;
+      let kills = 0;
+      for (let i = 0; i < 60; i += 1) {
+        const world = new World({ seed: 20260909 + i });
+        for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
+          // 이번 프레임의 스틱. `play`가 곧바로 같은 함수를 같은 세계에 대고 다시 부르므로
+          // 같은 값이다(이 사람들은 세계를 건드리지 않는다).
+          const move = person.input(world).move;
+          const still = Math.hypot(move.x, move.y) < STILL;
+          const before = world.enemies.map((e) => ({ id: e.id, hp: e.hp }));
+          play(world, 1, person.input);
+          frames += 1;
+          if (still) stillFrames += 1;
+          for (const e of world.enemies) {
+            const was = before.find((b) => b.id === e.id);
+            // 체력이 줄었으면 내 화살이 몸에 닿은 것이다(위의 세 자와 같은 규칙).
+            if (!was || e.hp >= was.hp) continue;
+            hits += 1;
+            if (still) stillHits += 1;
+          }
+        }
+        secs += world.elapsed;
+        levels += world.progress.level;
+        kills += world.kills;
+      }
+      const pct = (n: number, d: number) => ((n / d) * 100).toFixed(1);
+      console.log(
+        `${person.name.padEnd(12)}: 맞힘 ${hits} · 그중 멎은 채 ${pct(stillHits, hits)}% ` +
+          `(${stillHits}) · 발이 멎어 있던 프레임 ${pct(stillFrames, frames)}% | ` +
+          `1씩 더 깎았다면 총피해 ${hits + stillHits}(+${pct(stillHits, hits)}%) · ` +
+          `한 판 ${(secs / 60).toFixed(0)}초 · 레벨 ${(levels / 60).toFixed(1)} · ` +
+          `처치 ${(kills / 60).toFixed(0)}`,
       );
     }
   });
