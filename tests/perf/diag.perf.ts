@@ -18,7 +18,7 @@ import type { FrameInput } from '../../src/core/World';
 import { MAPS, type ArenaMap } from '../../src/data/maps';
 import { backOffBomber, circleShield, DT, IDLE, play, walkToNearestCore } from '../support/match';
 import { clamp, wrapAngle } from '../../src/core/math';
-import { AIM, ARROW, ENEMY, SHIELD } from '../../src/data/config';
+import { AIM, ARENA, ARROW, ENEMY, SHIELD } from '../../src/data/config';
 import { sightBlocker } from '../../src/systems/obstacles';
 
 const SEEDS = Array.from({ length: 8 }, (_, i) => 20260909 + i);
@@ -146,6 +146,14 @@ describe('적끼리의 거리', () => {
  * 파고드는 사람이 세 배 가까이 갈린다. 카드가 새 요구를 걸려면 **고른 사람이
  * 손으로 바꿀 수 있는 값**이어야 하고, 그것을 여기서 먼저 재고 넣는다.
  *
+ * **세션 81이 이 자에 먼 쪽 세 칸과 성장 세 칸을 더 달았다.** 코앞이 선 뒤로 남아 있던
+ * 물음이 "그럼 거울은 어떤가 — 먼 데서 맞히는 데 값을 매기면"이었고, 그 장을 만들기 전에
+ * 여기서 재고 닫았다. 답은 **거리 축이 대칭이 아니라는 것**이다: 가까운 쪽은 손 안 댄 사람이
+ * 13.5%뿐이라 카드가 살 폭이 있는데, **먼 쪽은 손 안 대도 이미 43.7%가 10m 밖에서 난다**
+ * (자동 조준이 가장 가까운 적을 잡아도 그 적이 대개 멀리 있다). 게다가 일부러 벌리면
+ * 성장이 끊긴다 — 그래서 레벨·처치·경험치 전투 몫을 같은 줄에 함께 찍는다.
+ * 카드 한 장을 닫은 근거이므로 **두 사람(`kite`)을 지우지 마라.**
+ *
  * 재는 자리는 `systems/combat.ts`가 재는 자리와 **같은 프레임 · 같은 좌표**다 —
  * 화살은 스텝의 맨 끝에서 움직이므로(`core/World.ts`) 스텝이 끝난 뒤의 두 자리가
  * 곧 닿던 순간의 두 자리다. 한 프레임에 같은 적이 두 발을 맞으면 한 번으로 세는데,
@@ -186,10 +194,55 @@ describe('나와 적 사이의 거리', () => {
       };
     };
 
+  /**
+   * `dive`의 거울 — 가장 가까운 적이 `keep`m 안에 들면 그 반대쪽으로 걷고,
+   * 밖에 있으면 코어를 줍는 사람. **거리 축의 먼 쪽을 재려고 세운 사람이다**(세션 81).
+   *
+   * **벽에 몰리면 벽을 따라 돈다.** 반지름 26m 아레나에서 뒤로만 걸으면 등이 벽에 닿아
+   * 그 뒤로는 제자리걸음이 되고, 그러면 재는 것이 카드가 아니라 그 사람의 막다른 골목이 된다.
+   * 바깥 고리(`ARENA.radius - 3`)에 들면 멀어지는 성분을 접선으로 눕혀, 적을 등진 채
+   * 벽을 따라 도는 쪽으로 바꾼다.
+   *
+   * **이 두 줄은 "먼 거리에 값을 매기는 카드"를 닫은 자다.** `pointblank`(코앞)의 거울인
+   * 그 장은 두 문턱(`data/upgrades.ts`) 중 ②에서 걸린다 — 아래 줄이 그 값이다.
+   * 벌리는 폭이 얕고(10m 밖 43.7% → 50.1% · 겨우 6.4%p) 그 얕은 폭의 값이
+   * **한 판의 절반**이다(145 → 76초 · 레벨 13.7 → 4.7). 자세한 것은 `upgrades.ts` 머리말에 적었다.
+   */
+  const kite =
+    (keep: number) =>
+    (world: World): FrameInput => {
+      let best: (typeof world.enemies)[number] | null = null;
+      let bestDist = Infinity;
+      for (const e of world.enemies) {
+        if (!e.alive) continue;
+        const d = Math.hypot(e.pos.x - world.player.pos.x, e.pos.y - world.player.pos.y);
+        if (d < bestDist) {
+          bestDist = d;
+          best = e;
+        }
+      }
+      if (!best || bestDist >= keep) return walkToNearestCore(world);
+      let mx = (world.player.pos.x - best.pos.x) / bestDist;
+      let my = (world.player.pos.y - best.pos.y) / bestDist;
+      const r = Math.hypot(world.player.pos.x, world.player.pos.y);
+      if (r > ARENA.radius - 3) {
+        const nx = world.player.pos.x / r;
+        const ny = world.player.pos.y / r;
+        if (mx * nx + my * ny > 0) {
+          const sign = mx * -ny + my * nx >= 0 ? 1 : -1;
+          mx = -ny * sign;
+          my = nx * sign;
+        }
+      }
+      return { move: { x: mx, y: my }, aim: null };
+    };
+
   const PEOPLE = [
     { name: '걷는 사람', input: walkToNearestCore },
     { name: '도는 사람', input: backOffBomber(circleShield) },
     { name: '파고드는 사람', input: backOffBomber(dive(5)) },
+    { name: '물러나는 사람', input: kite(10) },
+    { name: '멀리 서는 사람', input: kite(14) },
     /**
      * **손을 안 대는 같은 사람을 안뜰에 세운 줄**(세션 66). 위 셋은 전부 빈 뜰이다 —
      * 사람이 바뀔 때 이 값이 얼마나 움직이는지는 그 셋이 말하고, 이 줄은 **맵이 바뀔 때**를
@@ -204,6 +257,13 @@ describe('나와 적 사이의 거리', () => {
       const gaps: number[] = [];
       let hits = 0;
       let secs = 0;
+      // 거리만 재면 "누가 더 먼 데서 맞히는가"는 보이는데 **그 자리에 서는 값**이 안 보인다.
+      // 레벨·처치·경험치 출처를 같은 판에서 함께 세어, 한 줄 안에서 둘을 나란히 읽게 한다
+      // (세션 81 — 그 값이 먼 거리 카드를 닫았다). 판을 새로 돌리지 않으므로 공짜다.
+      let levels = 0;
+      let kills = 0;
+      let xpDrop = 0;
+      let xpAll = 0;
       for (let i = 0; i < 60; i += 1) {
         const world = new World({ seed: 20260909 + i, map: 'map' in person ? person.map : MAPS[0]! });
         for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
@@ -219,15 +279,24 @@ describe('나와 적 사이의 거리', () => {
         }
         hits += world.hits;
         secs += world.elapsed;
+        levels += world.progress.level;
+        kills += world.kills;
+        xpDrop += world.xpByOrigin.drop;
+        xpAll += world.xpByOrigin.ambient + world.xpByOrigin.drop;
       }
       gaps.sort((a, b) => a - b);
       const at = (p: number) => gaps[Math.floor(gaps.length * p)]!.toFixed(1);
       const within = (m: number) =>
         ((gaps.filter((g) => g <= m).length / gaps.length) * 100).toFixed(1);
+      const beyond = (m: number) =>
+        ((gaps.filter((g) => g > m).length / gaps.length) * 100).toFixed(1);
       console.log(
         `${person.name.padEnd(8)}: 맞힘 ${gaps.length}(hits ${hits}) · 한 판 ${(secs / 60).toFixed(0)}초 · ` +
+          `레벨 ${(levels / 60).toFixed(1)} · 처치 ${(kills / 60).toFixed(0)} · ` +
+          `경험치 전투 몫 ${((xpDrop / xpAll) * 100).toFixed(0)}% · ` +
           `중앙 ${at(0.5)}m · p25 ${at(0.25)} | 그 안에 든 맞힘 — 4m ${within(4)}% · ` +
-          `6m ${within(ARROW.pointBlankRange)}% · 8m ${within(8)}%`,
+          `6m ${within(ARROW.pointBlankRange)}% · 8m ${within(8)}% | 그 밖에 난 맞힘 — ` +
+          `10m ${beyond(10)}% · 12m ${beyond(12)}% · 14m ${beyond(14)}%`,
       );
     }
   });
