@@ -292,16 +292,18 @@ describe('안뜰 — 가림이 물러난 자리가 아니라 싸우는 자리에
    * 뜻이고, 실측은 112도다(고리를 11m로 당기면 144도 · 13m로 물리면 112도로 같다).
    * 요새 쪽 선(180도)은 바로 위 묶음이 네 맵 모두에 걸어 둔다 — 실측 136도.
    */
-  // **가림을 싸우는 자리(12m 고리) 안에 둔 맵은 셋이다** — 안뜰(기둥 넷) · 바위 뜰(바위 하나 ·
-  // 세션 72) · 잔돌 뜰(잔돌 아홉 · 세션 77). 셋은 같은 고리의 같은 자리에 서고 **개수만
-  // 다르다.** 앞의 둘은 넓이를 맞춰 한복판 가림이 112도와 그 절반인 56도이고(아래 '바위 뜰'
-  // 묶음이 그 반을 못 박는다), 잔돌 뜰은 **가림 각을 안뜰에 맞춰** 108도다
-  // (넓이를 맞추면 아홉은 요새가 된다 — 아래 '잔돌 뜰' 묶음이 그 초안을 잡는다).
+  // **가림을 싸우는 자리(12m 고리) 안에 둔 맵은 넷이다** — 안뜰(기둥 넷) · 바위 뜰(바위 하나 ·
+  // 세션 72) · 잔돌 뜰(잔돌 아홉 · 세션 77) · 섞인 뜰(하나 + 다섯 · 세션 78). 넷은 같은 고리의
+  // 같은 자리에 서고 **나눈 개수만 다르다.** 앞의 둘은 넓이를 맞춰 한복판 가림이 112도와
+  // 그 절반인 56도이고(아래 '바위 뜰' 묶음이 그 반을 못 박는다), 잔돌 뜰은 **가림 각을
+  // 안뜰에 맞춰** 108도다(넓이를 맞추면 아홉은 요새가 된다 — 아래 '잔돌 뜰' 묶음이 그
+  // 초안을 잡는다). 섞인 뜰은 그 폭을 두 반쪽에 반씩 나눠 116도다.
   // 나머지 셋은 가림을 전부 벽 앞에 두어 한복판이 0도다.
   const INSIDE = new Map([
     ['court', 90],
     ['boulder', 45],
     ['pebbles', 90],
+    ['mixed', 90],
   ]);
 
   it('가림을 싸우는 자리에 둔 셋만 한복판에서 가려진다 — 벽 앞에 둔 셋은 0도다', () => {
@@ -507,6 +509,151 @@ describe('잔돌 뜰 — 같은 각을 아홉으로 흩었다. 갈리는 것은 
       Math.hypot(first.x, first.y) + first.radius,
       '증원이 걸어 들어오는 고리에 돌이 닿는다',
     ).toBeLessThan(REINFORCE.spawnRadius - 2);
+  });
+});
+
+/**
+ * **섞인 뜰 — 고르지 않은 가림**(일곱째 맵 · 세션 78).
+ *
+ * 앞의 여섯은 한 맵 안에서 가림이 늘 고르다. 이 맵만 고리를 반으로 갈라 **같은 폭을
+ * 한쪽은 하나로, 한쪽은 다섯으로** 나눠 준다. 여기가 무너지면 — 두 반쪽의 폭이 갈리거나
+ * 바위·잔돌이 앞의 두 맵에서 가져온 자리를 벗어나면 — 이 맵의 수치를 안뜰·바위 뜰·
+ * 잔돌 뜰과 나란히 놓을 수 없게 되고, 갈린 값이 '나눈 개수' 때문인지 '폭' 때문인지
+ * 아무도 말할 수 없게 된다.
+ */
+describe('섞인 뜰 — 같은 폭을 반쪽마다 다르게 나눴다. 갈리는 것은 나눈 개수뿐이다', () => {
+  const mixedMap = findMap('mixed');
+  const courtMap = findMap('court');
+  const pebbleMap = findMap('pebbles');
+  const boulderMap = findMap('boulder');
+  const width = (obstacles: readonly Obstacle[]): number =>
+    obstacles.reduce((s, o) => s + 2 * o.radius, 0);
+  /** 바위 쪽 반(225~45도)과 잔돌 쪽 반(45~225도)으로 가른다. */
+  const half = (side: 'rock' | 'stones'): Obstacle[] =>
+    mixedMap.obstacles.filter((o) => {
+      const deg = ((Math.atan2(o.y, o.x) * 180) / Math.PI + 360) % 360;
+      const onStones = deg > 45 && deg < 225;
+      return side === 'stones' ? onStones : !onStones;
+    });
+
+  it('반쪽마다 하나와 다섯이고, 두 반쪽의 폭이 같고, 총합이 안뜰과 같다', () => {
+    expect(half('rock').length, '바위 쪽이 하나가 아니다').toBe(1);
+    expect(half('stones').length, '잔돌 쪽이 다섯이 아니다').toBe(5);
+    // 반쪽끼리 폭이 갈리면 이 맵이 묻는 것이 사라진다(`data/maps.ts`의 섞인 뜰 주석).
+    expect(width(half('rock')), '두 반쪽의 폭이 다르다').toBeCloseTo(width(half('stones')), 6);
+    expect(width(mixedMap.obstacles), '폭 총합이 안뜰과 다르다').toBeCloseTo(
+      width(courtMap.obstacles),
+      6,
+    );
+  });
+
+  it('바위는 바위 뜰의 그 바위이고, 잔돌은 잔돌 뜰의 자리에 선다 — 새로 고른 자리가 없다', () => {
+    const rock = half('rock')[0] as Obstacle;
+    expect(
+      boulderMap.obstacles.some((b) => Math.hypot(b.x - rock.x, b.y - rock.y) < 1e-9 && b.radius === rock.radius),
+      '바위가 바위 뜰의 그 바위가 아니다',
+    ).toBe(true);
+    for (const stone of half('stones'))
+      expect(
+        pebbleMap.obstacles.some((p) => Math.hypot(p.x - stone.x, p.y - stone.y) < 1e-9),
+        `잔돌 (${stone.x},${stone.y})이 잔돌 뜰의 자리 밖에 섰다`,
+      ).toBe(true);
+  });
+
+  it('한복판 가림이 안뜰과 같다 — 두 반쪽이 거의 같은 몫을 낸다', () => {
+    const mixed = cover({ x: 0, y: 0 }, mixedMap.obstacles);
+    const rock = cover({ x: 0, y: 0 }, half('rock'));
+    const stones = cover({ x: 0, y: 0 }, half('stones'));
+    console.log(
+      `  한복판 가림 — 섞인 뜰 ${mixed}도 (바위 쪽 ${rock} + 잔돌 쪽 ${stones}) · ` +
+        `안뜰 ${cover({ x: 0, y: 0 }, courtMap.obstacles)}도`,
+    );
+    // 실측 116도(56 + 60)와 112도. 각을 2도 칸으로 세므로 몇 칸의 어긋남만 허용한다.
+    expect(
+      Math.abs(mixed - cover({ x: 0, y: 0 }, courtMap.obstacles)),
+      '가림 각이 안뜰에서 멀어졌다',
+    ).toBeLessThanOrEqual(8);
+    expect(Math.abs(rock - stones), '한복판에서 두 반쪽의 몫이 갈린다').toBeLessThanOrEqual(8);
+  });
+
+  /**
+   * **이 맵이 있는 이유 전부가 여기 있다.**
+   * 한복판에서는 두 반쪽이 같은 몫을 내는데(위 검사), **여섯 걸음 걸어 나가면 갈린다** —
+   * 뭉친 가림은 다가갈수록 커지고(144도), 흩은 가림은 다가갈수록 사이가 벌어진다(84도).
+   * 고르게 세운 두 맵은 같은 걸음에서 두 쪽이 거의 같다. 여기가 무너지면 이 맵은
+   * 그냥 '조각 수가 여섯인 안뜰'이 된다.
+   *
+   * **시간이 아니라 각으로 재는 이유**는 이 파일 위 `cover`의 주석과 같고, 이 맵에서는
+   * 한 번 더 무겁다 — 사람을 한쪽에 묶어 두고 내/적 비를 재 보면 두 쪽의 차가 씨앗
+   * 블록마다 부호까지 뒤집힌다(`data/maps.ts`의 '접은 주장').
+   */
+  it('여섯 걸음 걸어 나가면 두 쪽이 갈린다 — 고르게 세운 두 맵은 안 갈린다', () => {
+    const at = (deg: number, r: number) => ({
+      x: Math.cos((deg * Math.PI) / 180) * r,
+      y: Math.sin((deg * Math.PI) / 180) * r,
+    });
+    const split = (map: ArenaMap, r: number): [number, number] => [
+      cover(at(315, r), map.obstacles),
+      cover(at(135, r), map.obstacles),
+    ];
+    for (const r of [0, 3, 6]) {
+      const [rock, stones] = split(mixedMap, r);
+      console.log(`  ${r}m — 섞인 뜰 바위 쪽 ${rock}도 · 잔돌 쪽 ${stones}도`);
+    }
+    const [rock6, stones6] = split(mixedMap, 6);
+    // 실측 144도와 84도.
+    expect(rock6 / stones6, '뭉친 쪽이 흩은 쪽보다 크게 가리지 않는다').toBeGreaterThan(1.5);
+    for (const even of [courtMap, pebbleMap]) {
+      const [a, b] = split(even, 6);
+      console.log(`  6m — (견줌) ${even.name} ${a}도 · ${b}도`);
+      // 실측 안뜰 104/104 · 잔돌 뜰 80/88. 고르게 세운 맵은 두 쪽이 같다.
+      expect(Math.max(a, b) / Math.min(a, b), `${even.id}가 두 쪽으로 갈린다`).toBeLessThan(1.5);
+    }
+  });
+
+  /**
+   * **고르지 않음은 새 축을 열지 않는다 — 판 전체를 걸어 다니며 재면 여전히 개수다.**
+   * 조각이 여섯인 이 맵은 넷(안뜰)과 아홉(잔돌 뜰) 사이에 정확히 든다.
+   * 씨앗 60판 × 세 블록에서 차례가 한 번도 안 바뀌었다(`data/maps.ts`의 표).
+   */
+  it('비가 넷과 아홉 사이에 든다 — 조각이 여섯이다 (씨앗 20개)', () => {
+    const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
+    const ratio = (map: ArenaMap): number => {
+      const runs = SEEDS.map((seed) => playMatch(seed, 600, walkToNearestCore, undefined, map));
+      const sum = (pick: (r: (typeof runs)[number]) => number) => runs.reduce((s, r) => s + pick(r), 0);
+      const mine = sum((r) => r.eatenMine) / sum((r) => r.hits + r.eatenMine);
+      const theirs = sum((r) => r.eatenTheirs) / sum((r) => r.enemyShots);
+      console.log(
+        `  ${map.name.padEnd(6)} 내 화살 먹힘 ${mine.toFixed(3)} · 적 화살 먹힘 ${theirs.toFixed(3)} · 비 ${(mine / theirs).toFixed(2)}`,
+      );
+      return mine / theirs;
+    };
+
+    // 실측 2.14 → 1.96 → 1.89(넷 · 여섯 · 아홉). 60판으로 늘리면 2.22 → 2.06 → 1.96이다.
+    const four = ratio(courtMap);
+    const six = ratio(mixedMap);
+    const nine = ratio(pebbleMap);
+    expect(six, '여섯이 넷보다 공평하지 않다').toBeLessThan(four);
+    expect(six, '여섯이 아홉보다 공평하다').toBeGreaterThan(nine);
+  });
+
+  it('돌 사이로 몸이 지나가고, 처음 선 적의 몸과 어긋난다', () => {
+    let narrowest = Infinity;
+    const rocks = mixedMap.obstacles;
+    for (let i = 0; i < rocks.length; i += 1)
+      for (let j = i + 1; j < rocks.length; j += 1) {
+        const a = rocks[i] as Obstacle;
+        const b = rocks[j] as Obstacle;
+        narrowest = Math.min(narrowest, Math.hypot(a.x - b.x, a.y - b.y) - a.radius - b.radius);
+      }
+    let tightest = Infinity;
+    for (const o of rocks)
+      for (const e of mixedMap.enemies)
+        tightest = Math.min(tightest, Math.hypot(e.x - o.x, e.y - o.y) - o.radius - ENEMY.radius);
+    console.log(`  기둥 사이 ${narrowest.toFixed(2)}m · 몸까지 여유 ${tightest.toFixed(2)}m`);
+    expect(narrowest, '기둥 사이가 몸 하나도 못 지나간다').toBeGreaterThan(PASSABLE);
+    // 실측 2.48m(방패병(-12,6)과 135도 잔돌). 안뜰·기둥 뜰의 가장 빠듯한 자리가 0.80m다.
+    expect(tightest, '처음 선 적의 몸이 기둥에 닿는다').toBeGreaterThan(0.8);
   });
 });
 
