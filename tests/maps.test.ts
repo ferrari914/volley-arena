@@ -292,16 +292,19 @@ describe('안뜰 — 가림이 물러난 자리가 아니라 싸우는 자리에
    * 뜻이고, 실측은 112도다(고리를 11m로 당기면 144도 · 13m로 물리면 112도로 같다).
    * 요새 쪽 선(180도)은 바로 위 묶음이 네 맵 모두에 걸어 둔다 — 실측 136도.
    */
-  // **가림을 싸우는 자리(12m 고리) 안에 둔 맵은 둘이다** — 안뜰(기둥 넷)과 바위 뜰(바위 하나 ·
-  // 세션 72). 둘은 같은 고리의 같은 자리에 같은 넓이를 두고 **개수만 다르고**, 그래서
-  // 한복판 가림도 112도와 그 절반인 56도다(아래 '바위 뜰' 묶음이 그 반을 못 박는다).
+  // **가림을 싸우는 자리(12m 고리) 안에 둔 맵은 셋이다** — 안뜰(기둥 넷) · 바위 뜰(바위 하나 ·
+  // 세션 72) · 잔돌 뜰(잔돌 아홉 · 세션 77). 셋은 같은 고리의 같은 자리에 서고 **개수만
+  // 다르다.** 앞의 둘은 넓이를 맞춰 한복판 가림이 112도와 그 절반인 56도이고(아래 '바위 뜰'
+  // 묶음이 그 반을 못 박는다), 잔돌 뜰은 **가림 각을 안뜰에 맞춰** 108도다
+  // (넓이를 맞추면 아홉은 요새가 된다 — 아래 '잔돌 뜰' 묶음이 그 초안을 잡는다).
   // 나머지 셋은 가림을 전부 벽 앞에 두어 한복판이 0도다.
   const INSIDE = new Map([
     ['court', 90],
     ['boulder', 45],
+    ['pebbles', 90],
   ]);
 
-  it('가림을 싸우는 자리에 둔 두 맵만 한복판에서 가려진다 — 벽 앞에 둔 셋은 0도다', () => {
+  it('가림을 싸우는 자리에 둔 셋만 한복판에서 가려진다 — 벽 앞에 둔 셋은 0도다', () => {
     for (const map of MAPS) {
       const center = cover({ x: 0, y: 0 }, map.obstacles);
       console.log(`  ${map.name.padEnd(6)} 한복판 가림 ${center}도`);
@@ -386,6 +389,124 @@ describe('바위 뜰 — 같은 넓이를 하나로 뭉쳤다. 갈리는 것은 
     }
     // 실측 3.47(기둥 뜰 1.79 · 그늘 뜰 2.47 · 안뜰 2.40).
     expect(boulder, '뭉친 가림이 적 화살도 함께 먹고 있다').toBeGreaterThan(3);
+  });
+});
+
+/**
+ * **잔돌 뜰 — 개수 축의 끝**(여섯째 맵 · 세션 77).
+ *
+ * 바위 뜰이 연 축('가림이 몇 개인가')의 반대쪽 끝이다: 하나 · 넷 · **아홉**.
+ * **다만 잣대가 하나 바뀌었고, 그 이유가 이 묶음의 절반이다** — 넓이를 맞춰 아홉으로
+ * 쪼개면 앞면의 폭이 √9 = 3배로 자라 **요새가 된다**(아래 '자에 이가 있다').
+ * 그래서 잔돌 뜰은 넓이 대신 **가림 각**을 안뜰에 맞춘다. 여기가 무너지면 이 맵과
+ * 안뜰을 나란히 놓을 수 없게 되고, 갈린 수치가 '개수' 때문인지 '가림' 때문인지
+ * 아무도 말할 수 없게 된다.
+ */
+describe('잔돌 뜰 — 같은 각을 아홉으로 흩었다. 갈리는 것은 개수뿐이다', () => {
+  const pebbleMap = findMap('pebbles');
+  const courtMap = findMap('court');
+  const width = (obstacles: readonly Obstacle[]): number =>
+    obstacles.reduce((s, o) => s + 2 * o.radius, 0);
+  const area = (obstacles: readonly Obstacle[]): number =>
+    obstacles.reduce((s, o) => s + Math.PI * o.radius * o.radius, 0);
+
+  it('잔돌이 아홉이고, 앞면의 폭 총합이 안뜰과 같고, 안뜰과 같은 고리에 선다', () => {
+    expect(pebbleMap.obstacles.length, '잔돌이 아홉이 아니다').toBe(9);
+    // 폭이 갈리면 가림 각이 갈리고, 그러면 이 맵이 묻는 것이 사라진다(`data/maps.ts`).
+    expect(width(pebbleMap.obstacles), '앞면의 폭 총합이 안뜰과 다르다').toBeCloseTo(
+      width(courtMap.obstacles),
+      6,
+    );
+    const ring = Math.hypot(
+      (courtMap.obstacles[0] as Obstacle).x,
+      (courtMap.obstacles[0] as Obstacle).y,
+    );
+    for (const rock of pebbleMap.obstacles)
+      expect(Math.hypot(rock.x, rock.y), '잔돌이 안뜰의 고리 밖에 섰다').toBeCloseTo(ring, 2);
+  });
+
+  it('폭을 맞추면 넓이는 개수로 나뉜다 — 고른 것이 아니라 기하다', () => {
+    // 폭이 같으면 돌 하나의 반지름은 4/9배이고, 넓이는 9 × (4/9)² = 4/9배가 된다.
+    const ratio = area(pebbleMap.obstacles) / area(courtMap.obstacles);
+    console.log(`  넓이 — 잔돌 뜰 / 안뜰 ${ratio.toFixed(3)} (4/9 = ${(4 / 9).toFixed(3)})`);
+    expect(ratio, '넓이가 안뜰의 4/9가 아니다').toBeCloseTo(4 / 9, 6);
+  });
+
+  it('한복판 가림이 안뜰과 같다 — 쪼갠 것은 넓이가 아니라 개수다', () => {
+    const nine = cover({ x: 0, y: 0 }, pebbleMap.obstacles);
+    const four = cover({ x: 0, y: 0 }, courtMap.obstacles);
+    console.log(`  한복판 가림 — 잔돌 뜰(아홉) ${nine}도 · 안뜰(넷) ${four}도`);
+    // 실측 108도와 112도. 각을 2도 칸으로 세므로 몇 칸의 어긋남만 허용한다.
+    expect(Math.abs(nine - four), '가림 각이 안뜰에서 멀어졌다').toBeLessThanOrEqual(8);
+  });
+
+  /**
+   * **자에 이가 있다 — 넓이를 맞추는 축은 여기서 끝난다.**
+   * 바위 뜰의 잣대(넓이를 맞춘다)로 아홉을 세우면 돌 하나가 r1.87이고, 앞면의 폭이
+   * √9 = 3배로 자라 **한복판 180도 · 가장 깊은 그늘 182도**가 된다. 위 '요새' 묶음이
+   * 그것을 잡는다. 이 검사는 **그 초안이 실제로 걸린다는 것**을 못 박아, 다음 사람이
+   * "넓이를 맞추면 되지 않나"를 다시 밟지 않게 한다.
+   */
+  it('넓이를 맞춰 아홉으로 쪼갠 초안은 요새가 된다 (버린 안)', () => {
+    const rejected = Array.from({ length: 9 }, (_, i) => {
+      const a = Math.PI / 12 + (i * Math.PI * 2) / 9;
+      return {
+        x: Math.cos(a) * 12,
+        y: Math.sin(a) * 12,
+        // 안뜰 넷의 넓이를 아홉으로 나눈 반지름: 5.6 / √9.
+        radius: 5.6 / 3,
+      };
+    });
+    const worst = deepestShade({ ...DEFAULT_MAP, obstacles: rejected });
+    console.log(
+      `  넓이를 맞춘 아홉 — 한복판 ${cover({ x: 0, y: 0 }, rejected)}도 · ` +
+        `가장 깊은 그늘 ${worst.deg}도 @(${worst.at.x},${worst.at.y})`,
+    );
+    expect(worst.deg, '넓이를 맞춘 아홉이 요새를 안 만든다').toBeGreaterThanOrEqual(180);
+  });
+
+  /**
+   * **흩은 가림은 둘을 함께 막는다.** 적은 안 보이면 보이는 자리로 걸어가는데
+   * (`systems/enemyAi.ts`의 `clearSightMove`), 잔돌은 비켜선 그 자리에 또 다른 돌이 든다.
+   * 내 화살이 먹히는 몫은 가림 각이 정하므로 안뜰과 같고(자동 조준은 기둥을 보지 않는다),
+   * **갈리는 것은 적 쪽 한 칸뿐이다.** 그래서 내/적 비가 개수를 따라 내려간다.
+   *
+   * **같은 고리에 선 셋 사이에서만 읽는다** — 벽 앞에 가림을 둔 두 맵은 적이 그 앞에 서서
+   * 쏘므로 비가 개수와 상관없이 굴러다닌다(기둥 뜰 1.70 · 그늘 뜰 2.80).
+   */
+  it('싸우는 자리에 선 셋만 놓으면 비가 개수를 따라 내려간다 (씨앗 20개)', () => {
+    const SEEDS = Array.from({ length: 20 }, (_, i) => 20260909 + i);
+    const ratio = (map: ArenaMap): number => {
+      const runs = SEEDS.map((seed) => playMatch(seed, 600, walkToNearestCore, undefined, map));
+      const sum = (pick: (r: (typeof runs)[number]) => number) => runs.reduce((s, r) => s + pick(r), 0);
+      const mine = sum((r) => r.eatenMine) / sum((r) => r.hits + r.eatenMine);
+      const theirs = sum((r) => r.eatenTheirs) / sum((r) => r.enemyShots);
+      console.log(
+        `  ${map.name.padEnd(6)} 내 화살 먹힘 ${mine.toFixed(3)} · 적 화살 먹힘 ${theirs.toFixed(3)} · 비 ${(mine / theirs).toFixed(2)}`,
+      );
+      return mine / theirs;
+    };
+
+    // 실측 3.04 → 2.14 → 1.89(하나 · 넷 · 아홉).
+    const one = ratio(findMap('boulder'));
+    const four = ratio(courtMap);
+    const nine = ratio(pebbleMap);
+    expect(four, '넷이 하나보다 공평하지 않다').toBeLessThan(one);
+    expect(nine, '아홉이 넷보다 공평하지 않다').toBeLessThan(four);
+    // 내 쪽은 가림 각이 정하므로 안뜰과 같이 간다 — 갈리는 것은 적 쪽이다.
+    expect(nine, '흩은 가림이 내 화살만 먹고 있다').toBeGreaterThan(1.5);
+  });
+
+  it('돌 사이로 몸이 지나가고, 증원이 걸어 들어오는 고리와 어긋난다', () => {
+    const rocks = pebbleMap.obstacles;
+    const first = rocks[0] as Obstacle;
+    const gap = Math.hypot(first.x - (rocks[1] as Obstacle).x, first.y - (rocks[1] as Obstacle).y) - 2 * first.radius;
+    console.log(`  돌 사이 ${gap.toFixed(2)}m · 바깥 끝 ${(Math.hypot(first.x, first.y) + first.radius).toFixed(2)}m`);
+    expect(gap, '돌 사이가 몸 하나도 못 지나간다').toBeGreaterThan(PASSABLE);
+    expect(
+      Math.hypot(first.x, first.y) + first.radius,
+      '증원이 걸어 들어오는 고리에 돌이 닿는다',
+    ).toBeLessThan(REINFORCE.spawnRadius - 2);
   });
 });
 
