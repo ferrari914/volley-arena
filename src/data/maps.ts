@@ -578,7 +578,7 @@ export const MAPS: readonly ArenaMap[] = [
   {
     id: 'mixed',
     name: '섞인 뜰',
-    blurb: '한쪽은 바위 하나, 한쪽은 잔돌 다섯. 다가가는 쪽마다 그늘이 다르다.',
+    blurb: '바위 하나와 잔돌 다섯. 다가가는 쪽마다 그늘이 다르다.',
     obstacles: MIXED,
     enemies: OPEN_LAYOUT,
   },
