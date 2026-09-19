@@ -4,10 +4,11 @@ import { UPGRADE_CARDS } from '../../src/data/upgrades';
 import { DEFAULT_MAP, MAPS, type ArenaMap } from '../../src/data/maps';
 import {
   backOffBomber,
-  circleShield,
-  dodgeCharger,
-  neverStandStill,
+  holdWhenIdle,
+  orbitShield,
   playMatch,
+  sidestepCharger,
+  stepOutOfLob,
   takeAny,
   walkToNearestCore,
 } from '../support/match';
@@ -93,27 +94,30 @@ const BLOCK = 120;
 const PEOPLE: readonly { name: string; input: (world: World) => FrameInput }[] = [
   { name: '걷는 사람', input: walkToNearestCore },
   /**
-   * **아래 둘은 `neverStandStill`로 한 겹 더 감싸 둔다**(세션 75 · 투석병).
-   * 세션 74가 `tests/progression.test.ts`의 같은 두 사람에게 씌운 그 겹인데
-   * **이 파일에는 안 씌워져서, 여기 두 줄이 조용히 투석병을 재고 있었다.**
+   * **아래 둘은 두 겹을 더 쓴다** — 돌이 떨어질 자리에서 비키고(`stepOutOfLob`),
+   * 갈 곳이 없는 프레임에는 적이 가까우면 멎은 채로 쏜다(`holdWhenIdle`).
    *
-   * 두 사람 다 코어가 다 떨어지면 발이 멎고(`walkToNearestCore`가 갈 곳을 못 찾는다),
-   * 그 몇 초가 **던지는 순간의 자리로 떨어지는 돌**에게는 전부다. 같은 480판을 씌우기 전과
-   * 뒤로 재면 이렇게 갈린다(맨 위 사람은 어느 쪽에서도 안 씌운다):
-   * | 150초 안에 쓰러진 판 | 걷는 사람 | 비키는 사람 | 도는 사람 |
+   * **세션 75~93에는 그 자리에 `neverStandStill` 한 겹이 있었다.** 그 겹은 같은 적
+   * (투석병)을 막으려고 **발이 멎는 프레임에 무조건 걷게** 한 것인데, 그 바람에
+   * **이 두 사람이 영영 멎지 못하는 사람**이 되어 있었다. 세션 93이 '멈춤' 카드를
+   * 여기서 재다 걸린 자리가 그것이다 — 뽑아도 못 쓰는 사람에게 물었으니
+   * 카드가 하는 일 대신 **카드가 한 장 더 있다는 것**만 찍혔다(위 표).
+   *
+   * 세션 94가 바꿔 달고 같은 480판을 다시 쟀다. **투석병을 더 잘 막으면서 꼬리도 줄었다:**
+   * | 480판 | 비키는 사람 | 도는 사람 | 돌 맞음 |
    * |---|---|---|---|
-   * | 여섯(투석병 없음) · 안 씌움 | 32 | 2 | 6 |
-   * | 일곱(세운 그대로) · 안 씌움 | 51 | 8 | **25** |
-   * | 일곱(세운 그대로) · 씌움 | 51 | 7 | **19** |
-   * | 일곱(세션 75의 값) · 씌움 | 41 | 1 | 16 |
-   * **씌우지 않으면 아래 ②(답을 아는 사람의 꼬리는 절반 아래)가 게임이 아니라 자의 빈
-   * 구멍을 잰다** — 도는 사람의 25 중 여섯 판은 방패병이 아니라 **멈춰 선 발**이 만든 값이고,
-   * 그 여섯 판이 ②를 1판 차(50 대 51)까지 몰아붙이고 있었다.
+   * | `neverStandStill` | 1 | 16 | 247 / 9533발 (2.6%) |
+   * | `stepOutOfLob`만 | 2 | 13 | 11 / 9513발 (0.1%) |
+   * | **지금 (`stepOutOfLob` + `holdWhenIdle`)** | **0** | **9** | 11 / 9466발 (0.1%) |
+   *
+   * **멎는 것을 더 넓히면 무너진다.** 코어를 두고서까지 멎는 사람으로 바꾸면(8m)
+   * 꼬리가 173·129판이 된다 — 표와 까닭은 `tests/support/match.ts`의 `holdWhenIdle`에 있다.
+   *
    * 맨 위 `걷는 사람`은 감싸지 않는다. 그 사람은 **아무 답도 모르는 사람**이고,
    * 이 표의 기준선은 전부 그 사람의 것이다(감싸면 세션 55부터의 표와 견줄 수 없다).
    */
-  { name: '비키는 사람', input: neverStandStill(backOffBomber(dodgeCharger)) },
-  { name: '도는 사람', input: neverStandStill(backOffBomber(circleShield)) },
+  { name: '비키는 사람', input: backOffBomber(sidestepCharger(stepOutOfLob(holdWhenIdle()))) },
+  { name: '도는 사람', input: backOffBomber(stepOutOfLob(orbitShield(holdWhenIdle()))) },
 ];
 
 /**

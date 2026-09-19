@@ -166,31 +166,42 @@ const ORBIT = 3.0;
 /** 이보다 멀면 도는 것이 손해다(m). `PLAYER.speed / d`가 `SHIELD.turnRate`와 같아지는 거리 9m. */
 const TURN_PARITY = PLAYER.speed / SHIELD.turnRate;
 
-export function circleShield(world: World): FrameInput {
-  const target = world.lockedEnemy;
-  if (!target || !target.alive || target.kind !== 'shield' || target.shieldHp <= 0)
-    return walkToNearestCore(world);
+export function orbitShield(
+  inner: (world: World) => FrameInput = walkToNearestCore,
+): (world: World) => FrameInput {
+  return (world) => {
+    const target = world.lockedEnemy;
+    if (!target || !target.alive || target.kind !== 'shield' || target.shieldHp <= 0)
+      return inner(world);
 
-  const dx = world.player.pos.x - target.pos.x;
-  const dy = world.player.pos.y - target.pos.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist < 1e-6) return walkToNearestCore(world);
+    const dx = world.player.pos.x - target.pos.x;
+    const dy = world.player.pos.y - target.pos.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1e-6) return inner(world);
 
-  // 적이 보는 방향에서 내가 몇 도나 비켜 서 있는가. `blocksArrow`가 재는 것과 같은 각이다.
-  const offset = wrapAngle(Math.atan2(dy, dx) - target.facing);
-  const sign = offset >= 0 ? 1 : -1;
-  // 도는 몫과 붙는 몫을 더해 정규화한다. 멀리서 도는 것은 손해라 `TURN_PARITY` 밖에서는
-  // 도는 몫이 0이 되어 곧장 파고들고, 붙고 나면 도는 몫만 남는다.
-  const turn = clamp((TURN_PARITY - dist) / 2, 0, 1);
-  const pull = clamp((dist - ORBIT) / 2, -1, 1);
-  const move = {
-    x: (-dy / dist) * sign * turn - (dx / dist) * pull,
-    y: (dx / dist) * sign * turn - (dy / dist) * pull,
+    // 적이 보는 방향에서 내가 몇 도나 비켜 서 있는가. `blocksArrow`가 재는 것과 같은 각이다.
+    const offset = wrapAngle(Math.atan2(dy, dx) - target.facing);
+    const sign = offset >= 0 ? 1 : -1;
+    // 도는 몫과 붙는 몫을 더해 정규화한다. 멀리서 도는 것은 손해라 `TURN_PARITY` 밖에서는
+    // 도는 몫이 0이 되어 곧장 파고들고, 붙고 나면 도는 몫만 남는다.
+    const turn = clamp((TURN_PARITY - dist) / 2, 0, 1);
+    const pull = clamp((dist - ORBIT) / 2, -1, 1);
+    const move = {
+      x: (-dy / dist) * sign * turn - (dx / dist) * pull,
+      y: (dx / dist) * sign * turn - (dy / dist) * pull,
+    };
+    const len = Math.hypot(move.x, move.y);
+    if (len < 1e-6) return inner(world);
+    return { move: { x: move.x / len, y: move.y / len }, aim: null };
   };
-  const len = Math.hypot(move.x, move.y);
-  if (len < 1e-6) return walkToNearestCore(world);
-  return { move: { x: move.x / len, y: move.y / len }, aim: null };
 }
+
+/**
+ * 돌 일이 없는 프레임에는 코어를 보고 걷는 사람. **지금까지의 `circleShield`와 같은
+ * 사람이고 같은 값을 낸다** — 감쌀 수 있게 한 겹으로 갈랐을 뿐이다
+ * (`dodgeCharger`가 `sidestepCharger`에서 갈라져 나온 것과 같은 문법).
+ */
+export const circleShield = orbitShield();
 
 /**
  * 터질 원에서 걸어 나가는 사람. 물러날 일이 없는 프레임에는 `inner`가 걷는다.
@@ -235,31 +246,149 @@ export function backOffBomber(
 }
 
 /**
- * **손을 놓지 않는 사람**(DESIGN 9번 · 투석병). `backOffBomber`와 같은 자리다 —
- * 새 적이 들어오면 재는 사람도 그 답을 알아야 한다. 모르는 사람만으로 재면
- * **게임이 어려워진 것과 자가 눈을 감고 있는 것이 구별되지 않는다**(세션 51이 폭탄병에서 밟았다).
+ * **떨어질 돌의 원에서 걸어 나가는 사람**(DESIGN 9번 · 투석병). 나갈 일이 없는 프레임에는
+ * `inner`가 걷는다 — `backOffBomber`와 같은 문법이고, 보는 것도 화면에 있는 것뿐이다
+ * (떨어질 자리에 원이 그려져 있다 · `entities/types.ts`의 `Lob`).
  *
- * **이 적의 답은 방향이 아니라 멈추지 않는 것이다.** 돌은 던지는 순간의 내 자리로 떨어지므로
- * (`systems/enemyAi.ts`의 `landingPoint`) 한 발짝만 걸어 나가면 어느 쪽이든 빗나가고,
- * 서 있으면 반드시 맞는다. 그래서 감싸는 것이 "비킨다"가 아니라 **"멈추지 않는다"**다.
+ * **`neverStandStill`과 같은 적의 답인데, 답하는 방식이 다르다.** 저쪽은 "무슨 일이 있어도
+ * 발을 떼라"이고 이쪽은 "떨어질 자리에서만 비켜라"다. 저쪽이 먼저 생긴 까닭은 세션 74가
+ * 급히 막아야 했던 것이 **발이 멎는 몇 초**였기 때문인데, 그 대가로 **재는 사람이 영영 멎지
+ * 못하게 됐다** — 세션 93이 멈춤 카드를 재다 걸린 자리가 그것이다(`tests/perf/tail.perf.ts`
+ * 머리말). 이 한 겹은 같은 적을 막으면서 그 대가를 치르지 않는다.
  *
- * **왜 이 한 겹이 필요한가 — 재서 알았다(세션 74).** 비키는 사람도 도는 사람도 코어가
- * 다 떨어진 순간에는 발이 멎는다(`walkToNearestCore`가 갈 곳을 못 찾는다). 그 몇 초가
- * 이 적에게는 전부라, 감싸기 전 그 둘의 꼬리가 0 → 5판으로 늘었다 —
- * **돌진형을 재던 자가 조용히 투석병을 재고 있었던 것이다.**
- *
- * 갈 곳이 없을 때 한복판으로 걷는 이유: 벽 앞은 이 게임이 두 번 닫은 요새 자리이고
- * (`tests/maps.test.ts`의 '벽'), 한복판은 늘 갈 수 있는 한 곳이라 씨앗이 달라도 흔들리지 않는다.
+ * 세션 92가 `tests/perf/diag.perf.ts`에서 이 꼴로 먼저 썼고(멎는 사람의 `armed`),
+ * 세션 94가 재는 사람 모두가 쓰도록 여기로 옮겼다.
  */
-export function neverStandStill(
+export function stepOutOfLob(
+  inner: (world: World) => FrameInput = walkToNearestCore,
+): (world: World) => FrameInput {
+  return (world) => {
+    for (const lob of world.lobs) {
+      if (!lob.alive) continue;
+      const dx = world.player.pos.x - lob.to.x;
+      const dy = world.player.pos.y - lob.to.y;
+      const dist = Math.hypot(dx, dy);
+      // 이미 원 밖이다. 남은 비행 시간 동안 더 벌어질 만큼만 여유를 둔다(0.4m).
+      if (dist > lob.radius + 0.4) continue;
+      if (dist < 1e-6) return { move: { x: 1, y: 0 }, aim: null };
+      return { move: { x: dx / dist, y: dy / dist }, aim: null };
+    }
+    return inner(world);
+  };
+}
+
+/**
+ * **겹을 쌓는 순서는 급한 것부터다**(세션 94가 480판으로 재서 정했다).
+ * 위의 겹들은 제 일이 있는 프레임에만 움직이고 나머지는 `inner`에게 넘기므로,
+ * 두 적이 한 프레임에 겹치면 **바깥에 있는 겹이 이긴다.** 그래서 순서가 값이다.
+ *
+ * 순서: **`backOffBomber` → `sidestepCharger` → `stepOutOfLob` → 제 적 → `holdWhenIdle`.**
+ * 예고를 보고 빠져나가야 하는 시간이 그 차례다 — 심지 0.9초(2.0m를 걸어 나가야 한다) ·
+ * 몸을 던진 돌진형 0.5초(`CHARGER.dashTime`) · 떨어질 돌 1.1초(`LOBBER.flight`) ·
+ * 방패병은 급하지 않다(판이 도는 데 `SHIELD.turnRate` 0.8rad/s).
+ *
+ * 뒤집으면 뒤집은 쪽이 손해를 본다(같은 480판 · 150초에서 끊는다):
+ * | | 비키는 사람 몸통 | 비키는 사람 돌 맞음 | 도는 사람 꼬리 | 도는 사람 돌 맞음 |
+ * |---|---|---|---|---|
+ * | **위 순서** | **31** | 32 | **9** | **12** |
+ * | 돌을 돌진형보다 위에 | 61 | 11 | 9 | 12 |
+ * | 돌을 방패병보다 아래에 | 31 | 32 | **19** | **43** |
+ * 곧 `stepOutOfLob`은 **제자리에 묶는 겹**(돌기·멎기)보다는 위에, **더 급한 겹**(돌진형)보다는
+ * 아래에 둔다. 두 자리 다 실측에서 나온 것이고, 어느 한쪽만 맞추면 다른 쪽이 운다.
+ */
+/** `holdNearEnemy`가 멎는 거리(m). 벼랑(9m) 바로 앞이다 — 아래 주석의 표를 보라. */
+export const HOLD_RANGE = 8;
+
+/**
+ * **산 적이 `range`m 안에 있으면 발을 멈추고 쏘는 사람.** 아무도 없으면 `inner`가 걷는다.
+ *
+ * 왜 재는 사람에게 이것이 필요한가 — **자가 카드의 답을 모르면 그 카드를 잴 수 없다.**
+ * 이 파일의 답을 아는 사람들은 적의 답만 알고 있었다(비키기 · 돌기 · 물러나기 · 안 멎기).
+ * 그런데 "발을 멈추는 것"으로 값을 내는 카드가 나오면, 그 사람들은 **그 장을 뽑아도 영영
+ * 못 쓰는 사람**이라 카드가 하는 일 대신 **카드가 한 장 더 있다는 것**만 재게 된다
+ * (세션 93이 480판 표 셋으로 그것을 봤다). 세션 75가 투석병에서 메운 구멍과 같은 구멍이다.
+ *
+ * **8m라는 선은 적이 정한 수다.** 세션 92가 멎는 선을 여덟 자리 재서 **벼랑이 8 → 9m
+ * 사이에 있는 것**을 찾았다(`diag.perf.ts`의 '맞는 순간 내 발이 멎어 있었는가'):
+ * 8m에서 멎는 사람은 한 판 143초 · 레벨 13.6으로 걷는 사람(145초 · 14.0)과 같은데,
+ * 9m에서 멎으면 108초로 무너진다. 그 선이 활잡이가 물러서는 거리다(`ARCHER.keepDistance`).
+ *
+ * **혼자서는 쓰지 마라.** 서 있는 사람은 떨어지는 돌과 터지는 심지와 달려드는 몸에
+ * 반드시 맞는다. 그 셋을 감싼 뒤 맨 안쪽에 두는 자리다 —
+ * `backOffBomber(sidestepCharger(stepOutOfLob(holdNearEnemy())))`.
+ */
+export function holdNearEnemy(
+  /** 이 안에 산 적이 있으면 멎는다(m). 기본값은 세션 92가 잰 벼랑 바로 앞이다. */
+  range = HOLD_RANGE,
+  inner: (world: World) => FrameInput = walkToNearestCore,
+): (world: World) => FrameInput {
+  return (world) => {
+    for (const enemy of world.enemies) {
+      if (!enemy.alive) continue;
+      const dx = enemy.pos.x - world.player.pos.x;
+      const dy = enemy.pos.y - world.player.pos.y;
+      if (dx * dx + dy * dy <= range * range) return IDLE;
+    }
+    return inner(world);
+  };
+}
+
+/**
+ * **갈 곳이 없을 때 어떻게 설 것인가.** `inner`가 갈 곳을 찾은 프레임에는 아무것도 하지 않고,
+ * 발이 멎는 프레임에만 셋 중 하나를 고른다 — 적이 `range`m 안에 있으면 **멎은 채로 쏘고**,
+ * 아니면 한복판으로 걷는다. 맨 안쪽에 두는 겹이다.
+ *
+ * **이 겹이 세션 74의 `neverStandStill`을 대신한다**(세션 94). 그 겹은 발이 멎는 프레임에
+ * **무조건 걷게** 했다 — 투석병의 돌이 던지는 순간의 내 자리로 떨어지므로 서 있으면 반드시
+ * 맞기 때문이다(세션 74에 재는 사람 둘의 꼬리가 0 → 5판으로 늘었다). 막은 것은 맞는데
+ * **대가가 있었다: 재는 사람이 영영 멎지 못하게 됐다.** 그래서 세션 93이 '멈춤' 카드
+ * (멎은 채 쏘면 더 깎는다)를 480판으로 쟀을 때, 답을 아는 사람들은 그 장을 뽑아도 못 쓰는
+ * 사람이라 **카드가 하는 일 대신 카드가 한 장 더 있다는 것만** 재고 있었다.
+ *
+ * 돌은 이제 `stepOutOfLob`이 막는다. 그쪽이 더 잘 막는다 — 같은 480판에서:
+ *
+ * | 480판 · 150초에서 끊는다 | 비키는 사람 꼬리 | 도는 사람 꼬리 | 돌 맞음 |
+ * |---|---|---|---|
+ * | `neverStandStill` (세션 75~93) | 1 | 16 | 247 / 9533발 (2.6%) |
+ * | `stepOutOfLob`만 | 2 | 13 | **11 / 9513발 (0.1%)** |
+ * | `stepOutOfLob` + 이 겹 (지금) | **0** | **9** | 11 / 9466발 (0.1%) |
+ *
+ * **왜 "멎는 프레임에만"인가 — 늘 멎는 사람은 무너진다.** 같은 480판으로 `holdNearEnemy`를
+ * 맨 안쪽에 그대로 두고(곧 적이 가까우면 코어를 두고 멎는 사람) 재면 이렇게 된다:
+ *
+ * | 늘 멎는 선 | 비키는 사람 꼬리 | 도는 사람 꼬리 | 적 화살 맞은 비 | 한 판 |
+ * |---|---|---|---|---|
+ * | 멎지 않는다(위 표 셋째 줄) | 0 | 9 | 11.8~14.4% | 150.0 / 149.4초 |
+ * | 4m | 1 | 40 | 12.3~14.5% | 149.9 / 147.0초 |
+ * | 6m | 11 | **66** | 13.9~16.2% | 149.6 / 143.7초 |
+ * | **8m** | **173 (36%)** | **129 (27%)** | **18.5~25.4%** | 139.8 / 135.9초 |
+ *
+ * **세션 92가 "8m에서 멎는 것은 공짜다"라고 읽은 그 자리다**(`tests/perf/diag.perf.ts`의
+ * '맞는 순간 내 발이 멎어 있었는가' · 한 판 143초 대 145초 · 레벨 13.6 대 14.0).
+ * 그 표는 **150초에서 끊는 평균**으로 읽은 것이고, 평균은 꼬리를 거의 못 본다
+ * (`tests/perf/tail.perf.ts` 머리말이 세션 66의 같은 오독을 정정한 그 이야기다).
+ * 꼬리로 보면 8m는 공짜가 아니라 **이 자가 잰 것 중 가장 비싼 값**이다.
+ */
+export function holdWhenIdle(
+  /** 이 안에 산 적이 있으면 멎은 채로 쏜다(m). */
+  range = HOLD_RANGE,
   inner: (world: World) => FrameInput = walkToNearestCore,
 ): (world: World) => FrameInput {
   return (world) => {
     const input = inner(world);
     if (Math.hypot(input.move.x, input.move.y) > 0.01) return input;
+    // 여기부터는 `inner`가 갈 곳을 못 찾은 프레임이다(코어가 다 떨어진 몇 초).
+    // 적이 가까우면 그대로 멎어 선다 — 그 자리가 `holdNearEnemy`가 재는 자리와 같다.
+    for (const enemy of world.enemies) {
+      if (!enemy.alive) continue;
+      const dx = enemy.pos.x - world.player.pos.x;
+      const dy = enemy.pos.y - world.player.pos.y;
+      if (dx * dx + dy * dy <= range * range) return input;
+    }
     const { x, y } = world.player.pos;
     const away = Math.hypot(x, y);
     // 한복판에 서 있으면 어느 쪽이든 좋다. 한 방향을 정해 두어야 판이 씨앗마다 같아진다.
+    // 벽 앞은 이 게임이 두 번 닫은 요새 자리라 피한다(`tests/maps.test.ts`의 '벽').
     if (away < 0.5) return { move: { x: 1, y: 0 }, aim: input.aim };
     return { move: { x: -x / away, y: -y / away }, aim: input.aim };
   };
@@ -284,6 +413,14 @@ export interface MatchResult {
    */
   blastsFired: number;
   blastHits: number;
+  /**
+   * 투석병이 던진 돌의 수와, 그중 내 몸에 떨어진 수(DESIGN 9번).
+   * **한 쌍이라야 뜻이 있다** — 던진 수는 "얼마나 던지게 뒀는가", 맞은 수는 "비켰는가"다
+   * (`blastsFired`/`blastHits`와 같은 짝). 재는 사람의 발을 바꾸는 바퀴는 이 쌍을 보고
+   * **그 사람이 아직 이 적의 답을 알고 있는지** 확인한다(세션 94).
+   */
+  lobsThrown: number;
+  lobHits: number;
   /** 방패병의 판에 막힌 내 화살의 수. `shieldBodyHits`와 짝을 이뤄야 뜻이 있다. */
   blocked: number;
   /**
@@ -353,6 +490,8 @@ export function playMatch(
     bodyHits: world.bodyHits,
     blastsFired: world.blastsFired,
     blastHits: world.blastHits,
+    lobsThrown: world.lobsThrown,
+    lobHits: world.lobHits,
     blocked: world.blockedShots,
     shieldBodyHits: world.shieldBodyHits,
     hits: world.hits,

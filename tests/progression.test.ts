@@ -9,12 +9,14 @@ import {
   IDLE,
   backOffBomber,
   circleShield,
-  dodgeCharger,
   median,
   play,
   playMatch,
   preferPower,
-  neverStandStill,
+  holdWhenIdle,
+  orbitShield,
+  sidestepCharger,
+  stepOutOfLob,
   quantile,
   walkToNearestCore,
 } from './support/match';
@@ -319,6 +321,19 @@ const LONGEST = 330;
 /** 판이 영영 안 끝나는 고장을 잡는 선(초). 흔들리는 극단값이라 관측된 최악보다 한참 위에 둔다. */
 const RUNAWAY = 480;
 /**
+ * **답을 아는 사람 둘의 발.** 네 겹을 같은 순서로 쌓는다 — 터질 원에서 물러나고
+ * (`backOffBomber`), 떨어질 돌에서 비키고(`stepOutOfLob`), 저마다의 적을 상대하고
+ * (`sidestepCharger` · `orbitShield`), 갈 곳이 없으면 적이 가까울 때만 멎는다
+ * (`holdWhenIdle`). `tests/perf/tail.perf.ts`·`balance.perf.ts`의 같은 두 사람과 같은 발이다 —
+ * **세 파일이 같은 자를 써야 세 표를 나란히 놓을 수 있다.**
+ *
+ * **세션 75~93에는 맨 바깥에 `neverStandStill` 한 겹이 있었다**(세션 74 · 투석병).
+ * 세션 94가 바꿔 달았다. 까닭과 480판 표는 `tests/support/match.ts`의 `holdWhenIdle`에 있다.
+ */
+const DODGING = backOffBomber(sidestepCharger(stepOutOfLob(holdWhenIdle())));
+const CIRCLING = backOffBomber(stepOutOfLob(orbitShield(holdWhenIdle())));
+
+/**
  * 예고를 보고 비키는 사람의 같은 스무 판(세션 18). 두 번째 자다 —
  * 한 사람만 재면 버릇을 게임으로 오해한다.
  *
@@ -337,11 +352,9 @@ const RUNAWAY = 480;
  * 맨 앞의 `results`(코어만 보고 걷는 사람)는 그대로 둔다 — 그 사람은 **아무 답도 모르는 사람**이고,
  * 3~5분 선은 그 사람으로 재는 것이 이 파일의 규칙이다.
  */
-const dodged = SEEDS.map((seed) => playMatch(seed, 600, neverStandStill(backOffBomber(dodgeCharger))));
+const dodged = SEEDS.map((seed) => playMatch(seed, 600, DODGING));
 /** 방패병을 옆구리로 돌고 터질 원에서는 물러나는 사람의 같은 스무 판(세션 24·51). 세 번째 자다. */
-const circled = SEEDS.map((seed) =>
-  playMatch(seed, 600, neverStandStill(backOffBomber(circleShield))),
-);
+const circled = SEEDS.map((seed) => playMatch(seed, 600, CIRCLING));
 
 /**
  * **아래쪽 꼬리를 재는 자 (세션 53). 씨앗 스무 개로는 못 잰다.**
@@ -541,14 +554,17 @@ describe('밸런스 — 예고를 보고 비키면 몸에 닿지 않는다 (DESI
     );
     // 맞는 사람이 없으면 비교가 뜻이 없다. 돌진형이 순해진 것도 여기서 걸린다.
     expect(plain, '안 비키는 사람이 몸통에 거의 맞지 않는다').toBeGreaterThanOrEqual(4);
-    // 실측 12대 → 0대. 4배는 넉넉히 잡은 선이다.
+    // 실측 31대 → 7대(세션 94까지는 31 → 0). **4배가 더 이상 넉넉하지 않다 — 28 ≤ 31이다.**
+    // 늘어난 까닭은 돌진형이 세진 것이 아니라 비키는 사람이 **돌도 피하게** 된 것이다
+    // (`stepOutOfLob` · 세션 94). 한 프레임에 둘이 겹치면 하나만 할 수 있다.
+    // 여기가 울면 먼저 볼 것은 `tests/support/match.ts`의 겹 쌓는 순서다.
     expect(smart * 4, `비키는 사람 ${smart}대 · 안 비키는 사람 ${plain}대`).toBeLessThanOrEqual(
       plain,
     );
   });
 
   it('아래쪽 꼬리는 게임의 성질이 아니라 안 비키는 버릇이다', () => {
-    const smart = shortMatches(neverStandStill(backOffBomber(dodgeCharger)));
+    const smart = shortMatches(DODGING);
     const lengths = dodged.map((r) => r.elapsed);
     console.log(
       `비키는 사람 — ${SHORTEST}초 안에 쓰러진 판 ${smart}/${TAIL_SEEDS.length}` +
@@ -557,7 +573,7 @@ describe('밸런스 — 예고를 보고 비키면 몸에 닿지 않는다 (DESI
     );
     // 견줄 꼬리가 없으면 비교가 뜻이 없다. 게임이 통째로 순해진 것도 여기서 걸린다.
     expect(plainTail, '안 비키는 사람에게도 아래쪽 꼬리가 없다').toBeGreaterThanOrEqual(6);
-    // 실측 16 → 0판. 같은 씨앗·같은 카드인데 아래쪽 꼬리만 사라진다.
+    // 실측 11 → 0판. 같은 씨앗·같은 카드인데 아래쪽 꼬리만 사라진다.
     expect(smart * 4, `비키는 사람 ${smart}판 · 안 비키는 사람 ${plainTail}판`).toBeLessThanOrEqual(
       plainTail,
     );
@@ -640,7 +656,7 @@ describe('밸런스 — 옆구리로 돌면 판이 뚫린다 (DESIGN 9번)', () 
   });
 
   it('아래쪽 꼬리는 게임의 성질이 아니라 돌 줄 모르는 버릇이다', () => {
-    const smart = shortMatches(neverStandStill(backOffBomber(circleShield)));
+    const smart = shortMatches(CIRCLING);
     const lengths = circled.map((r) => r.elapsed);
     console.log(
       `도는 사람 — ${SHORTEST}초 안에 쓰러진 판 ${smart}/${TAIL_SEEDS.length}` +
@@ -648,7 +664,7 @@ describe('밸런스 — 옆구리로 돌면 판이 뚫린다 (DESIGN 9번)', () 
         `막힘 ${circled.reduce((a, r) => a + r.blocked, 0)}발` +
         `(안 돌면 ${results.reduce((a, r) => a + r.blocked, 0)}발)`,
     );
-    // 위 묶음과 같은 자다(세션 18의 비키기와 같다). 실측 8 → 3판.
+    // 위 묶음과 같은 자다(세션 18의 비키기와 같다). 실측 11 → 3판.
     expect(plainTail, '안 도는 사람에게도 아래쪽 꼬리가 없다').toBeGreaterThanOrEqual(6);
     //
     // **×4에서 ×2로 물렸다 (세션 62). 이 자리의 ×4는 게임이 아니라 창문 하나의 운이었다.**

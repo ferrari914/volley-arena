@@ -5,9 +5,10 @@ import type { FrameInput } from '../../src/core/World';
 import {
   IDLE,
   backOffBomber,
-  circleShield,
   median,
-  neverStandStill,
+  holdWhenIdle,
+  orbitShield,
+  stepOutOfLob,
   play,
   playMatch,
   preferPower,
@@ -121,12 +122,16 @@ const walking = table(walkToNearestCore);
  * 그 사람으로 재면 방패병이 아니라 그 사람의 빈 구멍이 찍힌다.
  */
 /**
- * **`neverStandStill`을 한 겹 더 씌웠다**(세션 75 · 투석병). 세션 74가
- * `tests/progression.test.ts`에 씌운 그 겹이고, 까닭은 `tail.perf.ts`의 같은 자리에
- * 표와 함께 적어 두었다 — **코어가 떨어져 발이 멎는 몇 초를 투석병이 고스란히 가져간다.**
- * 그 겹이 없으면 아래 ①(먹힌 비율)이 방패병이 아니라 멈춰 선 발을 잰다.
+ * **투석병의 답을 두 겹으로 얹었다** — 돌이 떨어질 자리에서 비키고(`stepOutOfLob`),
+ * 갈 곳이 없는 프레임에는 적이 가까우면 멎은 채로 쏜다(`holdWhenIdle`).
+ * 그 겹이 없으면 아래 ①(먹힌 비율)이 방패병이 아니라 멈춰 선 발을 잰다 —
+ * **코어가 떨어져 발이 멎는 몇 초를 투석병이 고스란히 가져간다**(세션 74).
+ *
+ * 세션 75~93에는 여기에 `neverStandStill` 한 겹이 있었다. 바꿔 단 까닭과 480판 표는
+ * `tests/support/match.ts`의 `holdWhenIdle`에 있다(세션 94) — 요약하면 그 겹은
+ * 같은 적을 덜 막으면서 **재는 사람이 영영 멎지 못하게** 하고 있었다.
  */
-const circling = table(neverStandStill(backOffBomber(circleShield)));
+const circling = table(backOffBomber(stepOutOfLob(orbitShield(holdWhenIdle()))));
 
 describe(`밸런스 표 — 세 사람 × 씨앗 ${SEEDS.length}개`, () => {
   it('180판이 밸런스 선 안에 든다', () => {
