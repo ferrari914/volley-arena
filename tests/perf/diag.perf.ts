@@ -112,6 +112,18 @@ describe('적끼리의 거리', () => {
   it('쓰러지는 순간 곁에 누가 있었는가', () => {
     for (const walker of WALKERS) {
       const gaps: number[] = [];
+      /**
+       * **150초 안에 쓰러진 판.** 세션 95가 앞선 자 넷에 함께 박은 칸이다 — 위의 다른 칸이
+       * 전부 판을 다 더해 나눈 값이고, **150초에서 끊는 평균은 꼬리를 거의 못 본다**
+       * (`tests/perf/tail.perf.ts` 머리말). 같은 오독이 두 번 났다: 세션 66이 안뜰을
+       * 60판 평균(149 대 147초)으로 "한 판 길이가 그대로다"로 읽었는데 그 2초 안에
+       * 5.8 → 13.1%가 있었고, 세션 92가 8m에서 멎는 것을 60판 평균(143 대 145초)으로
+       * "공짜다"로 읽었는데 그 2초 안에 7/60 → 20/60이 있었다. 그래서 규칙이 아니라
+       * **칸**으로 만든다(PROMPT ⑥). 60·120판은 꼬리를 가르기에는 좁은 창문이므로
+       * (480판을 쓰는 까닭이 그것이다) **여기서 보이는 것은 몇 배로 갈리는 차이뿐이다** —
+       * 한둘 차이로 읽지 말고, 움직였으면 `tail.perf.ts`로 넘겨라.
+       */
+      let dead = 0;
       for (let i = 0; i < 120; i += 1) {
         const world = new World({ seed: 20260909 + i });
         for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
@@ -130,13 +142,15 @@ describe('적끼리의 거리', () => {
             if (Number.isFinite(best)) gaps.push(best);
           }
         }
+        if (world.defeated) dead += 1;
       }
       gaps.sort((a, b) => a - b);
       const at = (p: number) => gaps[Math.floor(gaps.length * p)]!.toFixed(1);
       const within = (m: number) => ((gaps.filter((g) => g <= m).length / gaps.length) * 100).toFixed(1);
       console.log(
         `${walker.name}: 처치 ${gaps.length} · 곁의 적까지 중앙 ${at(0.5)}m · p10 ${at(0.1)} · p25 ${at(0.25)} | ` +
-          `그 안에 든 처치 — 2.2m ${within(2.2)}% · 4.5m ${within(4.5)}% · 8m ${within(8)}%`,
+          `그 안에 든 처치 — 2.2m ${within(2.2)}% · 4.5m ${within(4.5)}% · 8m ${within(8)}% · ` +
+          `150초 안에 쓰러짐 ${dead}/120`,
       );
     }
   });
@@ -274,6 +288,8 @@ describe('나와 적 사이의 거리', () => {
       let kills = 0;
       let xpDrop = 0;
       let xpAll = 0;
+      // 150초 안에 쓰러진 판 — 위 '적끼리의 거리'의 주석을 보라(평균은 꼬리를 못 본다).
+      let dead = 0;
       for (let i = 0; i < 60; i += 1) {
         const world = new World({ seed: 20260909 + i, map: 'map' in person ? person.map : MAPS[0]! });
         for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
@@ -293,6 +309,7 @@ describe('나와 적 사이의 거리', () => {
         kills += world.kills;
         xpDrop += world.xpByOrigin.drop;
         xpAll += world.xpByOrigin.ambient + world.xpByOrigin.drop;
+        if (world.defeated) dead += 1;
       }
       gaps.sort((a, b) => a - b);
       const at = (p: number) => gaps[Math.floor(gaps.length * p)]!.toFixed(1);
@@ -303,6 +320,7 @@ describe('나와 적 사이의 거리', () => {
       console.log(
         `${person.name.padEnd(8)}: 맞힘 ${gaps.length}(hits ${hits}) · 한 판 ${(secs / 60).toFixed(0)}초 · ` +
           `레벨 ${(levels / 60).toFixed(1)} · 처치 ${(kills / 60).toFixed(0)} · ` +
+          `150초 안에 쓰러짐 ${dead}/60 · ` +
           `경험치 전투 몫 ${((xpDrop / xpAll) * 100).toFixed(0)}% · ` +
           `중앙 ${at(0.5)}m · p25 ${at(0.25)} | 그 안에 든 맞힘 — 4m ${within(4)}% · ` +
           `6m ${within(ARROW.pointBlankRange)}% · 8m ${within(8)}% | 그 밖에 난 맞힘 — ` +
@@ -401,6 +419,8 @@ describe('맞는 순간 적이 무엇을 하고 있었는가', () => {
       let onWindup = 0;
       let secs = 0;
       let kills = 0;
+      // 150초 안에 쓰러진 판 — 위 '적끼리의 거리'의 주석을 보라(평균은 꼬리를 못 본다).
+      let dead = 0;
       for (let i = 0; i < 60; i += 1) {
         const world = new World({ seed: 20260909 + i });
         for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
@@ -415,11 +435,13 @@ describe('맞는 순간 적이 무엇을 하고 있었는가', () => {
         }
         secs += world.elapsed;
         kills += world.kills;
+        if (world.defeated) dead += 1;
       }
       console.log(
         `${person.name}: 맞힘 ${hits} · 그중 겨누는 중 ${((onWindup / hits) * 100).toFixed(1)}% ` +
           `(${onWindup}) · 한 발 1씩 더 깎았다면 총피해 ${hits + onWindup} · ` +
-          `한 판 ${(secs / 60).toFixed(0)}초 · 처치 ${(kills / 60).toFixed(1)}`,
+          `한 판 ${(secs / 60).toFixed(0)}초 · 처치 ${(kills / 60).toFixed(1)} · ` +
+          `150초 안에 쓰러짐 ${dead}/60`,
       );
     }
   });
@@ -579,6 +601,8 @@ describe('맞는 순간 내가 어디에 서 있었는가', () => {
       const byKind = new Map<string, { hits: number; back: number }>();
       let secs = 0;
       let kills = 0;
+      // 150초 안에 쓰러진 판 — 위 '적끼리의 거리'의 주석을 보라(평균은 꼬리를 못 본다).
+      let dead = 0;
       for (let i = 0; i < 60; i += 1) {
         const world = new World({ seed: 20260909 + i });
         for (let t = 0; t < 60 * 150 && !world.defeated; t += 1) {
@@ -602,6 +626,7 @@ describe('맞는 순간 내가 어디에 서 있었는가', () => {
         }
         secs += world.elapsed;
         kills += world.kills;
+        if (world.defeated) dead += 1;
       }
       angles.sort((a, b) => a - b);
       const deg = (p: number) => (((angles[Math.floor(angles.length * p)]! * 180) / Math.PI)).toFixed(1);
@@ -613,7 +638,7 @@ describe('맞는 순간 내가 어디에 서 있었는가', () => {
           `p75 ${deg(0.75)}° · p90 ${deg(0.9)}° | 뒤 150°(방패의 거울) ${beyond(Math.PI - BACK)}% · ` +
           `뒤 90° ${beyond(Math.PI * 0.75)}% · 등 60° ${beyond((Math.PI * 5) / 6)}% | ` +
           `1씩 더 깎았다면 총피해 ${angles.length + back} · 한 판 ${(secs / 60).toFixed(0)}초 · ` +
-          `처치 ${(kills / 60).toFixed(1)}`,
+          `처치 ${(kills / 60).toFixed(1)} · 150초 안에 쓰러짐 ${dead}/60`,
       );
       console.log(
         `  종류별 뒤 150° — ` +
