@@ -29,5 +29,15 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     testTimeout: 300_000,
+
+    /**
+     * **세션 99가 그 '본 가장 느린 판'의 정체를 밝혔고, 그래서 선을 또 물리지 않았다.**
+     * 이번에 300초를 넘긴 945초짜리 바퀴는 바쁜 기계가 아니라 **잠든 기계**였다
+     * (945초 중 904초를 잤다 · 깨어 있던 41초는 평소와 같다). 벽시계로 그은 선은
+     * 잠든 시간을 막을 수 없으므로, 얼마로 물리든 배터리로 도는 한 또 넘어간다.
+     * 그래서 선은 그대로 두고 **까닭에 이름표를 붙이는 쪽**을 만들었다.
+     * 내력과 근거는 `tests/support/sleepWatch.ts`의 머리말에 있다.
+     */
+    globalSetup: ['./tests/support/sleepWatch.ts'],
   },
 });
