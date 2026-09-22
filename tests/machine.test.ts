@@ -6,7 +6,13 @@ import {
   measureCpuShare,
   verdictOf,
 } from './support/machine';
-import { describeSleep, lateBy } from './support/sleepWatch';
+import {
+  HEAVY_SHARE,
+  adviceFor,
+  describeSleep,
+  lateBy,
+  stallShare,
+} from './support/sleepWatch';
 
 /**
  * **이 파일은 게임을 재지 않는다. 이 검사를 돌리는 기계가 굶고 있는지를 잰다.**
@@ -91,5 +97,57 @@ describe('잠든 구멍을 세는 셈', () => {
     expect(describeSleep(945_000, 904_000)).toBe(
       '이 바퀴 동안 기계가 904초 멈춰 있었다. 벽시계 945초 중 실제로 일한 것은 41초다.',
     );
+  });
+
+  it('멈춘 몫은 벽시계에 견주어 세고, 벽시계가 0이어도 터지지 않는다', () => {
+    expect(stallShare(945_000, 904_000)).toBeCloseTo(0.9566, 4);
+    expect(stallShare(0, 0)).toBe(0);
+    // 마지막 박동 뒤의 구멍을 뒤늦게 더하다 보면 벽시계를 조금 넘길 수 있다. 1이 천장이다.
+    expect(stallShare(100, 200)).toBe(1);
+  });
+});
+
+/**
+ * **뭐라고 적어 주는지를 잰다.** 이 묶음이 있는 까닭은 세션 112가 겪은 고장이다 —
+ * 이 자가 "빨개진 검사를 따로 돌려 보라, 대개 통과한다"고 적어 두었는데,
+ * 잠이 98%인 바퀴에서는 따로 돌려도 또 빨개진다(실제로 35분을 더 써서 확인했다).
+ * 틀린 안내는 없는 안내보다 나쁘므로, **선 위아래로 말이 갈리는지를 검사로 박아 둔다.**
+ */
+describe('멈춘 기계에 뭐라고 적어 주는가', () => {
+  const joined = (wallMs: number, lostMs: number): string => adviceFor(wallMs, lostMs).join('\n');
+
+  it('더러 자는 바퀴에는 따로 돌려 보라고 적는다 (60초 중 30초)', () => {
+    const said = joined(60_000, 30_000);
+    expect(said).toContain('따로 돌려 보라');
+    expect(said).toContain('대개 통과한다');
+  });
+
+  it('거의 다 자는 바퀴에는 돌리기 전에 기계부터 보라고 적는다 (세션 112의 3191초 중 3142초)', () => {
+    const said = joined(3_191_000, 3_142_000);
+    expect(said).toContain('또 빨개진다');
+    expect(said).toContain('기계부터 보라');
+    expect(said).toContain('98.5%');
+    // 여기서 이 말이 나오면 다음 바퀴가 또 35분을 버린다.
+    expect(said).not.toContain('대개 통과한다');
+  });
+
+  it('세션 99의 바퀴(945초 중 904초)도 같은 쪽이다 — 그때 통과한 것은 운이었다', () => {
+    expect(joined(945_000, 904_000)).toContain('기계부터 보라');
+  });
+
+  it('따로 돌려 본 그 판(2089초 중 2041초)도 같은 쪽으로 갈린다', () => {
+    expect(joined(2_089_000, 2_041_000)).toContain('또 빨개진다');
+  });
+
+  it('선 위아래가 정확히 갈린다 (선이 흔들리면 이 자는 쓸모가 없다)', () => {
+    const wall = 1_000_000;
+    expect(joined(wall, wall * HEAVY_SHARE)).toContain('또 빨개진다');
+    expect(joined(wall, wall * HEAVY_SHARE - 1_000)).toContain('대개 통과한다');
+  });
+
+  it('어느 쪽이든 게임을 의심하지 말라는 말은 빠지지 않는다', () => {
+    for (const said of [joined(945_000, 904_000), joined(3_191_000, 3_142_000)]) {
+      expect(said).toContain('게임');
+    }
   });
 });
