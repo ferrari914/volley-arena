@@ -103,13 +103,21 @@ export function lastWakeBefore(spans, at) {
  * @param {{from:number, to:number, spans:Array<[number,number]>, since:number|null}} death
  */
 export function classifyDeath({ from, to, spans, since }) {
-  if (since === null || from < since) {
-    return { kind: 'unmeasured', share: null, slept: 0, wokeSecondsAgo: null };
-  }
+  const unmeasured = { kind: 'unmeasured', share: null, slept: 0, wokeSecondsAgo: null };
+  if (since === null || from < since) return unmeasured;
+
   const slept = sleptDuring(spans, from, to);
   const span = Math.max(1, to - from);
   const share = slept / span;
+  // 잔 것을 봤다면 그것으로 끝이다 — 본 것은 기록이 짧아도 본 것이다.
   if (share > ASLEEP_SHARE) return { kind: 'asleep', share, slept, wokeSecondsAgo: null };
+
+  // **여기서 "안 잤다"를 단정하려면 창 앞쪽도 보였어야 한다.**
+  // `pmset`의 기록은 며칠치만 남고 앞에서부터 지워진다. 기록이 시작된 직후에 죽은 바퀴는
+  // 직전에 깬 자국이 지워졌을 뿐인데, 그것을 "깨어 있었다"로 적으면 **없는 결백을 만들어 낸다.**
+  // 세션 113이 실제로 겪었다 — 같은 네 바퀴(#109~#112)가 10분 사이에 `깬 지 0.3분`에서
+  // `깨어 있었다`로 뒤집혔다. 코드도 로그도 안 바뀌었고 pmset의 앞머리만 지워졌다.
+  if (from - since < WAKE_GRACE_SECONDS * 1000) return unmeasured;
 
   const woke = lastWakeBefore(spans, from);
   const wokeSecondsAgo = woke === null ? null : (from - woke) / 1000;
