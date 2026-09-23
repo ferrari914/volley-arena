@@ -13,6 +13,12 @@ import {
   lateBy,
   stallShare,
 } from './support/sleepWatch';
+import {
+  describeMissing,
+  didRun,
+  missingModules,
+  shortName,
+} from './support/ranAll';
 
 /**
  * **이 파일은 게임을 재지 않는다. 이 검사를 돌리는 기계가 굶고 있는지를 잰다.**
@@ -149,5 +155,52 @@ describe('멈춘 기계에 뭐라고 적어 주는가', () => {
     for (const said of [joined(945_000, 904_000), joined(3_191_000, 3_142_000)]) {
       expect(said).toContain('게임');
     }
+  });
+});
+
+/**
+ * **안 돈 검사 파일을 세는 자** (세션 114 · 바퀴 #436).
+ * 여기도 판단과 재는 일을 나눴다 — 일꾼을 굶겨 파일을 못 열게 하는 상황은 손으로 만들 수
+ * 없으므로, **무슨 말을 적을지는 아래 손으로 박은 값이 보증한다.**
+ * 값은 지어낸 것이 아니라 바퀴 #436에서 실제로 본 것이다(18개 중 9개가 안 돌았다).
+ */
+describe('안 돈 검사 파일을 어떻게 세는가 (손으로 박은 값)', () => {
+  it('결과를 낸 것만 돌았다고 센다 — queued·pending은 열리지도 않은 것이다', () => {
+    expect(didRun('passed')).toBe(true);
+    expect(didRun('failed')).toBe(true);
+    expect(didRun('skipped')).toBe(true);
+    expect(didRun('queued')).toBe(false);
+    expect(didRun('pending')).toBe(false);
+  });
+
+  it('열기로 한 순서 그대로, 결과를 못 낸 것만 골라낸다', () => {
+    expect(missingModules(['a', 'b', 'c'], ['c', 'a'])).toEqual(['b']);
+    expect(missingModules(['a', 'b'], ['a', 'b'])).toEqual([]);
+  });
+
+  it('절대 경로에서 저장소 안 이름만 남긴다', () => {
+    expect(shortName('/Users/x/화살 게임 개발/tests/maps.test.ts')).toBe('tests/maps.test.ts');
+    // `tests/` 밖이면 마지막 두 칸만 남긴다 (자를 증명하며 실제로 겪은 경우다)
+    expect(shortName('/Users/x/화살 게임 개발/tmp-proof/bb.test.mjs')).toBe('tmp-proof/bb.test.mjs');
+    expect(shortName('가상/이름')).toBe('가상/이름');
+  });
+
+  it('다 돌았으면 아무 말도 하지 않는다', () => {
+    expect(describeMissing(['a', 'b'], ['a', 'b'])).toEqual([]);
+  });
+
+  it('바퀴 #436이 겪은 그 표에는 빠진 수와 빠진 이름이 함께 적힌다', () => {
+    const planned = Array.from({ length: 18 }, (_, i) => `/repo/tests/f${i}.test.ts`);
+    const ran = planned.slice(0, 9);
+    const said = describeMissing(planned, ran).join('\n');
+
+    expect(said).toContain('18개 중 9개가 아예 시작되지 못했다');
+    // 실제로 돈 수를 함께 적는다. vitest 표의 낱말을 인용하지는 않는다 —
+    // 같은 사건에서도 표는 '9 passed (9)'였다가 '1 failed (2)'였다(bail로 끊긴 경우).
+    expect(said).toContain('실제로 돈 것은 18개 중 9개다');
+    expect(said).toContain('tests/f9.test.ts');
+    expect(said).not.toContain('tests/f0.test.ts');
+    // 까닭을 여기서 새로 판정하지 않는다 — 잠 판정은 `[기계]` 줄의 몫이다.
+    expect(said).toContain('[기계]');
   });
 });
