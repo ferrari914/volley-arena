@@ -9,7 +9,8 @@
  *      Errors  9 errors
  * ```
  *
- * **이 저장소의 검사 파일은 18개이고 검사는 436개다.** 곧 절반이 안 돌았는데 표는
+ * **이 저장소의 검사 파일은 18개이고 검사는 453개였다**(이 자를 만들며 5개가 늘어 458개다).
+ * 곧 절반이 안 돌았는데 표는
  * "9 passed (9)"라고 적는다 — vitest는 **결과를 낸 파일만 세기** 때문이다. 안 돈 9개는
  * 실패로 세어지지 않고 `Unhandled Errors` 쪽에 `Failed to start forks worker ...
  * Timeout waiting for worker to respond`로 따로 쌓인다(그래서 종료 코드는 1이다).
