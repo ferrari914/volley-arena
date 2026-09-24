@@ -8,7 +8,7 @@ import {
   parseSleepSpans,
   sleptDuring,
 } from '../tools/lib/sleepSpans.mjs';
-import { OTHER, collectDeaths } from '../tools/lib/deathLog.mjs';
+import { KNOWN_OTHER, OTHER, collectDeaths, splitOther } from '../tools/lib/deathLog.mjs';
 
 /**
  * **죽은 바퀴를 낱말이 아니라 시각으로 되짚는 자**(`npm run deaths`의 둘째 표).
@@ -252,5 +252,77 @@ describe('낱말을 모르는 죽음도 표에 남는다 (세션 115가 박는�
       '  바퀴 #360 종료 (exit=0): 2026-09-22 16:52:44',
     ].join('\n');
     expect(collectDeaths(quoted, '2026-09-22')).toHaveLength(0);
+  });
+});
+
+describe('끝난 일이 계속 세어지지 않게 한다 (세션 116이 박는다)', () => {
+  /**
+   * 왜 이 묶음이 있는가: 세션 115가 `other` 칸을 만들면서 "0이 아니면 새 고장"이라는 읽는 법을
+   * 함께 남겼는데, **읽어서 이름을 적어도 로그의 그 줄은 지워지지 않는다.** 그래서 그 경보는
+   * 다음 바퀴부터 영원히 거짓으로 울리고, 세션 116은 그 울림 하나를 되짚는 데 바퀴 몫을 썼다.
+   * 여기서 지키는 것은 **"수"가 아니라 "새로 생긴 것이 있는가"가 판정이라는 것**이다.
+   */
+  const dead = (cycle, day, line) =>
+    [
+      `  바퀴 #${cycle}  시작: ${day} 01:00:00`,
+      '  모델: claude-opus-5 / 최대 턴: 80',
+      line,
+      '',
+      `  바퀴 #${cycle} 종료 (exit=1): ${day} 02:00:00`,
+    ].join('\n');
+
+  const 이미읽음 = KNOWN_OTHER[0];
+
+  it('이미 읽어 둔 죽음은 `known`으로 가고, 그때 `fresh`는 비어 있다', () => {
+    const deaths = collectDeaths(
+      dead(이미읽음.cycle, 이미읽음.day, 'API Error: Connection lost mid-response.'),
+      이미읽음.day,
+    );
+    const { fresh, known } = splitOther(deaths);
+    expect(known.map((d) => d.cycle)).toEqual([이미읽음.cycle]);
+    expect(fresh).toEqual([]); // 이 한 줄이 이 묶음의 요점이다
+  });
+
+  it('이름 없는 죽음이 하나라도 새로 생기면 `fresh`가 그것만 들고 온다', () => {
+    const log = [
+      dead(이미읽음.cycle, 이미읽음.day, 'API Error: Connection lost mid-response.'),
+      dead('777', 이미읽음.day, 'zsh: killed     claude -p'),
+    ].join('\n\n');
+    const { fresh, known } = splitOther(collectDeaths(log, 이미읽음.day));
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0]).toMatchObject({ cycle: '777', hint: 'zsh: killed     claude -p' });
+    expect(known).toHaveLength(1); // 새것이 떠도 이미 읽은 것을 새것으로 세지 않는다
+  });
+
+  it('바퀴 번호가 같아도 날짜가 다르면 아직 안 읽은 것이다 (번호는 날마다 돌지 않지만 로그는 갈린다)', () => {
+    const 딴날 = '2026-01-01';
+    const { fresh } = splitOther(
+      collectDeaths(dead(이미읽음.cycle, 딴날, 'API Error: 뭔지 모를 줄'), 딴날),
+    );
+    expect(fresh).toHaveLength(1);
+  });
+
+  it('이름이 있는 죽음은 아무리 많아도 이 셈에 들어오지 않는다', () => {
+    const named = [
+      dead('1', '2026-09-24', 'API Error: ... (ENOTFOUND)'),
+      dead('2', '2026-09-24', 'Your computer went to sleep mid-response'),
+      dead('3', '2026-09-24', 'API Error: 401 OAuth access token has expired.'),
+    ].join('\n\n');
+    const { fresh, known } = splitOther(collectDeaths(named, '2026-09-24'));
+    expect([...fresh, ...known]).toEqual([]);
+  });
+
+  it('로그에 없는 기준선 줄은 `stale`로 뜬다 — 기준선이 조용히 썩지 않게 하는 자다', () => {
+    const { stale } = splitOther([]); // 죽은 바퀴가 하나도 없는 로그
+    expect(stale).toEqual(KNOWN_OTHER);
+  });
+
+  it('기준선의 모든 줄이 무엇이었는지와 누가 읽었는지를 적고 있다', () => {
+    // 이름만 적고 까닭을 안 적으면 다음 바퀴가 또 로그를 뒤진다. 기준선의 값어치는 note에 있다.
+    for (const k of KNOWN_OTHER) {
+      expect(k.cycle).toMatch(/^\d+$/);
+      expect(k.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(k.note).toMatch(/세션 \d+/);
+    }
   });
 });

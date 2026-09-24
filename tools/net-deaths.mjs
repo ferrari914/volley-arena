@@ -17,12 +17,16 @@
  * ── 표에 빠지는 죽음은 없다 (세션 115)
  * `exit≠0`으로 닫힌 바퀴는 낱말이 안 맞아도 `other` 칸에 들어가고, 그때는 로그의 그 줄까지
  * 함께 찍는다. 예전 표는 아는 낱말 셋만 셌기 때문에 **다섯을 통째로 빠뜨리고 있었다.**
+ *
+ * ── `other` 칸의 수를 새 고장의 수로 읽지 마라 (세션 116)
+ * 읽어서 이름을 적어도 로그의 그 줄은 남으므로 칸은 줄지 않는다. **새로 생긴 것이 있는지는
+ * 표 아래 `⚠ 아직 이름이 없는 죽음` 줄만 보면 된다** — 그 줄이 없으면 없는 것이다.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { CAUSES, OTHER, collectDeaths } from './lib/deathLog.mjs';
+import { CAUSES, collectDeaths, splitOther } from './lib/deathLog.mjs';
 import { classifyDeath, describeVerdict, parseSleepSpans } from './lib/sleepSpans.mjs';
 
 const dir = join(process.cwd(), 'logs');
@@ -54,14 +58,32 @@ console.log(`  ${pad('─'.repeat(10), 12)}${CAUSES.map(() => num('──')).joi
 console.log(`  ${pad('합', 12)}${CAUSES.map((c) => num(totals[c.key])).join('  ')}\n`);
 for (const c of CAUSES) console.log(`  ${c.key} = ${c.label}: ${totals[c.key]}개`);
 
-// 낱말이 하나도 안 맞은 죽음. 여기 한 줄이라도 뜨면 **이 저장소가 아직 이름 붙이지 못한
-// 고장**이니, 로그를 뒤지지 말고 이 줄부터 읽어라(`tools/lib/deathLog.mjs`의 '빠짐 없이').
-const unknown = deaths.filter((d) => d.cause === OTHER);
-if (unknown.length > 0) {
-  console.log(`\n  까닭을 모르는 ${unknown.length}개 — 죽기 직전 로그에 찍힌 줄을 그대로 적는다:`);
-  for (const d of unknown) {
-    console.log(`    ${pad('#' + d.cycle, 7)}${pad(d.day, 12)}${d.hint ?? '(아무 줄도 없이 닫혔다)'}`);
-  }
+// 낱말이 하나도 안 맞은 죽음. **수가 아니라 `fresh`를 보라**(세션 116) — 한 번 읽어 이름을
+// 적어 둔 죽음도 로그에 남아 계속 세어지므로, 이 칸의 수는 새 고장의 수가 아니다.
+// 까닭은 `tools/lib/deathLog.mjs`의 `KNOWN_OTHER` 머리말에 있다.
+const { fresh, known, stale } = splitOther(deaths);
+const line = (d) => `    ${pad('#' + d.cycle, 7)}${pad(d.day, 12)}${d.hint ?? '(아무 줄도 없이 닫혔다)'}`;
+
+if (fresh.length > 0) {
+  console.log(`\n  ⚠ 아직 이름이 없는 죽음 ${fresh.length}개 — 로그를 뒤지지 말고 이 줄부터 읽어라:`);
+  for (const d of fresh) console.log(line(d));
+  console.log(
+    '    까닭을 STATUS에 적은 뒤 `tools/lib/deathLog.mjs`의 `KNOWN_OTHER`에 한 줄 더해라 —' +
+      ' 그래야 다음 바퀴가 같은 줄을 다시 읽지 않는다.',
+  );
+}
+
+if (known.length > 0) {
+  const verdict = fresh.length === 0 ? ' · 새로 생긴 것은 없다' : '';
+  console.log(`\n  까닭 모름 ${known.length}개는 이미 읽고 이름을 적어 둔 것이다${verdict}:`);
+  for (const d of known) console.log(line(d));
+}
+
+// 기준선이 조용히 썩는 것을 막는다 — 적어 둔 줄이 로그에서 사라졌으면 그것도 알려 준다.
+if (stale.length > 0) {
+  console.log(`\n  (KNOWN_OTHER에 적혀 있는데 지금 로그에 없는 줄 ${stale.length}개:`);
+  for (const k of stale) console.log(`    ${pad('#' + k.cycle, 7)}${pad(k.day, 12)}${k.note}`);
+  console.log('   로그가 지워졌으면 그 줄도 지워라 — 안 지우면 기준선이 뜻 없이 커진다)');
 }
 
 // ── 둘째 표: 그때 이 기계가 자고 있었나

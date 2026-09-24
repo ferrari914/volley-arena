@@ -51,13 +51,66 @@ export const CAUSES = [
   },
   {
     // 낱말이 없는 칸이다. `test`가 없으므로 아래 collectDeaths가 "아무 것도 안 맞은 죽음"을
-    // 여기로 몰아넣는다. 표에서 이 칸이 0이 아니면 **새 고장이 하나 생긴 것**이고,
-    // 그때 할 일은 로그를 뒤지는 것이 아니라 아래 hint에 찍힌 줄을 읽는 것이다.
+    // 여기로 몰아넣는다. **이 칸의 수를 새 고장의 수로 읽지 마라**(세션 116이 고친다):
+    // 한 번 읽어서 이름을 적어 둔 죽음도 로그에 그대로 남아 계속 세어진다. 새로 생긴 것만
+    // 가려내는 것은 아래 `KNOWN_OTHER`와 `splitOther`이고, 그때 읽을 것은 `hint`에 찍힌 줄이다.
     key: OTHER,
     label: '까닭 모름(그 밖의 exit≠0)',
     test: null,
   },
 ];
+
+/**
+ * **이미 읽고 이름을 적어 둔 `other` 죽음.** 새로 생긴 것과 가르는 기준선이다.
+ *
+ * ── 왜 필요한가 (세션 116이 값을 치르고 적는다)
+ * 세션 115가 `other` 칸을 만들면서 "이 칸이 0이 아니면 새 고장이 하나 생긴 것"이라는 읽는 법을
+ * STATUS와 이 파일에 함께 박아 두었다. **그 읽는 법은 한 바퀴밖에 맞지 않는다** — 읽고 나서
+ * 이름을 적어도 로그의 그 줄은 지워지지 않으므로 칸은 영원히 2에 머물고, 경보는 **매 바퀴
+ * 똑같이 울린다.** 세션 116은 그 울림을 보고 STATUS를 거꾸로 뒤져 "둘 다 세션 115가 이미
+ * 읽은 것"임을 확인하는 데 이 바퀴의 몫을 썼다. 사람이 기억으로 가르던 것을 여기 넘긴다.
+ *
+ * 세션 110의 `grep`·세션 114의 `9 passed (9)`와 뿌리가 같다 — **다른 것을 같은 수로 세는 것.**
+ * 거기서는 안 일어난 일이 세어졌고, 여기서는 **끝난 일이 계속 세어진다.**
+ *
+ * ── 새 줄을 더하는 법
+ * `npm run deaths`가 이름 없는 죽음을 찍으면, 그 줄을 읽고 까닭을 STATUS에 적은 **뒤에**
+ * 여기 한 줄을 더해라. `note`에는 무엇이었는지와 **누가 읽었는지**를 적는다.
+ * 반대로 여기 있는 줄이 로그에서 사라지면(로그가 지워지면) `npm run deaths`가 그것도 알려 준다 —
+ * 기준선이 조용히 썩지 않게 하는 자다.
+ */
+export const KNOWN_OTHER = [
+  {
+    cycle: '15',
+    day: '2026-09-09',
+    note: 'Connection lost mid-response — 세션 115가 읽었다(망 계열이지만 ENOTFOUND 낱말이 없다)',
+  },
+  {
+    cycle: '119',
+    day: '2026-09-15',
+    note: 'Connection dropped (ECONNRESET) — 세션 115가 읽었다(같은 계열이다)',
+  },
+];
+
+/**
+ * `other` 죽음을 **이미 읽은 것 · 새로 생긴 것 · 썩은 기준선** 셋으로 가른다.
+ *
+ * `fresh`가 비어 있지 않을 때만 이 저장소가 아직 이름 붙이지 못한 고장이 있는 것이다.
+ * `stale`은 `KNOWN_OTHER`에 적혀 있는데 지금 로그에 없는 줄이다 — 하루치 로그만 넣으면
+ * 당연히 다 여기로 오므로, **전체 census를 넣을 때만 뜻이 있다**(`tools/net-deaths.mjs`).
+ *
+ * @param {ReturnType<typeof collectDeaths>} deaths
+ */
+export function splitOther(deaths) {
+  const others = deaths.filter((d) => d.cause === OTHER);
+  const same = (k, d) => k.cycle === d.cycle && k.day === d.day;
+  const isKnown = (d) => KNOWN_OTHER.some((k) => same(k, d));
+  return {
+    fresh: others.filter((d) => !isKnown(d)),
+    known: others.filter(isKnown),
+    stale: KNOWN_OTHER.filter((k) => !others.some((d) => same(k, d))),
+  };
+}
 
 const STARTED = /바퀴 #(\d+)\s+시작: (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/;
 const ENDED_BAD = /바퀴 #(\d+) 종료 \(exit=[1-9]\d*\): (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/;
