@@ -14,6 +14,19 @@ import {
   stallShare,
 } from './support/sleepWatch';
 import {
+  FAST_AT,
+  FAST_NS,
+  SLOW_AT,
+  SLOW_NS,
+  STALE_AT,
+  coreAdviceFor,
+  coreVerdictOf,
+  describeCore,
+  measureCoreRate,
+  nsPerIter,
+  slowdownVs,
+} from './support/coreSpeed';
+import {
   describeMissing,
   didRun,
   missingModules,
@@ -60,6 +73,26 @@ describe('굶은 정도를 무엇이라 부르는가 (손으로 박은 값)', ()
 });
 
 describe('이 검사를 돌리는 기계', () => {
+  /**
+   * **이 일꾼이 빠른 코어에 앉았는지를 적는다** (세션 117 · 바퀴 #517).
+   * 빨갛게 하지 않는다 — 느린 코어는 고장이 아니고 사람이 이 기계를 쓰는 중이라는 뜻일 뿐이다.
+   * 없던 것은 이름표다: 이 줄이 없으면 다음 세션이 "50초"를 보고 게임을 파거나
+   * 그 초를 새 평소로 베껴 적는다. 내력은 `tests/support/coreSpeed.ts`의 머리말에 있다.
+   *
+   * **재는 곳이 한 일꾼이라는 것은 알고 적는다** — 이 파일을 맡은 일꾼의 코어이고,
+   * 벽시계를 정하는 것은 가장 오래 가는 파일(`tests/maps.test.ts`)의 일꾼이다.
+   * 둘은 같은 정책으로 배치되므로 이 값은 그 일꾼의 처지를 가리키는 표지로 쓴다.
+   */
+  it('빠른 코어에 앉아 있다 (느린 코어면 이 바퀴의 초는 앞 기록과 견줄 수 없다)', () => {
+    const ns = measureCoreRate();
+    const said = coreAdviceFor(ns);
+
+    if (said.length > 0) console.warn(['', ...said, ''].join('\n'));
+
+    // 빨갛게 하지 않는다. 값이 값으로 나왔는지만 본다 — 0이 나오면 재는 쪽이 망가진 것이다.
+    expect(ns).toBeGreaterThan(0);
+  });
+
   it('CPU를 제대로 얻고 있다 (굶고 있으면 이 바퀴의 시간 초과는 게임 탓이 아니다)', () => {
     const share = measureCpuShare();
     const verdict = verdictOf(share);
@@ -202,5 +235,76 @@ describe('안 돈 검사 파일을 어떻게 세는가 (손으로 박은 값)', 
     expect(said).not.toContain('tests/f0.test.ts');
     // 까닭을 여기서 새로 판정하지 않는다 — 잠 판정은 `[기계]` 줄의 몫이다.
     expect(said).toContain('[기계]');
+  });
+});
+
+/**
+ * **얻은 코어를 무엇이라 부르는가** (세션 117 · 바퀴 #517).
+ * 여기도 판단과 재는 일을 나눴다 — 일꾼을 효율 코어로 밀어내는 일은 검사 안에서 못 하지만
+ * (`taskpolicy -b`는 프로세스를 새로 띄워야 한다), **무슨 말을 적을지는 손으로 박은 값으로 잰다.**
+ * 값은 지어낸 것이 아니라 세션 117이 이 기계에서 실제로 잰 것이다
+ * (그냥 0.62 ns/회 · `taskpolicy -b` 1.93 ns/회 · 셋씩 재서 ±8% 안).
+ */
+describe('얻은 코어를 무엇이라 부르는가 (손으로 박은 값)', () => {
+  it('실제로 잰 두 값이 각자의 이름으로 갈린다', () => {
+    expect(coreVerdictOf(0.62)).toBe('fast');
+    expect(coreVerdictOf(1.93)).toBe('slow');
+  });
+
+  it('선 위아래가 정확히 갈린다 (선이 흔들리면 이 자는 쓸모가 없다)', () => {
+    expect(coreVerdictOf(STALE_AT - 0.001)).toBe('stale');
+    expect(coreVerdictOf(STALE_AT)).toBe('fast');
+    expect(coreVerdictOf(FAST_AT)).toBe('fast');
+    expect(coreVerdictOf(FAST_AT + 0.001)).toBe('mixed');
+    expect(coreVerdictOf(SLOW_AT - 0.001)).toBe('mixed');
+    expect(coreVerdictOf(SLOW_AT)).toBe('slow');
+  });
+
+  it('클럭이 흔들려 조금 느린 것은 느린 코어로 부르지 않는다 (0.62의 1.4배)', () => {
+    expect(coreVerdictOf(FAST_NS * 1.4)).toBe('fast');
+  });
+
+  it('계산 한 번의 값은 계산량과 무관한 단위로 나온다', () => {
+    // 세션 117이 실제로 본 판: 3억 번이 186ms였다.
+    expect(nsPerIter(186, 3e8)).toBeCloseTo(0.62, 2);
+    // 0으로 나누지 않는다.
+    expect(nsPerIter(100, 0)).toBe(0);
+  });
+
+  it('사람이 읽을 줄에 속도와 늘어나는 배수가 함께 있다', () => {
+    expect(slowdownVs(SLOW_NS)).toBeCloseTo(3.11, 2);
+    expect(describeCore(1.93)).toBe(
+      '1.93 ns/회 (빠른 코어의 3.1배 · 이 일꾼의 일이 그만큼 오래 걸린다)',
+    );
+  });
+
+  it('빠른 코어에서는 아무 말도 하지 않는다 (할 말 없을 때 조용한 것이 세션 116의 약이다)', () => {
+    expect(coreAdviceFor(FAST_NS)).toEqual([]);
+  });
+
+  it('느린 코어에는 게임을 파지 말라는 말과 초를 베끼지 말라는 말이 함께 적힌다', () => {
+    const said = coreAdviceFor(SLOW_NS).join('\n');
+    expect(said).toContain('게임을 파지 마라');
+    // 세션 114가 금지한 길 — 이 말이 빠지면 다음 세션이 이 초를 새 평소로 적는다.
+    expect(said).toContain('"평소"로 적지 마라');
+    // 앞선 자 셋이 모두 성하다고 답한다는 것까지 적어야 다음 세션이 그 셋을 다시 안 뒤진다.
+    expect(said).toContain('CPU 몫');
+    expect(said).toContain('[기계]');
+    // 배수를 검사 전체의 초에 곱하면 또 틀린 수가 기록으로 넘어간다 (세션 117이 실제로 본
+    // 두 판이 2.6배/37.4초 · 1.0배/29.8초다 — 곱셈이 맞지 않는다).
+    expect(said).toContain('그대로 곱하지 마라');
+  });
+
+  it('섞여 돌은 바퀴에는 초를 베끼지 말라는 말까지는 하지 않는다 (덜 확실하므로)', () => {
+    const said = coreAdviceFor((FAST_AT + SLOW_AT) / 2).join('\n');
+    expect(said).toContain('게임을 파지 마라');
+    expect(said).not.toContain('"평소"로 적지 마라');
+  });
+
+  it('기계가 바뀌면 기준값을 다시 재라고 말한다 (게임 탓으로 읽히지 않게)', () => {
+    const said = coreAdviceFor(0.2).join('\n');
+    expect(said).toContain('기준값이 썩었다');
+    expect(said).toContain('coreSpeed.ts');
+    expect(said).toContain('게임과는 무관하다');
   });
 });
