@@ -452,7 +452,7 @@ try {
   }
 } finally {
   await browser.close();
-  preview.stop();
+  await preview.stop();
 }
 
 if (failed) {

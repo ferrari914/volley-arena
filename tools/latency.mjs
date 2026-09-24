@@ -315,7 +315,7 @@ try {
     problems.push(`시간 값이 이상하다: 기다림 중앙값 ${wait.median} · 프레임 간격 ${interval.median}`);
   }
 } finally {
-  preview.stop();
+  await preview.stop();
 }
 
 if (problems.length > 0) {

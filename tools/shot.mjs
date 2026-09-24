@@ -1323,7 +1323,7 @@ try {
 
   await browser.close();
 } finally {
-  preview.stop();
+  await preview.stop();
 }
 
 if (problems.length > 0) {
