@@ -13,12 +13,16 @@
  * **낱말이 아니라 시각으로** 되짚는다. 까닭은 `tools/lib/sleepSpans.mjs` 머리말에 있다.
  *
  * 세는 법 자체(인용문과 진짜 고장을 가르는 법)는 `tools/lib/deathLog.mjs`에 있다.
+ *
+ * ── 표에 빠지는 죽음은 없다 (세션 115)
+ * `exit≠0`으로 닫힌 바퀴는 낱말이 안 맞아도 `other` 칸에 들어가고, 그때는 로그의 그 줄까지
+ * 함께 찍는다. 예전 표는 아는 낱말 셋만 셌기 때문에 **다섯을 통째로 빠뜨리고 있었다.**
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { CAUSES, collectDeaths } from './lib/deathLog.mjs';
+import { CAUSES, OTHER, collectDeaths } from './lib/deathLog.mjs';
 import { classifyDeath, describeVerdict, parseSleepSpans } from './lib/sleepSpans.mjs';
 
 const dir = join(process.cwd(), 'logs');
@@ -49,6 +53,16 @@ for (const [day, counts] of byDay) {
 console.log(`  ${pad('─'.repeat(10), 12)}${CAUSES.map(() => num('──')).join('  ')}`);
 console.log(`  ${pad('합', 12)}${CAUSES.map((c) => num(totals[c.key])).join('  ')}\n`);
 for (const c of CAUSES) console.log(`  ${c.key} = ${c.label}: ${totals[c.key]}개`);
+
+// 낱말이 하나도 안 맞은 죽음. 여기 한 줄이라도 뜨면 **이 저장소가 아직 이름 붙이지 못한
+// 고장**이니, 로그를 뒤지지 말고 이 줄부터 읽어라(`tools/lib/deathLog.mjs`의 '빠짐 없이').
+const unknown = deaths.filter((d) => d.cause === OTHER);
+if (unknown.length > 0) {
+  console.log(`\n  까닭을 모르는 ${unknown.length}개 — 죽기 직전 로그에 찍힌 줄을 그대로 적는다:`);
+  for (const d of unknown) {
+    console.log(`    ${pad('#' + d.cycle, 7)}${pad(d.day, 12)}${d.hint ?? '(아무 줄도 없이 닫혔다)'}`);
+  }
+}
 
 // ── 둘째 표: 그때 이 기계가 자고 있었나
 let log = null;

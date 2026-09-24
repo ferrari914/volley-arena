@@ -8,7 +8,7 @@ import {
   parseSleepSpans,
   sleptDuring,
 } from '../tools/lib/sleepSpans.mjs';
-import { collectDeaths } from '../tools/lib/deathLog.mjs';
+import { OTHER, collectDeaths } from '../tools/lib/deathLog.mjs';
 
 /**
  * **죽은 바퀴를 낱말이 아니라 시각으로 되짚는 자**(`npm run deaths`의 둘째 표).
@@ -186,5 +186,71 @@ describe('로그에서 죽은 바퀴를 골라낸다', () => {
     const [death] = collectDeaths(cut, '2026-09-22');
     expect(death.cause).toBe('net');
     expect(death.from).toBeNull();
+  });
+});
+
+describe('낱말을 모르는 죽음도 표에 남는다 (세션 115가 박는다)', () => {
+  /**
+   * 왜 이 묶음이 있는가: 예전 자는 **아는 낱말 셋만** 셌다. 그래서 오늘 잇따라 죽은
+   * `#451`·`#452`가 표에서 통째로 빠졌고, 표만 보면 "오늘 인증으로 죽은 바퀴는 없다"로 읽힌다.
+   * 세지 못하는 것과 일어나지 않은 것을 가르는 자다.
+   */
+  const LOG = [
+    '════════════════════════════════════════════════════════════',
+    '  바퀴 #451  시작: 2026-09-24 15:51:33',
+    '  모델: claude-opus-5 / 최대 턴: 80',
+    '════════════════════════════════════════════════════════════',
+    'Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.',
+    '',
+    '  바퀴 #451 종료 (exit=1): 2026-09-24 16:37:08',
+    '',
+    '  바퀴 #119  시작: 2026-09-15 19:36:14',
+    '  모델: claude-opus-5 / 최대 턴: 80',
+    '════════════════════════════════════════════════════════════',
+    'API Error: Connection dropped (ECONNRESET)',
+    '',
+    '  바퀴 #119 종료 (exit=1): 2026-09-15 21:37:16',
+  ].join('\n');
+
+  it('401은 제 칸을 얻는다 — 잠도 망도 아니고, 다시 로그인하기 전까지 여는 바퀴마다 똑같이 죽는다', () => {
+    const [auth] = collectDeaths(LOG, '2026-09-24');
+    expect(auth).toMatchObject({ cause: 'auth', cycle: '451' });
+    expect(auth.hint).toBeNull(); // 이름이 있는 죽음은 줄을 따로 적지 않는다
+  });
+
+  it('아무 낱말도 안 맞으면 사라지지 않고 `other`로 남고, 그 줄을 들고 온다', () => {
+    const unknown = collectDeaths(LOG, '2026-09-24').find((d) => d.cause === OTHER);
+    expect(unknown.cycle).toBe('119');
+    expect(unknown.hint).toBe('API Error: Connection dropped (ECONNRESET)');
+  });
+
+  it('까닭을 찾을 때 루프가 제 손으로 찍는 줄(머리말·구분선)은 건너뛴다', () => {
+    // 이것을 안 건너뛰면 모든 `other`의 까닭이 `════…`나 `모델: …`이 되어 아무 말도 못 한다.
+    const bare = [
+      '════════════════════════════════════════════════════════════',
+      '  바퀴 #7  시작: 2026-09-24 01:00:00',
+      '  모델: claude-opus-5 / 최대 턴: 80',
+      '════════════════════════════════════════════════════════════',
+      'zsh: killed     claude -p',
+      '',
+      '  바퀴 #7 종료 (exit=137): 2026-09-24 01:02:00',
+    ].join('\n');
+    expect(collectDeaths(bare, '2026-09-24')[0].hint).toBe('zsh: killed     claude -p');
+  });
+
+  it('exit≠0으로 닫힌 바퀴의 수와 표의 줄 수가 같다 (표가 census다)', () => {
+    // 이 한 줄이 이 묶음의 요점이다. 낱말을 몇 개 아는지와 무관하게 수가 맞아야 한다.
+    const mixed = [LOG, '', '  바퀴 #500 종료 (exit=2): 2026-09-24 20:00:00'].join('\n');
+    const bad = mixed.match(/바퀴 #\d+ 종료 \(exit=[1-9]\d*\)/g).length;
+    expect(collectDeaths(mixed, '2026-09-24')).toHaveLength(bad);
+  });
+
+  it('멀쩡히 닫힌 바퀴는 여전히 세지 않는다 (인용문을 거르던 규칙을 깨지 않았다)', () => {
+    const quoted = [
+      '  바퀴 #360  시작: 2026-09-22 16:35:23',
+      '  이번 바퀴는 401 OAuth access token has expired가 무엇인지 STATUS에 적어 두었습니다.',
+      '  바퀴 #360 종료 (exit=0): 2026-09-22 16:52:44',
+    ].join('\n');
+    expect(collectDeaths(quoted, '2026-09-22')).toHaveLength(0);
   });
 });
