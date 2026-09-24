@@ -307,4 +307,43 @@ describe('얻은 코어를 무엇이라 부르는가 (손으로 박은 값)', ()
     expect(said).toContain('coreSpeed.ts');
     expect(said).toContain('게임과는 무관하다');
   });
+
+  /**
+   * **말을 했으면 다음 세션이 찾으라고 배운 이름으로 해야 한다** (세션 119 · 바퀴 #521).
+   *
+   * 세션 117은 STATUS에 "검사 초를 적기 전에 `[코어]` 줄이 있는지부터 보라"고 남겼는데,
+   * 그 이름표가 `stale` 갈래에만 붙어 있었다 — **정작 봐야 할 `slow`·`mixed`는 이름 없이 떴다.**
+   * 세션 119가 바로 걸렸다: 세 이름표를 `grep`해 하나도 안 나오자 50.1초를 "세 줄 다 없음"으로
+   * 적을 뻔했고, 그때 출력에는 1.9배짜리 느린 코어 경고가 그대로 찍혀 있었다.
+   * 그러면 `coreSpeed.ts`가 막으려던 바로 그 일(세션 114가 금지한 "초를 베껴 적기")이 일어난다.
+   *
+   * 그래서 갈래를 하나씩 세지 않고 **ns를 훑어서 잰다** — 갈래를 새로 더해도 이 검사에 걸린다
+   * (갈래마다 한 줄씩 적는 검사는 새 갈래가 생기면 조용히 비켜 간다 · 세션 116이 고친 그 꼴이다).
+   */
+  it('말하는 갈래는 모두 첫 줄에 `[코어]`를 단다 (ns를 훑어서 잰다)', () => {
+    const spoke: string[] = [];
+    for (let ns = 0.05; ns <= 6; ns += 0.05) {
+      const said = coreAdviceFor(ns);
+      if (said.length === 0) continue;
+      const head = said[0] ?? '';
+      spoke.push(head);
+      expect(head).toContain('[코어]');
+    }
+    // 훑은 범위가 실제로 말하는 갈래를 다 지났는지까지 본다 (조용하기만 했으면 이 검사는 무의미하다).
+    expect(new Set(spoke.map((line) => line.slice(0, 40))).size).toBeGreaterThanOrEqual(3);
+  });
+
+  it('세션 119가 걸린 그 두 갈래에 이름표가 있다 (느린 코어 · 섞인 코어)', () => {
+    // `?? ''`로 받으면 빈 갈래가 조용히 통과하므로, 말을 했는지부터 따로 잰다.
+    const slow = coreAdviceFor(SLOW_NS);
+    const mixed = coreAdviceFor((FAST_AT + SLOW_AT) / 2);
+    expect(slow.length).toBeGreaterThan(0);
+    expect(mixed.length).toBeGreaterThan(0);
+    expect(slow[0] ?? '').toContain('[코어]');
+    expect(mixed[0] ?? '').toContain('[코어]');
+  });
+
+  it('조용한 갈래는 이름표도 남기지 않는다 (세션 116의 약이 이 이름표로 깨지지 않는다)', () => {
+    expect(coreAdviceFor(FAST_NS).join('\n')).not.toContain('[코어]');
+  });
 });
