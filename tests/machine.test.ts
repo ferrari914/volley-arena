@@ -20,12 +20,14 @@ import {
   SLOW_NS,
   STALE_AT,
   coreAdviceFor,
+  coreTailFor,
   coreVerdictOf,
   describeCore,
   measureCoreRate,
   nsPerIter,
   slowdownVs,
 } from './support/coreSpeed';
+import { META_KEY, describeCoreTail, nsFromMeta } from './support/coreTail';
 import {
   describeMissing,
   didRun,
@@ -83,11 +85,18 @@ describe('이 검사를 돌리는 기계', () => {
    * 벽시계를 정하는 것은 가장 오래 가는 파일(`tests/maps.test.ts`)의 일꾼이다.
    * 둘은 같은 정책으로 배치되므로 이 값은 그 일꾼의 처지를 가리키는 표지로 쓴다.
    */
-  it('빠른 코어에 앉아 있다 (느린 코어면 이 바퀴의 초는 앞 기록과 견줄 수 없다)', () => {
+  it('빠른 코어에 앉아 있다 (느린 코어면 이 바퀴의 초는 앞 기록과 견줄 수 없다)', ({ task }) => {
     const ns = measureCoreRate();
     const said = coreAdviceFor(ns);
 
     if (said.length > 0) console.warn(['', ...said, ''].join('\n'));
+
+    /**
+     * **같은 값을 리포터에게도 넘긴다** (세션 120). 위 묶음은 이 일꾼 안에서 찍혀 출력의
+     * 앞머리에 남는데, 그 값이 뜻을 붙여 주는 `Duration` 줄은 맨 끝에 있다.
+     * `tests/support/coreTail.ts`가 이 칸을 받아 `Duration` 아래에 한 줄로 다시 적는다.
+     */
+    (task.meta as Record<string, unknown>)[META_KEY] = { ns };
 
     // 빨갛게 하지 않는다. 값이 값으로 나왔는지만 본다 — 0이 나오면 재는 쪽이 망가진 것이다.
     expect(ns).toBeGreaterThan(0);
@@ -345,5 +354,89 @@ describe('얻은 코어를 무엇이라 부르는가 (손으로 박은 값)', ()
 
   it('조용한 갈래는 이름표도 남기지 않는다 (세션 116의 약이 이 이름표로 깨지지 않는다)', () => {
     expect(coreAdviceFor(FAST_NS).join('\n')).not.toContain('[코어]');
+  });
+});
+
+/**
+ * **이름표가 맞아도 읽는 자리에 없으면 소용이 없다** (세션 120 · 바퀴 #522).
+ *
+ * 세션 119가 갈래마다 이름표를 달아 `grep`이 찾게 만든 바로 다음 바퀴에,
+ * 세션 120이 `npm test | tail -60`으로 읽고 **2.2배짜리 50.4초를 앞 기록과 나란히 적었다.**
+ * 이 저장소의 세 이름표 중 `[기계]`와 `[빠짐]`은 `Duration` 줄 아래에 떨어지는데
+ * **`[코어]`만 출력 앞머리에 떨어진다** — 일찍 끝나는 이 파일의 일꾼 안에서 찍히기 때문이다.
+ * 곧 셋은 `grep`으로 읽을 때만 한 묶음이고, `tail`로 읽으면 둘만 보인다.
+ *
+ * 아래 묶음이 재는 것은 **꼬리에도 같은 판정이 같은 이름으로 실리는가**이다.
+ */
+describe('느린 코어 판정이 `Duration` 줄 아래에도 실린다', () => {
+  it('꼬리는 앞머리 묶음이 말할 때만 말한다 (ns를 훑어서 잰다)', () => {
+    let spoke = 0;
+    let silent = 0;
+    for (let ns = 0.05; ns <= 6; ns += 0.05) {
+      const head = coreAdviceFor(ns).length > 0;
+      const tail = coreTailFor(ns).length > 0;
+      expect(tail, `${ns.toFixed(2)} ns에서 앞머리와 꼬리가 갈렸다`).toBe(head);
+      if (head) spoke += 1;
+      else silent += 1;
+    }
+    // 훑은 범위가 두 쪽을 다 지났는지까지 본다 (한쪽만 지났으면 이 검사는 무의미하다).
+    expect(spoke).toBeGreaterThan(0);
+    expect(silent).toBeGreaterThan(0);
+  });
+
+  it('말하는 갈래는 꼬리에서도 첫 줄에 `[코어]`와 배수를 단다 (ns를 훑어서 잰다)', () => {
+    const heads: string[] = [];
+    for (let ns = 0.05; ns <= 6; ns += 0.05) {
+      const said = coreTailFor(ns);
+      if (said.length === 0) continue;
+      const head = said[0] ?? '';
+      heads.push(head);
+      expect(head).toContain('[코어]');
+      // 배수가 없으면 이 꼬리는 초에 뜻을 못 붙인다 — 그것이 이 자가 있는 이유의 전부다.
+      expect(head).toContain(`${slowdownVs(ns).toFixed(1)}배`);
+    }
+    expect(new Set(heads.map((line) => line.slice(0, 40))).size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('느린 갈래의 꼬리는 바로 위 초를 앞 기록과 견주지 말라고 적는다', () => {
+    const said = coreTailFor(SLOW_NS).join('\n');
+    expect(said).toContain('Duration');
+    expect(said).toContain('나란히 놓지 마라');
+  });
+
+  /**
+   * 꼬리가 또 한 편의 글이면 읽는 자리를 만든 뜻이 없다 — `tail`에 걸릴 만큼 짧아야 한다.
+   * 앞머리 묶음(열대여섯 줄)과 견주어 잰다. 줄 수를 손으로 박으면 문구를 고칠 때마다 운다.
+   */
+  it('꼬리는 앞머리 묶음보다 짧다 (길면 읽히는 자리를 만든 뜻이 없다)', () => {
+    expect(coreTailFor(SLOW_NS).length).toBeLessThan(coreAdviceFor(SLOW_NS).length / 2);
+  });
+
+  it('리포터는 검사가 남긴 칸에서 속도를 읽는다', () => {
+    expect(nsFromMeta({ [META_KEY]: { ns: 1.33 } })).toBe(1.33);
+  });
+
+  /**
+   * 모양이 다른 것을 억지로 읽어 내면 없는 경고를 지어내게 된다(세션 116이 고친 병).
+   * 조용한 것이 맞다.
+   */
+  it('칸이 없거나 모양이 다르면 없는 것으로 친다 (없는 경고를 지어내지 않는다)', () => {
+    expect(nsFromMeta(undefined)).toBeNull();
+    expect(nsFromMeta({})).toBeNull();
+    expect(nsFromMeta({ [META_KEY]: {} })).toBeNull();
+    expect(nsFromMeta({ [META_KEY]: { ns: '1.33' } })).toBeNull();
+    expect(nsFromMeta({ [META_KEY]: { ns: 0 } })).toBeNull();
+    expect(nsFromMeta({ [META_KEY]: { ns: Number.NaN } })).toBeNull();
+  });
+
+  it('잰 값이 없거나 빠른 코어면 꼬리는 아무 말도 하지 않는다', () => {
+    expect(describeCoreTail(null)).toEqual([]);
+    expect(describeCoreTail(FAST_NS)).toEqual([]);
+  });
+
+  it('말할 때는 테두리를 둘러 한 덩어리로 찍는다 (표 바로 아래에서 눈에 걸리게)', () => {
+    const lines = describeCoreTail(SLOW_NS);
+    expect(lines.join('\n')).toContain('[코어]');
+    expect(lines.filter((line) => line.startsWith('━')).length).toBe(2);
   });
 });

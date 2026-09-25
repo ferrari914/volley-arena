@@ -55,6 +55,16 @@ export default defineConfig({
      * 이 저장소는 세션마다 그 수를 기록으로 넘기므로, **몇 개가 빠졌는지를 표 옆에
      * 적어 주는 자**가 필요하다. 내력은 `tests/support/ranAll.ts`의 머리말에 있다.
      */
-    reporters: ['default', './tests/support/ranAll.ts'],
+    /**
+     * **세션 120이 셋째 자를 붙였고, 까닭은 그 자가 재는 것이 아니라 적는 자리다.**
+     * 이 저장소는 이름표 셋(`[기계]`·`[빠짐]`·`[코어]`)을 한 묶음으로 읽으라고 가르치는데,
+     * 앞의 둘은 `Duration` 줄 아래에 떨어지고 **`[코어]`만 출력 앞머리에 떨어진다**
+     * (그 줄은 일찍 끝나는 `tests/machine.test.ts`의 일꾼 안에서 찍힌다).
+     * 그래서 `tail`로 읽으면 셋 중 둘만 보이고, 안 보이는 하나가 하필 초를 다루는 자다 —
+     * 세션 120이 그대로 걸려 2.2배짜리 50.4초를 앞 기록과 나란히 적을 뻔했다.
+     * 이 자는 그 판정을 맨 끝에 한 줄로 다시 적는다.
+     * 내력은 `tests/support/coreSpeed.ts`의 `coreTailFor` 머리말에 있다.
+     */
+    reporters: ['default', './tests/support/ranAll.ts', './tests/support/coreTail.ts'],
   },
 });
